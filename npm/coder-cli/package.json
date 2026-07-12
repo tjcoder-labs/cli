@@ -1,0 +1,49 @@
+{
+  "name": "@tj/coder-cli",
+  "version": "0.1.4",
+  "description": "Terminal-first coding CLI by TJ Coder / AI Labs",
+  "license": "UNLICENSED",
+  "private": false,
+  "bin": {
+    "coder": "bin/coder.js"
+  },
+  "files": [
+    "bin/",
+    "lib/",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "postinstall": "node ./lib/fetch-binary.js",
+    "preuninstall": "node ./lib/cleanup.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "os": [
+    "darwin",
+    "linux",
+    "win32"
+  ],
+  "cpu": [
+    "x64",
+    "arm64"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/alpha-tjcoder/coder-cli.git",
+    "directory": "npm/coder-cli"
+  },
+  "bugs": {
+    "url": "https://github.com/alpha-tjcoder/coder-cli/issues"
+  },
+  "homepage": "https://github.com/alpha-tjcoder/coder-cli#readme",
+  "keywords": [
+    "ai",
+    "coding",
+    "cli",
+    "tui",
+    "ollama",
+    "gemini"
+  ]
+}

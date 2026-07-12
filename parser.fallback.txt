@@ -1,0 +1,5 @@
+]<]minimax[>[<tool_call>
+]<]minimax[>[<invoke name="list_directory">]<]minimax[>[<depth>2]<]minimax[>[</depth>]<]minimax[>[<path>cmd/coder]<]minimax[>[</path>]<]minimax[>[</invoke>
+]<]minimax[>[<invoke name="read_file">]<]minimax[>[<path>install.sh]<]minimax[>[</path>]<]minimax[>[</invoke>
+]<]minimax[>[<invoke name="read_file">]<]minimax[>[<path>.gitignore]<]minimax[>[</path>]<]minimax[>[</invoke>
+]<]minimax[>[</tool_call>
