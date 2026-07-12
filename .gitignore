@@ -1,0 +1,13 @@
+/.ergo-cli-go/
+/bin/
+/cmd/coder/package.json
+
+# Local environment files
+.env
+.env.local
+
+# Node/npm
+node_modules/
+
+# Logs
+*.log

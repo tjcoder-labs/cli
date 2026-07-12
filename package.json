@@ -1,0 +1,12 @@
+{
+  "name": "@tjcoder/cli",
+  "productName": "Coder CLI",
+  "version": "0.9.69",
+  "private": true,
+  "description": "Terminal-first Coding CLI by TJ Coder / AI Labs. Designed and developed in sunny Las Vegas.",
+  "author": "TJ Coder /  AI Labs",
+  "license": "MIT",
+  "scripts": {
+    "release": "npm --no-git-tag-version version patch && make build && bash install.sh"
+  }
+}
