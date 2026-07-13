@@ -121,6 +121,7 @@ Do not suggest cosmetic or style-only changes.`,
 			"list_directory",
 			"set_reminder",
 			"manage_items",
+			"fetch",
 		},
 		Prompt: `You are the Android Developer Assistant, specializing in Android system internals, ADB operations, and device administration.
 
