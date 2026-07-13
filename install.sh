@@ -2,11 +2,11 @@
 # install.sh — install `coder` (Coder CLI TUI) as a system CLI.
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/tcoder915/coder/main/install.sh | bash
-#   ./install.sh                          # local checkout, builds from source
-#   PREFIX=/usr/local ./install.sh        # custom install prefix
-#   VERSION=0.1.5 ./install.sh            # specific release tag
-#   REPO=tcoder915/coder ./install.sh     # override repo
+#   curl -fsSL https://raw.githubusercontent.com/tjcoder-labs/cli/main/install.sh | bash
+#   ./install.sh                                 # local checkout, builds from source
+#   PREFIX=/usr/local ./install.sh               # custom install prefix
+#   VERSION=0.9.71 ./install.sh                  # specific release tag (with or without leading `v`)
+#   REPO=tjcoder-labs/cli ./install.sh           # override repo
 #
 # Behavior:
 #   1. Detects OS/arch.
@@ -16,7 +16,7 @@
 #   4. Installs to $PREFIX (default: ~/.local/bin) and prints PATH hints.
 set -euo pipefail
 
-REPO="${REPO:-tcoder915/coder}"
+REPO="${REPO:-tjcoder-labs/cli}"
 VERSION="${VERSION:-}"
 PREFIX="${PREFIX:-$HOME/.local/bin}"
 BIN_NAME="coder"
@@ -68,7 +68,10 @@ download_release() {
     log "latest version: $VERSION"
   fi
   local asset="coder-${platform}.tar.gz"
-  local url="https://github.com/${REPO}/releases/download/v${VERSION}/${asset}"
+  # Accept VERSION with or without a leading `v` (e.g. "0.9.71" or "v0.9.71").
+  local tag="${VERSION#v}"
+  [[ "$tag" != "$VERSION" ]] && VERSION="$tag" || VERSION="v$tag"
+  local url="https://github.com/${REPO}/releases/download/${VERSION}/${asset}"
   log "downloading $url"
   if ! curl -fsSL -o "$tmpdir/$asset" "$url"; then
     return 1

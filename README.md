@@ -6,7 +6,7 @@ A modern, AI-powered terminal coding assistant for developers. Coder CLI combine
 
 ## Features
 
-- **AI-Powered Assistance**: Built on large language models (LLM) to understand code, debug issues, and generate solutions
+- **AI-Powered Assistance**: Built on large language models (LLM) to understand code, debug issues, and generate solutions. We recommend the `minimax-m3:cloud` model for the best balance of code understanding, tool use, and reasoning.
 - **Interactive TUI**: Responsive terminal interface with real-time conversation, cognition panel, and activity tracking
 - **Multi-Provider Support**: Works with Ollama, Gemini, and other LLM providers
 - **Task Management**: Integrated task tracking system for managing development workflows
@@ -20,8 +20,8 @@ A modern, AI-powered terminal coding assistant for developers. Coder CLI combine
 
 ```bash
 # Clone the repository
-git clone https://github.com/tjcoder-labs/coder-cli.git
-cd coder-cli
+git clone https://github.com/tjcoder-labs/cli.git
+cd cli
 
 # Build the binary
 make build
@@ -48,10 +48,10 @@ coder --host https://your-llm-endpoint.com
 Coder CLI uses environment variables for configuration:
 
 ```bash
-# Ollama (default)
+# Ollama (default) — we recommend the minimax-m3:cloud model
 export CODER_HOST="http://localhost:11434"
 export CODER_PROVIDER="ollama"
-export CODER_MODEL="mistral"
+export CODER_MODEL="minimax-m3:cloud"
 
 # Gemini
 export CODER_PROVIDER="gemini"
@@ -82,7 +82,7 @@ Coder CLI operates as a conversational agent with several key components:
 ## Architecture
 
 ```
-coder-cli/
+cli/
 ├── cmd/coder/           # Entry point
 ├── internal/
 │   ├── agent/           # AI agent orchestration
@@ -132,10 +132,10 @@ See [CODER.md](./CODER.md) for the agent behavior specification and directives t
 
 ### Ollama (Default)
 
-Works with any Ollama-compatible endpoint. Perfect for local development:
+Works with any Ollama-compatible endpoint. Perfect for local development. For best results we recommend pulling and using the `minimax-m3:cloud` model:
 
 ```bash
-coder --provider ollama --host http://localhost:11434 --model mistral
+coder --provider ollama --host http://localhost:11434 --model minimax-m3:cloud
 ```
 
 ### Gemini
@@ -153,7 +153,7 @@ Add support for additional LLM providers in `internal/client/`.
 
 ## Requirements
 
-- Go 1.24.0+
+- Go 1.25.0+
 - An LLM provider (Ollama for local development, or API credentials for cloud providers)
 
 ## Contributing
@@ -177,4 +177,3 @@ Part of the TJ Coder platform ecosystem, offering modern AI-powered tooling for 
 
 ---
 
-**Built for the future of terminal-based development.**
