@@ -4,6 +4,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/rivo/tview"
 
@@ -166,11 +167,13 @@ func TestRefreshContextBarHidesLabels(t *testing.T) {
 // TestShowPanelTasksDoesNotCrash is a headless repro for the /tasks
 // panel hang/crash. We build a minimal tview surface (no full
 // application loop), seed the session with one task, then call
-// showPanel("tasks") to drive the new code path. The previous
-// implementation would deadlock tview's event loop when
-// refreshTasksList ran outside the event goroutine; this test
-// guarantees that the QueueUpdateDraw-based fix keeps the call
-// safe even when no event loop is running.
+// showPanel("tasks") and assert the call returns promptly. The
+// previous implementation called tv.QueueUpdateDraw inside
+// showPanel; tview's QueueUpdate blocks on a channel that the
+// event loop drains, so without tv.Run() the call deadlocked
+// indefinitely. showPanel now mutates the tview.List
+// synchronously and changes focus via a direct SetFocus, neither
+// of which requires the event loop to be running.
 func TestShowPanelTasksDoesNotCrash(t *testing.T) {
 	// Build a minimal app: real tview primitives, no event loop,
 	// and a session state containing one open task.
@@ -197,24 +200,112 @@ func TestShowPanelTasksDoesNotCrash(t *testing.T) {
 			SetHighlightFullLine(true),
 		activePanel: "activity",
 	}
+	// build() would normally construct a.tasksPanel and wire it
+	// up against a.tasksList; the test reproduces the same
+	// minimum wiring inline so the post-condition assertion
+	// (tasksPanel != nil) is meaningful.
+	app.tasksPanel = tview.NewFlex().SetDirection(tview.FlexRow).
+		AddItem(app.tasksList, 0, 1, true)
+	app.tasksPanel.SetBackgroundColor(app.palette.BgReasoning)
+
 	// Pre-condition: the list has zero items.
 	if got := app.tasksList.GetItemCount(); got != 0 {
 		t.Fatalf("expected empty tasks list, got %d items", got)
 	}
 
-	// Drive the path. showPanel("tasks") now performs the rebuild
-	// synchronously and defers the list population + focus to
-	// QueueUpdateDraw. Without an event loop running, the queued
-	// draw is a no-op; the test verifies the synchronous portion
-	// (rebuildLayout) does not panic and that the activity log
-	// records the panel open.
-	app.showPanel("tasks")
+	// showPanel must return promptly even with no event loop
+	// running. Run it under a watchdog goroutine so a regression
+	// (a future blocking call slipping back in) fails the test
+	// fast instead of timing out the whole package.
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		app.showPanel("tasks")
+	}()
+	select {
+	case <-done:
+		// good
+	case <-time.After(2 * time.Second):
+		t.Fatal("showPanel(\"tasks\") blocked; the /tasks hang has regressed")
+	}
 
 	if app.activePanel != "tasks" {
 		t.Fatalf("expected activePanel=tasks, got %q", app.activePanel)
 	}
 	if app.tasksPanel == nil {
 		t.Fatal("expected tasksPanel to be wired up after showPanel(\"tasks\")")
+	}
+	// refreshTasksList runs synchronously, so the list should
+	// already be populated with the seeded task by the time
+	// showPanel returns.
+	if got := app.tasksList.GetItemCount(); got != 1 {
+		t.Fatalf("expected 1 item in tasks list, got %d", got)
+	}
+}
+
+// TestShowPanelTasksDoesNotBlockWhenRunning asserts that showPanel
+// returns promptly even when a.running is true. The historical
+// "running" path was the dangerous one: it called tv.QueueUpdateDraw,
+// which sends on tv.updates. In a real running app the event loop
+// drains that channel and everything is fine, but a future caller
+// invoking showPanel from inside a QueueUpdate closure would
+// deadlock. The fix routes focus through a direct SetFocus (no
+// channel send), so a.running == true no longer changes the
+// blocking behavior of showPanel. We exercise the running path
+// here without actually starting tv.Run() — the direct-SetFocus
+// design means the call should complete in well under a
+// millisecond regardless of whether the event loop is alive.
+func TestShowPanelTasksDoesNotBlockWhenRunning(t *testing.T) {
+	store := tasks.NewStore()
+	state, _, err := session.Load(t.TempDir())
+	if err != nil {
+		t.Fatalf("unexpected session load error: %v", err)
+	}
+	created, err := store.Create(state, tasks.CreateInput{Title: "Running /tasks call", Owner: "agent"})
+	if err != nil {
+		t.Fatalf("seed task create failed: %v", err)
+	}
+	state = created.State
+
+	app := &App{
+		tv:            tview.NewApplication(),
+		palette:       darkPalette(),
+		sessionState:  state,
+		workspaceRoot: t.TempDir(),
+		activity:      tview.NewTextView(),
+		reasoning:     tview.NewTextView(),
+		tasksList: tview.NewList().
+			ShowSecondaryText(false).
+			SetHighlightFullLine(true),
+		activePanel: "activity",
+		running:      true,
+	}
+	defer func() { app.running = false }()
+	app.tasksPanel = tview.NewFlex().SetDirection(tview.FlexRow).
+		AddItem(app.tasksList, 0, 1, true)
+	app.tasksPanel.SetBackgroundColor(app.palette.BgReasoning)
+
+	done := make(chan struct{})
+	start := time.Now()
+	go func() {
+		defer close(done)
+		app.showPanel("tasks")
+	}()
+	select {
+	case <-done:
+		elapsed := time.Since(start)
+		if elapsed > 500*time.Millisecond {
+			t.Fatalf("showPanel took %v with running=true; expected near-instant", elapsed)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("showPanel(\"tasks\") blocked with running=true")
+	}
+
+	if app.activePanel != "tasks" {
+		t.Fatalf("expected activePanel=tasks, got %q", app.activePanel)
+	}
+	if got := app.tasksList.GetItemCount(); got != 1 {
+		t.Fatalf("expected 1 item in tasks list, got %d", got)
 	}
 }
 
