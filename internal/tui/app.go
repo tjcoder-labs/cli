@@ -125,6 +125,12 @@ const modelLoadTimeout = 12 * time.Second
 
 type App struct {
 	tv *tview.Application
+	// running is true between App.Run() entering tv.Run() and
+	// tv.Run() returning. It gates which goroutine is allowed to
+	// touch tview primitives that the event loop owns (focus,
+	// redraw, etc.). Reading it from any goroutine is safe; the
+	// only mutations happen in Run() under the caller's stack.
+	running bool
 
 	provider client.Provider
 	registry *tools.Registry
@@ -285,7 +291,28 @@ func New(provider client.Provider, registry *tools.Registry, workspaceRoot, mode
 func (a *App) Run() error {
 	defer a.saveSession()
 	defer a.stopSpinner()
+	a.running = true
+	defer func() { a.running = false }()
 	return a.tv.Run()
+}
+
+// focusOrQueue moves keyboard focus to p. tview's SetFocus is
+// safe to call from any goroutine (it acquires a lock and sets a
+// field; the next Draw picks it up). We do not route focus through
+// QueueUpdate/QueueUpdateDraw because those send on a channel that
+// the event loop drains — and when the caller is already executing
+// inside a QueueUpdate closure, the inner send would block forever
+// and stall the event loop. That channel-send pattern was the
+// trigger for the /tasks hang. The historical reason people route
+// focus through QueueUpdate is ordering with respect to other
+// queued updates; for our use case (user just opened a panel via
+// slash command) ordering does not matter — the next event-loop
+// tick will redraw with the new focus.
+func (a *App) focusOrQueue(p tview.Primitive) {
+	if p == nil {
+		return
+	}
+	a.tv.SetFocus(p)
 }
 
 func (a *App) build() {
@@ -1519,26 +1546,34 @@ func (a *App) runCognitionRecap() {
 
 // showPanel switches the activity panel between 'activity', 'tasks', and 'articles'
 func (a *App) showPanel(name string) {
+	// Defensive recover: if any future bug in the panel-open path
+	// panics, surface it as an activity log entry instead of
+	// wedging the tview event loop and the user's shell.
+	defer func() {
+		if r := recover(); r != nil {
+			a.appendActivity(fmt.Sprintf("[panel error] showPanel(%q) panicked: %v", name, r))
+		}
+	}()
+
 	name = strings.ToLower(strings.TrimSpace(name))
 	switch name {
 	case "tasks":
 		// Order matters: build the new right column first so the
 		// tasks list is attached to the live page tree before we
-		// try to focus it. Then populate the list from session
-		// state inside QueueUpdateDraw so the List primitive is
-		// mutated on the tview event goroutine; mutating it from
-		// the caller's goroutine can deadlock the focus chain and
-		// is the root cause of the /tasks hang/crash. The SetFocus
-		// is also deferred so tview has a stable primitive tree to
-		// resolve focus against.
+		// try to focus it. refreshTasksList mutates the tview.List
+		// (Clear/AddItem), which is safe from any goroutine; the
+		// only thing that must run on the event goroutine is the
+		// focus change, and we dispatch that through focusOrQueue
+		// so it falls back to a direct SetFocus when the event
+		// loop is not running (tests, re-entrant calls from
+		// inside a QueueUpdate closure). This replaces the
+		// previous QueueUpdateDraw call, which blocked forever
+		// whenever tv.Run() was not active — the root cause of
+		// the /tasks hang.
 		a.setActivePanel("tasks")
 		a.rebuildLayout()
-		a.tv.QueueUpdateDraw(func() {
-			a.refreshTasksList()
-			if a.tasksList != nil {
-				a.tv.SetFocus(a.tasksList)
-			}
-		})
+		a.refreshTasksList()
+		a.focusOrQueue(a.tasksList)
 		a.appendActivity("Opened /tasks panel")
 		return
 	case "articles":
