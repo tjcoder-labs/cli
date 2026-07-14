@@ -89,5 +89,18 @@ The following tasks should be a reflection of those managed by the agent via the
 -- **T13 - timestamp formatting** - let's remove the seconds from the timestamps used throughout the app e.g. activity, conversation transcript and cognition (e.g. 11:15 AM) and let's make sure that the timestamp is listed above every message, both for user and assistant, right above the message's attribution. 
 -- **T14 - issue with model returning commentary with escaped tool code seems to be related to max tool call error and the agent's response to being asked to provide a checkpoint**
 
+- **T15 — Termux + Linux armv7 install path.** Extend `install.sh` to
+  detect Termux (Android, 32-bit and 64-bit) and generic Linux on
+  armv7 (Raspberry Pi, etc.), default the install prefix to `~/bin`
+  inside Termux (already on `$PATH`), and emit a Termux-specific
+  PATH hint that points users at `coder --host <remote-ollama>` for
+  the common case where the phone can't run a model locally. Update
+  the default `REPO` in `install.sh` to `tjcoder-labs/cli` to match
+  the canonical GitHub location. Add an "On Android (Termux)" section
+  to `README.md` documenting the one-line install and the
+  remote-Ollama usage. **Supersedes the `install.sh` portion of T8**
+  (T8's Ollama auto-install work continues separately on the main
+  branch).
+
 
 

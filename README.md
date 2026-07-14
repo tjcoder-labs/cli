@@ -18,17 +18,66 @@ A modern, AI-powered terminal coding assistant for developers. Coder CLI combine
 
 ### Installation
 
+Install with the one-line installer (Linux, macOS, Windows, and **Android via Termux** are all supported):
+
 ```bash
-# Clone the repository
-git clone https://github.com/tjcoder-labs/coder-cli.git
-cd coder-cli
-
-# Build the binary
-make build
-
-# Install globally (optional)
-make install
+curl -fsSL https://raw.githubusercontent.com/tjcoder-labs/cli/main/install.sh | bash
 ```
+
+The script detects your platform, downloads a prebuilt release if available
+(else builds from source), and installs to `~/.local/bin/coder` (or `~/bin/coder`
+on Termux). Override the install location with `PREFIX=…` and the release
+repository with `REPO=org/repo`.
+
+You can also build from a clone:
+
+```bash
+git clone https://github.com/tjcoder-labs/cli.git
+cd cli
+make build         # ./bin/coder
+make install       # installs to ~/.local/bin/coder (override with PREFIX=…)
+```
+
+#### On Android (Termux)
+
+Coder CLI runs on a 32-bit or 64-bit Android device inside [Termux](https://termux.dev/),
+which provides the real Linux PTY the tview TUI needs. From inside Termux:
+
+```bash
+# 1. First-time setup (creates ~/storage, grants runtime storage permission)
+termux-setup-storage
+
+# 2. One-line install (or: apt install git golang && ./install.sh from a clone)
+curl -fsSL https://raw.githubusercontent.com/tjcoder-labs/cli/main/install.sh | bash
+
+# 3. Verify
+source ~/.profile
+coder --version
+```
+
+The phone itself is too underpowered to run Ollama usefully (2-3 GB RAM,
+armv7l Cortex-A55 in the common case), so point Coder CLI at a remote
+Ollama-compatible server (your laptop, a Tailscale peer, a hosted
+endpoint, or `api.tjcoder.com`):
+
+```bash
+# talk to Ollama on your laptop, reachable over LAN or Tailscale
+coder --host http://100.64.x.y:11434 --provider ollama --model qwen2.5-coder:7b
+
+# or use the tjcoder/ergo hosted provider (TUI-compatible, ollama-shaped API)
+coder --host https://api.tjcoder.com --provider ollama --model tjcoder/ergo
+
+# or fall back to Gemini (cloud) if no local model is reachable
+export GEMINI_API_KEY=…
+coder --provider gemini --model gemini-2.5-flash
+```
+
+#### Requirements
+
+- **Linux / macOS / Windows:** any architecture Go 1.24+ supports.
+- **Android (Termux):** armv7 (32-bit) or arm64 (64-bit). Termux ≥ 0.118
+  from F-Droid. ~50 MB free for the binary and a few hundred MB for Go
+  toolchain (only needed if no prebuilt for your arch is published).
 
 ### Usage
 

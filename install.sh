@@ -2,21 +2,23 @@
 # install.sh — install `coder` (Coder CLI TUI) as a system CLI.
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/tcoder915/coder/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/tjcoder-labs/cli/main/install.sh | bash
 #   ./install.sh                          # local checkout, builds from source
 #   PREFIX=/usr/local ./install.sh        # custom install prefix
 #   VERSION=0.1.5 ./install.sh            # specific release tag
-#   REPO=tcoder915/coder ./install.sh     # override repo
+#   REPO=tjcoder-labs/cli ./install.sh    # override repo (default: tjcoder-labs/cli)
 #
 # Behavior:
-#   1. Detects OS/arch.
+#   1. Detects OS/arch (including Termux on Android 32-bit / 64-bit ARM, and
+#      generic Linux on armv7 — e.g. Raspberry Pi).
 #   2. If a prebuilt binary is available for this platform at the given
 #      release tag, downloads it.
 #   3. Otherwise falls back to building from source (requires `go`).
-#   4. Installs to $PREFIX (default: ~/.local/bin) and prints PATH hints.
+#   4. Installs to $PREFIX and prints PATH hints. On Termux the default
+#      prefix is $HOME/bin (already on $PATH in a default Termux install).
 set -euo pipefail
 
-REPO="${REPO:-tcoder915/coder}"
+REPO="${REPO:-tjcoder-labs/cli}"
 VERSION="${VERSION:-}"
 PREFIX="${PREFIX:-$HOME/.local/bin}"
 BIN_NAME="coder"
@@ -31,6 +33,19 @@ need() { command -v "$1" >/dev/null 2>&1 || die "required tool '$1' not found in
 # --- platform detection ---------------------------------------------------
 detect_platform() {
   local os arch
+  # Termux sets both PREFIX (to /data/data/com.termux/files/usr) and
+  # TERMUX_VERSION, and reports armv7l/aarch64 under uname -s "Linux".
+  # We map to an `android-*` tuple so the install path / PATH hint can
+  # branch on it even when the same binary is shared with linux-armv7.
+  if [[ -n "${TERMUX_VERSION:-}" ]] || [[ "${PREFIX:-}" == *"/com.termux/files/usr"* ]]; then
+    case "$(uname -m)" in
+      aarch64) echo "android-arm64" ;;
+      armv7l)  echo "android-armv7" ;;
+      armv6l)  echo "android-armv6" ;;
+      *)       die "unsupported Termux arch: $(uname -m)" ;;
+    esac
+    return
+  fi
   case "$(uname -s)" in
     Linux)   os="linux" ;;
     Darwin)  os="darwin" ;;
@@ -40,6 +55,7 @@ detect_platform() {
   case "$(uname -m)" in
     x86_64|amd64)  arch="amd64" ;;
     arm64|aarch64) arch="arm64" ;;
+    armv7l|armv6l) arch="armv7" ;;
     *) die "unsupported arch: $(uname -m)" ;;
   esac
   echo "${os}-${arch}"
@@ -120,6 +136,14 @@ build_from_source() {
 # --- install --------------------------------------------------------------
 install_binary() {
   local src="$1" prefix="$2"
+  # On Termux, ~/.local/bin is the wrong place: it lives in the wrong
+  # filesystem area (the Termux proot'd fs is at /data/data/com.termux/files/...)
+  # and the user would have to add it to PATH manually. ~/bin is already on
+  # PATH in a default Termux install and is writable from inside the app.
+  if [[ -n "${TERMUX_VERSION:-}" ]] && [[ "${prefix}" == "$HOME/.local/bin" ]]; then
+    prefix="${TERMUX_BIN:-$HOME/bin}"
+    log "termux detected: installing to $prefix (overriding default PREFIX)"
+  fi
   if ! mkdir -p "$prefix" 2>/dev/null; then
     die "cannot create $prefix — try PREFIX=\$HOME/.local/bin or run with sudo"
   fi
@@ -133,6 +157,28 @@ install_binary() {
 # --- PATH hint ------------------------------------------------------------
 path_hint() {
   local prefix="$1"
+  if [[ -n "${TERMUX_VERSION:-}" ]]; then
+    # Termux-specific message. ~/bin is on PATH for a default Termux
+    # install, but $PATH isn't reloaded in already-running shells.
+    cat >&2 <<EOF
+
+Termux install complete. To make \`coder\` available in this session:
+
+    export PATH="$prefix:\$PATH"
+
+Or simply open a new Termux window (the next session will pick it up
+automatically). Verify with:
+
+    coder --version
+
+To point Coder CLI at a remote Ollama server (e.g. your laptop, a
+Tailscale peer, or a hosted endpoint) since the phone itself is too
+underpowered to run models locally:
+
+    coder --host http://your-server:11434 --provider ollama --model <name>
+EOF
+    return
+  fi
   case ":$PATH:" in
     *":$prefix:"*) return 0 ;;
   esac
