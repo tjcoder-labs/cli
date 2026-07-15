@@ -2280,6 +2280,9 @@ func (a *App) rebuildLayout() {
 		AddItem(footerRow, 3, 0, false)
 	layout.SetBackgroundColor(a.palette.BgRoot)
 
+	// Remove the old "main" page if it exists, then add the new layout.
+	// This ensures the page stack stays clean and focus updates work properly.
+	a.pages.RemovePage("main")
 	a.pages.AddPage("main", layout, true, true)
 	a.rootFlex = layout
 }
