@@ -358,9 +358,6 @@ func (a *App) build() {
 	a.tasksList.SetSelectedBackgroundColor(a.palette.BgSelect)
 	a.tasksList.SetSelectedTextColor(a.palette.Lavender)
 	a.tasksList.SetBorderPadding(1, 1, 3, 2)
-	a.tasksList.SetDoneFunc(func() {
-		a.tv.SetFocus(a.input)
-	})
 	a.tasksTitle = tview.NewTextView().SetDynamicColors(true)
 	a.tasksTitle.SetBackgroundColor(a.palette.BgReasoning)
 	a.tasksTitle.SetText(fmt.Sprintf(" [%s]TASKS[-]", a.palette.HexPurple))
@@ -1235,12 +1232,7 @@ func (a *App) globalKeys(event *tcell.EventKey) *tcell.EventKey {
 		a.tv.Stop()
 		return nil
 	}
-	// Escape key: return focus to input from any panel (e.g. /tasks list)
-	if event.Key() == tcell.KeyEscape {
-		a.tv.SetFocus(a.input)
-		return nil
-	}
-	// Alt-letter shortcuts for the bottom-right pane + global view toggles.
+	// Alt-letter shortcuts for panel display (informational only, focus stays on input).
 	if event.Modifiers()&tcell.ModAlt != 0 {
 		switch unicode.ToLower(event.Rune()) {
 		case 'a':
@@ -1568,9 +1560,8 @@ func (a *App) runCognitionRecap() {
 }
 
 // showPanel switches the activity panel between 'activity', 'tasks', and 'articles'.
-// This function is safe to call from within the event loop (e.g. from handleSlashCommand
-// via slash command input) because it uses SetFocus directly instead of QueueUpdateDraw,
-// avoiding the nested-queue deadlock that previously caused the /tasks hang.
+// Panels are display-only; focus always remains on the input field so the user
+// can continue typing commands. Use Alt+[letter] to switch panels without losing input focus.
 func (a *App) showPanel(name string) {
 	name = strings.ToLower(strings.TrimSpace(name))
 	switch name {
@@ -1578,7 +1569,7 @@ func (a *App) showPanel(name string) {
 		a.refreshTasksList()
 		a.setActivePanel("tasks")
 		a.rebuildLayout()
-		a.tv.SetFocus(a.tasksList)
+		a.tv.SetFocus(a.input)
 		return
 	case "articles":
 		a.setActivePanel("articles")
