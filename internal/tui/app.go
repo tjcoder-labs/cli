@@ -1556,7 +1556,10 @@ func (a *App) runCognitionRecap() {
 	})
 }
 
-// showPanel switches the activity panel between 'activity', 'tasks', and 'articles'
+// showPanel switches the activity panel between 'activity', 'tasks', and 'articles'.
+// This function is safe to call from within the event loop (e.g. from handleSlashCommand
+// via slash command input) because it uses SetFocus directly instead of QueueUpdateDraw,
+// avoiding the nested-queue deadlock that previously caused the /tasks hang.
 func (a *App) showPanel(name string) {
 	name = strings.ToLower(strings.TrimSpace(name))
 	switch name {
@@ -1564,33 +1567,25 @@ func (a *App) showPanel(name string) {
 		a.refreshTasksList()
 		a.setActivePanel("tasks")
 		a.rebuildLayout()
-		a.tv.QueueUpdateDraw(func() {
-			a.tv.SetFocus(a.tasksList)
-		})
+		a.tv.SetFocus(a.tasksList)
 		return
 	case "articles":
 		a.setActivePanel("articles")
 		a.activity.SetText("[articles] Not implemented yet\n")
 		a.rebuildLayout()
-		a.tv.QueueUpdateDraw(func() {
-			a.tv.SetFocus(a.input)
-		})
+		a.tv.SetFocus(a.input)
 		return
 	case "code":
 		a.setActivePanel("code")
 		a.refreshCodePanel()
 		a.rebuildLayout()
-		a.tv.QueueUpdateDraw(func() {
-			a.tv.SetFocus(a.input)
-		})
+		a.tv.SetFocus(a.input)
 		return
 	case "test":
 		a.setActivePanel("test")
 		a.testView.SetText("Test Pane: Active\n\nThis is an empty test pane used for troubleshooting hangs.")
 		a.rebuildLayout()
-		a.tv.QueueUpdateDraw(func() {
-			a.tv.SetFocus(a.input)
-		})
+		a.tv.SetFocus(a.input)
 		return
 	default:
 		a.setActivePanel("activity")
@@ -1600,9 +1595,7 @@ func (a *App) showPanel(name string) {
 			}
 		}
 		a.rebuildLayout()
-		a.tv.QueueUpdateDraw(func() {
-			a.tv.SetFocus(a.input)
-		})
+		a.tv.SetFocus(a.input)
 	}
 }
 
