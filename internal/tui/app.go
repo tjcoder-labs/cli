@@ -1674,7 +1674,10 @@ func strikeThrough(s string) string {
 // toggleTask flips a task between done and its previous open
 // status, persists the change, and re-renders the list so the
 // glyph + strikethrough update in place. The activity log records
-// a single concise line per toggle.
+// a single concise line per toggle. This function is called from
+// the tasksList item callback, which is already executing in the
+// tview event loop, so list mutations are safe to perform directly
+// without QueueUpdateDraw.
 func (a *App) toggleTask(id string) {
 	// Capture the cursor's numeric position *before* mutating the
 	// list, so we can restore it after the refresh without
@@ -1702,28 +1705,24 @@ func (a *App) toggleTask(id string) {
 		verb = "reopened"
 	}
 	a.appendActivity(fmt.Sprintf("[%s]%s[-] %s", a.palette.HexLavender, verb, t.Title))
-	// Defer the list rebuild + cursor restore to the tview event
-	// goroutine; List mutations and SetCurrentItem calls are only
-	// safe inside the event loop and were the source of the
-	// /tasks panel crash on Enter.
-	a.tv.QueueUpdateDraw(func() {
-		a.refreshTasksList()
-		if a.tasksList == nil {
-			return
-		}
-		count := a.tasksList.GetItemCount()
-		if count == 0 {
-			return
-		}
-		next := prevIndex
-		if next < 0 {
-			next = 0
-		}
-		if next >= count {
-			next = count - 1
-		}
-		a.tasksList.SetCurrentItem(next)
-	})
+	// Perform list mutations directly since we're already in the event loop
+	// via the item callback. No QueueUpdateDraw needed here.
+	a.refreshTasksList()
+	if a.tasksList == nil {
+		return
+	}
+	count := a.tasksList.GetItemCount()
+	if count == 0 {
+		return
+	}
+	next := prevIndex
+	if next < 0 {
+		next = 0
+	}
+	if next >= count {
+		next = count - 1
+	}
+	a.tasksList.SetCurrentItem(next)
 }
 
 // refreshCodePanel renders the placeholder "code" view into the
