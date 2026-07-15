@@ -2172,16 +2172,25 @@ func (a *App) rightColumnHeights(rows int) (cog, body int) {
 // The active body is whichever panel the user has selected via
 // /tasks, /articles, /code, or the default activity stream. The
 // activity panel is the only "log"-style surface; the others
+// buildRightColumn constructs the right-hand column with adaptive, content-aware
+// height allocation. The reasoning (cognition) and body (activity/tasks/code) panes
+// use proportional heights that adapt to content, preventing background bleed-through.
 // (tasks, articles, code) are navigable / interactive views and
 // are managed by their own primitives.
 func (a *App) buildRightColumn() *tview.Flex {
-	rows := 24
-	if a.right != nil {
-		if _, _, _, h := a.right.GetInnerRect(); h > 0 {
-			rows = h
-		}
+	// Determine the proportion of space for cognition vs body based on active panel
+	// and content. Using flex proportions (1:2 or 2:3) instead of fixed heights
+	// allows content to adapt without leaving empty space.
+	cogProp := 1  // Cognition gets 1 part
+	bodyProp := 2 // Body gets 2 parts by default (2:3 ratio)
+	
+	// When viewing a non-activity panel, give more space to the body since it's
+	// the primary focus (1:1.5 ratio instead of 1:2)
+	if a.activePanel != "" && a.activePanel != "activity" {
+		bodyProp = 1
+		cogProp = 1
 	}
-	cog, body := a.rightColumnHeights(rows)
+	
 	// Pick the body primitive that matches the active panel.
 	// Defaults to the activity TextView so the right column still
 	// works even if a panel name is unknown.
@@ -2198,8 +2207,8 @@ func (a *App) buildRightColumn() *tview.Flex {
 		bodyPrim = a.activityPanel
 	}
 	right := tview.NewFlex().SetDirection(tview.FlexRow).
-		AddItem(a.reasoningPanel, cog, 0, false).
-		AddItem(bodyPrim, body, 0, false)
+		AddItem(a.reasoningPanel, 0, cogProp, false).
+		AddItem(bodyPrim, 0, bodyProp, false)
 	right.SetBackgroundColor(a.palette.BgReasoning)
 	a.right = right
 	return right
