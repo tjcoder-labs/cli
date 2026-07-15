@@ -165,6 +165,7 @@ type App struct {
 	transcriptPanel *tview.Flex
 	reasoning       *tview.TextView
 	reasoningTitle  *tview.TextView
+	tasksTitle      *tview.TextView
 	reasoningPanel  *tview.Flex
 	activity        *tview.TextView
 	activityPanel   *tview.Flex
@@ -360,7 +361,12 @@ func (a *App) build() {
 	a.tasksList.SetDoneFunc(func() {
 		a.tv.SetFocus(a.input)
 	})
+	a.tasksTitle = tview.NewTextView().SetDynamicColors(true)
+	a.tasksTitle.SetBackgroundColor(a.palette.BgReasoning)
+	a.tasksTitle.SetText(fmt.Sprintf(" [%s]TASKS[-]", a.palette.HexPurple))
+	a.tasksTitle.SetBorderPadding(0, 0, 2, 2)
 	a.tasksPanel = tview.NewFlex().SetDirection(tview.FlexRow).
+		AddItem(a.tasksTitle, 1, 0, false).
 		AddItem(a.tasksList, 0, 1, true)
 	a.tasksPanel.SetBackgroundColor(a.palette.BgReasoning)
 
@@ -1227,6 +1233,11 @@ func (a *App) stopSpinner() {
 func (a *App) globalKeys(event *tcell.EventKey) *tcell.EventKey {
 	if event.Key() == tcell.KeyCtrlC {
 		a.tv.Stop()
+		return nil
+	}
+	// Escape key: return focus to input from any panel (e.g. /tasks list)
+	if event.Key() == tcell.KeyEscape {
+		a.tv.SetFocus(a.input)
 		return nil
 	}
 	// Alt-letter shortcuts for the bottom-right pane + global view toggles.
