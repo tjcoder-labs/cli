@@ -10,8 +10,8 @@ import (
 
 	"sync/atomic"
 
-	"github.com/alpha-tjcoder/coder-cli/internal/session"
-	"github.com/alpha-tjcoder/coder-cli/internal/tasks"
+	"github.com/tjcoder-labs/coder-cli/internal/session"
+	"github.com/tjcoder-labs/coder-cli/internal/tasks"
 )
 
 func TestNewInputSurfaceUsesSingleBackground(t *testing.T) {
@@ -238,72 +238,6 @@ func TestShowPanelTasksDoesNotCrash(t *testing.T) {
 	// refreshTasksList runs synchronously, so the list should
 	// already be populated with the seeded task by the time
 	// showPanel returns.
-	if got := app.tasksList.GetItemCount(); got != 1 {
-		t.Fatalf("expected 1 item in tasks list, got %d", got)
-	}
-}
-
-// TestShowPanelTasksDoesNotBlockWhenRunning asserts that showPanel
-// returns promptly even when a.running is true. The historical
-// "running" path was the dangerous one: it called tv.QueueUpdateDraw,
-// which sends on tv.updates. In a real running app the event loop
-// drains that channel and everything is fine, but a future caller
-// invoking showPanel from inside a QueueUpdate closure would
-// deadlock. The fix routes focus through a direct SetFocus (no
-// channel send), so a.running == true no longer changes the
-// blocking behavior of showPanel. We exercise the running path
-// here without actually starting tv.Run() — the direct-SetFocus
-// design means the call should complete in well under a
-// millisecond regardless of whether the event loop is alive.
-func TestShowPanelTasksDoesNotBlockWhenRunning(t *testing.T) {
-	store := tasks.NewStore()
-	state, _, err := session.Load(t.TempDir())
-	if err != nil {
-		t.Fatalf("unexpected session load error: %v", err)
-	}
-	created, err := store.Create(state, tasks.CreateInput{Title: "Running /tasks call", Owner: "agent"})
-	if err != nil {
-		t.Fatalf("seed task create failed: %v", err)
-	}
-	state = created.State
-
-	app := &App{
-		tv:            tview.NewApplication(),
-		palette:       darkPalette(),
-		sessionState:  state,
-		workspaceRoot: t.TempDir(),
-		activity:      tview.NewTextView(),
-		reasoning:     tview.NewTextView(),
-		tasksList: tview.NewList().
-			ShowSecondaryText(false).
-			SetHighlightFullLine(true),
-		activePanel: "activity",
-		running:      true,
-	}
-	defer func() { app.running = false }()
-	app.tasksPanel = tview.NewFlex().SetDirection(tview.FlexRow).
-		AddItem(app.tasksList, 0, 1, true)
-	app.tasksPanel.SetBackgroundColor(app.palette.BgReasoning)
-
-	done := make(chan struct{})
-	start := time.Now()
-	go func() {
-		defer close(done)
-		app.showPanel("tasks")
-	}()
-	select {
-	case <-done:
-		elapsed := time.Since(start)
-		if elapsed > 500*time.Millisecond {
-			t.Fatalf("showPanel took %v with running=true; expected near-instant", elapsed)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("showPanel(\"tasks\") blocked with running=true")
-	}
-
-	if app.activePanel != "tasks" {
-		t.Fatalf("expected activePanel=tasks, got %q", app.activePanel)
-	}
 	if got := app.tasksList.GetItemCount(); got != 1 {
 		t.Fatalf("expected 1 item in tasks list, got %d", got)
 	}

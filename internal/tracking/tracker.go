@@ -1,7 +1,7 @@
 package tracking
 
 import (
-	"github.com/alpha-tjcoder/coder-cli/internal/session"
+	"github.com/tjcoder-labs/coder-cli/internal/session"
 )
 
 // Tracker is the generic interface for managing any trackable object type

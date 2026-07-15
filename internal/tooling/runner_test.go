@@ -8,9 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/alpha-tjcoder/coder-cli/internal/agent"
-	"github.com/alpha-tjcoder/coder-cli/internal/client"
-	"github.com/alpha-tjcoder/coder-cli/internal/tools"
+	"github.com/tjcoder-labs/coder-cli/internal/agent"
+	"github.com/tjcoder-labs/coder-cli/internal/client"
+	"github.com/tjcoder-labs/coder-cli/internal/tools"
 )
 
 type scriptedProvider struct {

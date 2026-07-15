@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 
-	"github.com/alpha-tjcoder/coder-cli/internal/client"
+	"github.com/tjcoder-labs/coder-cli/internal/client"
 )
 
 // manageItemsBridge adapts the ManageItems helper into the Tool interface

@@ -16,7 +16,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/alpha-tjcoder/coder-cli/internal/client"
+	"github.com/tjcoder-labs/coder-cli/internal/client"
 )
 
 // DirName is the directory created under each workspace root for

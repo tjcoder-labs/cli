@@ -1,4 +1,4 @@
-module github.com/alpha-tjcoder/coder-cli
+module github.com/tjcoder-labs/coder-cli
 
 go 1.25
 

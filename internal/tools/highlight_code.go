@@ -9,8 +9,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/alpha-tjcoder/coder-cli/internal/client"
-	"github.com/alpha-tjcoder/coder-cli/internal/highlight"
+	"github.com/tjcoder-labs/coder-cli/internal/client"
+	"github.com/tjcoder-labs/coder-cli/internal/highlight"
 )
 
 // HighlightRequest is the payload a tool (or test) pushes into the

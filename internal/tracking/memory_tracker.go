@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/alpha-tjcoder/coder-cli/internal/memories"
-	"github.com/alpha-tjcoder/coder-cli/internal/session"
+	"github.com/tjcoder-labs/coder-cli/internal/memories"
+	"github.com/tjcoder-labs/coder-cli/internal/session"
 )
 
 // MemoryTracker adapts memories.Store to the generic Tracker

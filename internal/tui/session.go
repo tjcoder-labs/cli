@@ -8,9 +8,9 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/alpha-tjcoder/coder-cli/internal/agent"
-	"github.com/alpha-tjcoder/coder-cli/internal/client"
-	"github.com/alpha-tjcoder/coder-cli/internal/session"
+	"github.com/tjcoder-labs/coder-cli/internal/agent"
+	"github.com/tjcoder-labs/coder-cli/internal/client"
+	"github.com/tjcoder-labs/coder-cli/internal/session"
 )
 
 type persistedTranscriptEntry struct {
