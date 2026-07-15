@@ -88,6 +88,7 @@ The following tasks should be a reflection of those managed by the agent via the
 - **T12 - -- RECAP -- title should instead take formatting cue from the ACTIVITY, CONVERSATION and COGNITION label typography, in terms of size and style -- uppercase and in the primary color. Make sure there's always at least 1 line gap above the RECAP label. 
 -- **T13 - timestamp formatting** - let's remove the seconds from the timestamps used throughout the app e.g. activity, conversation transcript and cognition (e.g. 11:15 AM) and let's make sure that the timestamp is listed above every message, both for user and assistant, right above the message's attribution. 
 -- **T14 - issue with model returning commentary with escaped tool code seems to be related to max tool call error and the agent's response to being asked to provide a checkpoint**
+-- ** - 
 
 
 

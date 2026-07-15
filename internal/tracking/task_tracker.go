@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/alpha-tjcoder/coder-cli/internal/session"
-	"github.com/alpha-tjcoder/coder-cli/internal/tasks"
+	"github.com/tjcoder-labs/coder-cli/internal/session"
+	"github.com/tjcoder-labs/coder-cli/internal/tasks"
 )
 
 // TaskTracker adapts the existing tasks.Store to the generic Tracker interface.

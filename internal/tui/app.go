@@ -13,15 +13,15 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/alpha-tjcoder/coder-cli/internal/agent"
-	"github.com/alpha-tjcoder/coder-cli/internal/client"
-	"github.com/alpha-tjcoder/coder-cli/internal/session"
-	"github.com/alpha-tjcoder/coder-cli/internal/tasks"
-	"github.com/alpha-tjcoder/coder-cli/internal/tooling"
-	"github.com/alpha-tjcoder/coder-cli/internal/tools"
-	"github.com/alpha-tjcoder/coder-cli/internal/tracking"
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
+	"github.com/tjcoder-labs/coder-cli/internal/agent"
+	"github.com/tjcoder-labs/coder-cli/internal/client"
+	"github.com/tjcoder-labs/coder-cli/internal/session"
+	"github.com/tjcoder-labs/coder-cli/internal/tasks"
+	"github.com/tjcoder-labs/coder-cli/internal/tooling"
+	"github.com/tjcoder-labs/coder-cli/internal/tools"
+	"github.com/tjcoder-labs/coder-cli/internal/tracking"
 
 	"os/exec"
 	"unicode"
@@ -174,6 +174,8 @@ type App struct {
 	// its previous open status.
 	tasksList       *tview.List
 	tasksPanel      *tview.Flex
+	testView        *tview.TextView
+	testPanel       *tview.Flex
 	// right is the right-column Flex (Cognition stacked over the
 	// active body). Cached so buildRightColumn can read its current
 	// size for adaptive height calculations.
@@ -355,14 +357,22 @@ func (a *App) build() {
 	a.tasksList.SetSelectedBackgroundColor(a.palette.BgSelect)
 	a.tasksList.SetSelectedTextColor(a.palette.Lavender)
 	a.tasksList.SetBorderPadding(1, 1, 3, 2)
-	// Escape returns focus to the input field so the user can keep
-	// chatting without an extra Tab.
 	a.tasksList.SetDoneFunc(func() {
 		a.tv.SetFocus(a.input)
 	})
 	a.tasksPanel = tview.NewFlex().SetDirection(tview.FlexRow).
 		AddItem(a.tasksList, 0, 1, true)
 	a.tasksPanel.SetBackgroundColor(a.palette.BgReasoning)
+
+	a.testView = tview.NewTextView().
+		SetDynamicColors(true).
+		SetWrap(true)
+	a.testView.SetBackgroundColor(a.palette.BgReasoning)
+	a.testView.SetTextColor(a.palette.TextMain)
+	a.testView.SetBorderPadding(1, 1, 3, 2)
+	a.testPanel = tview.NewFlex().SetDirection(tview.FlexRow).
+		AddItem(a.testView, 0, 1, true)
+	a.testPanel.SetBackgroundColor(a.palette.BgReasoning)
 
 	a.footer = tview.NewTextView().SetDynamicColors(true)
 	a.footer.SetBackgroundColor(a.palette.BgRoot)
@@ -1319,6 +1329,8 @@ func (a *App) handleSlashCommand(cmd string) {
 		a.openConfigModal()
 	case "tasks":
 		a.showPanel("tasks")
+	case "test":
+		a.showPanel("test")
 	case "articles":
 		a.showPanel("articles")
 	default:
@@ -1546,64 +1558,51 @@ func (a *App) runCognitionRecap() {
 
 // showPanel switches the activity panel between 'activity', 'tasks', and 'articles'
 func (a *App) showPanel(name string) {
-	// Defensive recover: if any future bug in the panel-open path
-	// panics, surface it as an activity log entry instead of
-	// wedging the tview event loop and the user's shell.
-	defer func() {
-		if r := recover(); r != nil {
-			a.appendActivity(fmt.Sprintf("[panel error] showPanel(%q) panicked: %v", name, r))
-		}
-	}()
-
 	name = strings.ToLower(strings.TrimSpace(name))
 	switch name {
 	case "tasks":
-		// Order matters: build the new right column first so the
-		// tasks list is attached to the live page tree before we
-		// try to focus it. refreshTasksList mutates the tview.List
-		// (Clear/AddItem), which is safe from any goroutine; the
-		// only thing that must run on the event goroutine is the
-		// focus change, and we dispatch that through focusOrQueue
-		// so it falls back to a direct SetFocus when the event
-		// loop is not running (tests, re-entrant calls from
-		// inside a QueueUpdate closure). This replaces the
-		// previous QueueUpdateDraw call, which blocked forever
-		// whenever tv.Run() was not active — the root cause of
-		// the /tasks hang.
+		a.refreshTasksList()
 		a.setActivePanel("tasks")
 		a.rebuildLayout()
-		a.refreshTasksList()
-		a.focusOrQueue(a.tasksList)
-		a.appendActivity("Opened /tasks panel")
+		a.tv.QueueUpdateDraw(func() {
+			a.tv.SetFocus(a.tasksList)
+		})
 		return
 	case "articles":
-		// Placeholder for articles rendering; reuse activity view
 		a.setActivePanel("articles")
 		a.activity.SetText("[articles] Not implemented yet\n")
 		a.rebuildLayout()
+		a.tv.QueueUpdateDraw(func() {
+			a.tv.SetFocus(a.input)
+		})
 		return
 	case "code":
-		// Placeholder code panel: for now reuse the tasks surface so the
-		// shortcut has a visible target. Future iterations can swap in a
-		// dedicated code-reference view.
 		a.setActivePanel("code")
 		a.refreshCodePanel()
 		a.rebuildLayout()
+		a.tv.QueueUpdateDraw(func() {
+			a.tv.SetFocus(a.input)
+		})
+		return
+	case "test":
+		a.setActivePanel("test")
+		a.testView.SetText("Test Pane: Active\n\nThis is an empty test pane used for troubleshooting hangs.")
+		a.rebuildLayout()
+		a.tv.QueueUpdateDraw(func() {
+			a.tv.SetFocus(a.input)
+		})
 		return
 	default:
 		a.setActivePanel("activity")
-		// Restore the running activity log from saved session or keep current
-		// Attempt to reload session activity field
 		if state, ok, err := session.Load(a.workspaceRoot); err == nil && ok {
 			if state.Activity != "" {
 				a.activity.SetText(state.Activity)
-				a.rebuildLayout()
-				return
 			}
 		}
 		a.rebuildLayout()
-		// Fallback: keep as-is
-		return
+		a.tv.QueueUpdateDraw(func() {
+			a.tv.SetFocus(a.input)
+		})
 	}
 }
 
@@ -1821,7 +1820,12 @@ func (a *App) submit() {
 	model := a.currentModel
 
 	go func() {
-		nextHistory, err := a.runner.Run(context.Background(), history, prompt, agentCfg, model, enabled, a.handleEvent)
+		// Use a timeout context to prevent indefinite hangs on API calls or tool execution.
+		// Timeout is set to 15 minutes to accommodate long-running tasks while preventing
+		// infinite hangs that require shell termination.
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+		defer cancel()
+		nextHistory, err := a.runner.Run(ctx, history, prompt, agentCfg, model, enabled, a.handleEvent)
 		a.tv.QueueUpdateDraw(func() {
 			if err != nil {
 				errText := fmt.Sprintf("error: %v", err)
@@ -2191,6 +2195,8 @@ func (a *App) buildRightColumn() *tview.Flex {
 	switch a.activePanel {
 	case "tasks":
 		bodyPrim = a.tasksPanel
+	case "test":
+		bodyPrim = a.testPanel
 	case "articles", "code":
 		// Articles and code currently reuse the activity TextView
 		// for their (placeholder) content, so the active body
@@ -2282,19 +2288,8 @@ func (a *App) rebuildLayout() {
 		AddItem(footerRow, 3, 0, false)
 	layout.SetBackgroundColor(a.palette.BgRoot)
 
-	a.pages.RemovePage("main")
 	a.pages.AddPage("main", layout, true, true)
 	a.rootFlex = layout
-	a.tv.SetRoot(a.pages, true)
-	// Only steal focus if the input field is initialized. Tests and
-	// partial construction paths can call rebuildLayout before a.input
-	// is wired up, and SetFocus(nil) on tview blocks the event loop
-	// waiting for a focus target that never appears — the root cause
-	// of the /tasks panel hang reported in T5.
-	if a.input != nil {
-		a.tv.SetFocus(a.input)
-	}
-	a.tv.Draw()
 }
 
 func (a *App) setReasoningSplash() {

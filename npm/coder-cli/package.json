@@ -31,13 +31,13 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/alpha-tjcoder/coder-cli.git",
+    "url": "https://github.com/tjcoder-labs/coder-cli.git",
     "directory": "npm/coder-cli"
   },
   "bugs": {
-    "url": "https://github.com/alpha-tjcoder/coder-cli/issues"
+    "url": "https://github.com/tjcoder-labs/coder-cli/issues"
   },
-  "homepage": "https://github.com/alpha-tjcoder/coder-cli#readme",
+  "homepage": "https://github.com/tjcoder-labs/coder-cli#readme",
   "keywords": [
     "ai",
     "coding",

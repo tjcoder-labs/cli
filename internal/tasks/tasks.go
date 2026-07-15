@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/alpha-tjcoder/coder-cli/internal/session"
+	"github.com/tjcoder-labs/coder-cli/internal/session"
 )
 
 // Status is the lifecycle state of a task. Custom values are rejected

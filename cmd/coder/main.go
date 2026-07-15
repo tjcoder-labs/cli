@@ -13,14 +13,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/alpha-tjcoder/coder-cli/internal/agent"
-	"github.com/alpha-tjcoder/coder-cli/internal/client"
-	ctxpkg "github.com/alpha-tjcoder/coder-cli/internal/context"
-	"github.com/alpha-tjcoder/coder-cli/internal/session"
-	"github.com/alpha-tjcoder/coder-cli/internal/tooling"
-	"github.com/alpha-tjcoder/coder-cli/internal/tools"
-	"github.com/alpha-tjcoder/coder-cli/internal/tracking"
-	"github.com/alpha-tjcoder/coder-cli/internal/tui"
+	"github.com/tjcoder-labs/coder-cli/internal/agent"
+	"github.com/tjcoder-labs/coder-cli/internal/client"
+	ctxpkg "github.com/tjcoder-labs/coder-cli/internal/context"
+	"github.com/tjcoder-labs/coder-cli/internal/session"
+	"github.com/tjcoder-labs/coder-cli/internal/tooling"
+	"github.com/tjcoder-labs/coder-cli/internal/tools"
+	"github.com/tjcoder-labs/coder-cli/internal/tracking"
+	"github.com/tjcoder-labs/coder-cli/internal/tui"
 )
 
 const (
@@ -594,7 +594,11 @@ func cmdAsk(opts askOptions) {
 		history = sessionState.History
 	}
 
-	newHistory, err := runner.Run(context.Background(), history, opts.Prompt, agentCfg, model, enabled, onEvent)
+	// Use a timeout context to prevent indefinite hangs on API calls or tool execution.
+	// 15 minutes is a generous timeout for long-running operations while preventing hangs.
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+	defer cancel()
+	newHistory, err := runner.Run(ctx, history, opts.Prompt, agentCfg, model, enabled, onEvent)
 
 	if opts.Session && len(newHistory) > 0 {
 		sessionState.CurrentAgent = agentCfg.Name
