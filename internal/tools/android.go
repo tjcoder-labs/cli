@@ -8,7 +8,7 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/tjcoder-labs/coder-cli/internal/client"
+	"github.com/tjcoder-labs/cli/internal/client"
 )
 
 // adbShellTool executes a shell command on the device

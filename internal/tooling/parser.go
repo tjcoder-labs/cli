@@ -5,8 +5,8 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/tjcoder-labs/coder-cli/internal/client"
-	"github.com/tjcoder-labs/coder-cli/internal/tools"
+	"github.com/tjcoder-labs/cli/internal/client"
+	"github.com/tjcoder-labs/cli/internal/tools"
 )
 
 // ExtractFallbackToolCall intercepts and parses raw JSON objects representing tool calls

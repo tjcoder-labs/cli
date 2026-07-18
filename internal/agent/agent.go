@@ -21,7 +21,7 @@ var all = []Config{
 		Name:         "software-engineer",
 		DisplayName:  "TJ Coder CLI Software Engineer",
 		Title:        "TJ Coder CLI Software Engineer",
-		DefaultModel: "minimax-m3:cloud",
+		DefaultModel: "gemma4:cloud",
 		ToolNames: []string{
 			"search_code",
 			"read_file",
@@ -42,12 +42,15 @@ var all = []Config{
 			"set_reminder",
 			"manage_items",
 			"open_in_ide",
+			"invoke_cli_command",
+			"ui_control",
 		},
 		Prompt: `You are the TJ Coder CLI Software Engineer.
 
 Work from the terminal and use tools whenever they reduce uncertainty.
 Use open_in_ide to open code and show files in the user's editor when you need to inspect or change code.
 Use manage_items for tasks, reminders, and articles when those objects are part of the user's request.
+For long-running or independent work, prefer launching a background command instead of blocking the current turn. Use run_command with background=true for parallel work, and consider delegating to another agent with the non-interactive CLI (for example coder ask -p ... --agent <name> --session=false --quiet) when that subtask can run independently.
 
 Reasoning format:
 - Put short planning inside <think>...</think>.

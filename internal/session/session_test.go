@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tjcoder-labs/coder-cli/internal/client"
+	"github.com/tjcoder-labs/cli/internal/client"
 )
 
 func TestLoadMissingReturnsNotExists(t *testing.T) {
@@ -48,6 +48,13 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 			{ID: "a", Status: "todo", Title: "one", UpdatedAt: "2026-07-08T13:00:00Z"},
 			{ID: "b", Status: "doing", Title: "two", UpdatedAt: "2026-07-08T13:05:00Z"},
 		},
+		BackgroundJobs: []BackgroundJob{{
+			ID:        "job-1",
+			Command:   "coder ask -p 'hello'",
+			Status:    "running",
+			StartedAt: "2026-07-14T03:00:00Z",
+			OutputPath: "/tmp/job-1.log",
+		}},
 	}
 	if err := Save(tmp, in); err != nil {
 		t.Fatalf("Save: %v", err)
@@ -140,6 +147,41 @@ func TestLoadOldShapeWithoutTasksOrArticles(t *testing.T) {
 	}
 	if state.Tasks != nil {
 		t.Fatalf("expected nil tasks, got %+v", state.Tasks)
+	}
+}
+
+func TestLoadLegacyStringTranscript(t *testing.T) {
+	tmp := t.TempDir()
+	legacy := map[string]any{
+		"current_agent": "software-engineer",
+		"current_model": "minimax-m3:cloud",
+		"enabled_tools": []string{"run_command"},
+		"history":       []any{},
+		"transcript":   "[#C4A5FF::b]You[-:-:-]\nHello there\n\n[#A77CF8::b]Assistant[-:-:-]\nGeneral Kenobi\n\n",
+	}
+	data, _ := json.Marshal(legacy)
+	if err := os.MkdirAll(filepath.Join(tmp, DirName), 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(Path(tmp), data, 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	state, exists, err := Load(tmp)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !exists {
+		t.Fatalf("expected exists=true")
+	}
+	if len(state.Transcript) != 2 {
+		t.Fatalf("expected 2 transcript entries, got %d", len(state.Transcript))
+	}
+	if state.Transcript[0].Role != "user" || state.Transcript[0].Content != "Hello there" {
+		t.Fatalf("unexpected first transcript entry: %+v", state.Transcript[0])
+	}
+	if state.Transcript[1].Role != "assistant" || state.Transcript[1].Content != "General Kenobi" {
+		t.Fatalf("unexpected second transcript entry: %+v", state.Transcript[1])
 	}
 }
 

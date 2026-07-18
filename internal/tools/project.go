@@ -9,7 +9,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/tjcoder-labs/coder-cli/internal/client"
+	"github.com/tjcoder-labs/cli/internal/client"
 )
 
 type inspectProjectTool struct{}

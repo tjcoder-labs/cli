@@ -10,8 +10,8 @@ import (
 
 	"sync/atomic"
 
-	"github.com/tjcoder-labs/coder-cli/internal/session"
-	"github.com/tjcoder-labs/coder-cli/internal/tasks"
+	"github.com/tjcoder-labs/cli/internal/session"
+	"github.com/tjcoder-labs/cli/internal/tasks"
 )
 
 func TestNewInputSurfaceUsesSingleBackground(t *testing.T) {
@@ -174,6 +174,23 @@ func TestRefreshContextBarHidesLabels(t *testing.T) {
 // indefinitely. showPanel now mutates the tview.List
 // synchronously and changes focus via a direct SetFocus, neither
 // of which requires the event loop to be running.
+func TestShowPanelActivityRestoresActivityPane(t *testing.T) {
+	app := &App{
+		tv:            tview.NewApplication(),
+		palette:       darkPalette(),
+		workspaceRoot: t.TempDir(),
+		activity:      tview.NewTextView(),
+		reasoning:     tview.NewTextView(),
+		activePanel:   "tasks",
+	}
+
+	app.showPanel("activity")
+
+	if app.activePanel != "activity" {
+		t.Fatalf("expected activePanel=activity, got %q", app.activePanel)
+	}
+}
+
 func TestShowPanelTasksDoesNotCrash(t *testing.T) {
 	// Build a minimal app: real tview primitives, no event loop,
 	// and a session state containing one open task.

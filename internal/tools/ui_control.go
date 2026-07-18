@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/tjcoder-labs/coder-cli/internal/client"
+	"github.com/tjcoder-labs/cli/internal/client"
 )
 
 // uiControlTool allows the model to control TUI panels (show/hide/switch).

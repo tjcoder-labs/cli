@@ -8,9 +8,11 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/tjcoder-labs/coder-cli/internal/agent"
-	"github.com/tjcoder-labs/coder-cli/internal/client"
-	"github.com/tjcoder-labs/coder-cli/internal/tools"
+	"github.com/tjcoder-labs/cli/internal/agent"
+	"github.com/tjcoder-labs/cli/internal/client"
+	"github.com/tjcoder-labs/cli/internal/memories"
+	"github.com/tjcoder-labs/cli/internal/session"
+	"github.com/tjcoder-labs/cli/internal/tools"
 )
 
 type EventType string
@@ -49,6 +51,12 @@ type Runner struct {
 	// a process lifetime. The message is useful once but becomes
 	// noise on every subsequent turn.
 	agentsAnnounced bool
+	// Sinks for TUI integration. Set by the app before calling Run if
+	// running in TUI mode. nil in headless mode.
+	HighlightSink  tools.HighlightSink
+	CLICommandSink tools.CLICommandSink
+	SessionState   *session.State
+	PersistSession func() error
 }
 
 const defaultMaxToolSteps = 8
@@ -151,6 +159,13 @@ func (r *Runner) Run(ctx context.Context, history []client.Message, prompt strin
 	}
 	contextWindow, _ := r.Provider.ContextWindow(ctx, model)
 
+	if r.SessionState != nil {
+		memBlock := memories.FormatPromptBlock(memories.Load(*r.SessionState), 10)
+		if strings.TrimSpace(memBlock) != "" {
+			systemPrompt = memBlock + "\n\n" + systemPrompt
+		}
+	}
+
 	coderPrompt := loadCoderPrompt(r.WorkspaceRoot)
 	if coderPrompt != "" {
 		systemPrompt = "Repository instructions from CODER.md (auto-injected):\n" + coderPrompt + "\n\n" + systemPrompt
@@ -158,7 +173,7 @@ func (r *Runner) Run(ctx context.Context, history []client.Message, prompt strin
 
 	for step := 0; step < r.MaxSteps; step++ {
 
-	// 1. The model generates its response for the current turn
+		// 1. The model generates its response for the current turn
 		msg, err := r.runChatTurn(ctx, model, systemPrompt, history, defs, onEvent)
 		if err != nil {
 			return history, err
@@ -213,8 +228,12 @@ func (r *Runner) Run(ctx context.Context, history []client.Message, prompt strin
 				})
 			}
 			result, err := r.Registry.Execute(ctx, call.Function.Name, call.Function.Arguments, tools.ExecEnv{
-				WorkspaceRoot: r.WorkspaceRoot,
-				Provider:      r.Provider,
+				WorkspaceRoot:  r.WorkspaceRoot,
+				Provider:       r.Provider,
+				Sink:           r.HighlightSink,
+				CommandSink:    r.CLICommandSink,
+				SessionState:   r.SessionState,
+				PersistSession: r.PersistSession,
 			})
 			if err != nil {
 				errText := fmt.Sprintf("tool %s failed: %v", call.Function.Name, err)

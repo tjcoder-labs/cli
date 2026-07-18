@@ -8,9 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tjcoder-labs/coder-cli/internal/agent"
-	"github.com/tjcoder-labs/coder-cli/internal/client"
-	"github.com/tjcoder-labs/coder-cli/internal/tools"
+	"github.com/tjcoder-labs/cli/internal/agent"
+	"github.com/tjcoder-labs/cli/internal/client"
+	"github.com/tjcoder-labs/cli/internal/tools"
 )
 
 type scriptedProvider struct {
@@ -135,6 +135,9 @@ func TestRunner_MaxStepsGeneratesCheckpointResponse(t *testing.T) {
 		t.Fatalf("expected final message role=assistant, got %q", last.Role)
 	}
 	if last.Content == "" {
+		t.Fatal("expected non-empty checkpoint response content")
+	}
+}
 
 // TestRunner_ScrubMessageStripsLeakedToolCallMarkup is the unit-level
 // guard for the T4 fix: when a model emits `‹tool_call›...‹/tool_call›`
