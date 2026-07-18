@@ -13,14 +13,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tjcoder-labs/coder-cli/internal/agent"
-	"github.com/tjcoder-labs/coder-cli/internal/client"
-	ctxpkg "github.com/tjcoder-labs/coder-cli/internal/context"
-	"github.com/tjcoder-labs/coder-cli/internal/session"
-	"github.com/tjcoder-labs/coder-cli/internal/tooling"
-	"github.com/tjcoder-labs/coder-cli/internal/tools"
-	"github.com/tjcoder-labs/coder-cli/internal/tracking"
-	"github.com/tjcoder-labs/coder-cli/internal/tui"
+	"github.com/tjcoder-labs/cli/internal/agent"
+	"github.com/tjcoder-labs/cli/internal/client"
+	ctxpkg "github.com/tjcoder-labs/cli/internal/context"
+	"github.com/tjcoder-labs/cli/internal/session"
+	"github.com/tjcoder-labs/cli/internal/tooling"
+	"github.com/tjcoder-labs/cli/internal/tools"
+	"github.com/tjcoder-labs/cli/internal/tracking"
+	"github.com/tjcoder-labs/cli/internal/tui"
 )
 
 const (
@@ -501,9 +501,10 @@ func cmdAsk(opts askOptions) {
 		fullState = session.State{}
 	}
 
-	// Register tracking-backed tools (task manager) with access to session state.
+	// Register tracking-backed tools (task manager and memory manager) with access to session state.
 	trackReg := tracking.NewRegistry()
 	trackReg.Register(tracking.NewTaskTracker())
+	trackReg.Register(tracking.NewMemoryTracker())
 	manageItems := tools.NewManageItems(trackReg, &fullState)
 	registry.RegisterTool(tools.ManageItemsBridge{Impl: manageItems})
 

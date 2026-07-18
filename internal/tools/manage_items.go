@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/tjcoder-labs/coder-cli/internal/session"
-	"github.com/tjcoder-labs/coder-cli/internal/tracking"
+	"github.com/tjcoder-labs/cli/internal/session"
+	"github.com/tjcoder-labs/cli/internal/tracking"
 )
 
 // ManageItems is a generic tool for creating, updating, listing, and deleting

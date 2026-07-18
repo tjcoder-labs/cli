@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/tjcoder-labs/coder-cli/internal/articles"
-	"github.com/tjcoder-labs/coder-cli/internal/session"
+	"github.com/tjcoder-labs/cli/internal/articles"
+	"github.com/tjcoder-labs/cli/internal/session"
 )
 
 // ArticleTracker adapts articles.Store to the generic Tracker

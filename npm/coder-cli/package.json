@@ -1,6 +1,6 @@
 {
   "name": "@tj/coder-cli",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Terminal-first coding CLI by TJ Coder / AI Labs",
   "license": "UNLICENSED",
   "private": false,
@@ -31,13 +31,13 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/tjcoder-labs/coder-cli.git",
+    "url": "https://github.com/tjcoder-labs/cli.git",
     "directory": "npm/coder-cli"
   },
   "bugs": {
-    "url": "https://github.com/tjcoder-labs/coder-cli/issues"
+    "url": "https://github.com/tjcoder-labs/cli/issues"
   },
-  "homepage": "https://github.com/tjcoder-labs/coder-cli#readme",
+  "homepage": "https://github.com/tjcoder-labs/cli#readme",
   "keywords": [
     "ai",
     "coding",

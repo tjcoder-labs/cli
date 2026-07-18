@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/tjcoder-labs/coder-cli/internal/reminders"
-	"github.com/tjcoder-labs/coder-cli/internal/session"
+	"github.com/tjcoder-labs/cli/internal/reminders"
+	"github.com/tjcoder-labs/cli/internal/session"
 )
 
 // ReminderTracker adapts reminders.Store to the generic Tracker

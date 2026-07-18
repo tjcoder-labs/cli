@@ -15,15 +15,15 @@ import (
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
-	"github.com/tjcoder-labs/coder-cli/internal/agent"
-	"github.com/tjcoder-labs/coder-cli/internal/client"
-	"github.com/tjcoder-labs/coder-cli/internal/session"
-	"github.com/tjcoder-labs/coder-cli/internal/tasks"
-	"github.com/tjcoder-labs/coder-cli/internal/tooling"
-	"github.com/tjcoder-labs/coder-cli/internal/tools"
-	"github.com/tjcoder-labs/coder-cli/internal/tracking"
+	"github.com/tjcoder-labs/cli/internal/agent"
+	"github.com/tjcoder-labs/cli/internal/client"
+	"github.com/tjcoder-labs/cli/internal/memories"
+	"github.com/tjcoder-labs/cli/internal/session"
+	"github.com/tjcoder-labs/cli/internal/tasks"
+	"github.com/tjcoder-labs/cli/internal/tooling"
+	"github.com/tjcoder-labs/cli/internal/tools"
+	"github.com/tjcoder-labs/cli/internal/tracking"
 
-	"os/exec"
 	"unicode"
 )
 
@@ -132,11 +132,11 @@ type App struct {
 	// only mutations happen in Run() under the caller's stack.
 	running bool
 
-	provider client.Provider
-	registry *tools.Registry
-	runner   *tooling.Runner
+	provider     client.Provider
+	registry     *tools.Registry
+	runner       *tooling.Runner
 	sessionState session.State
-	palette  Palette
+	palette      Palette
 
 	workspaceRoot          string
 	productName            string
@@ -173,20 +173,20 @@ type App struct {
 	// column when the user opens /tasks. The user navigates with
 	// Up/Down and presses Enter to toggle a task between done and
 	// its previous open status.
-	tasksList       *tview.List
-	tasksPanel      *tview.Flex
-	testView        *tview.TextView
-	testPanel       *tview.Flex
+	tasksList  *tview.List
+	tasksPanel *tview.Flex
+	testView   *tview.TextView
+	testPanel  *tview.Flex
 	// right is the right-column Flex (Cognition stacked over the
 	// active body). Cached so buildRightColumn can read its current
 	// size for adaptive height calculations.
-	right           *tview.Flex
-	input           *tview.InputField
-	contextBar      *tview.TextView
-	footer          *tview.TextView
-	statusBar       *tview.TextView
-	pages           *tview.Pages
-	suggestion      *tview.TextView
+	right      *tview.Flex
+	input      *tview.InputField
+	contextBar *tview.TextView
+	footer     *tview.TextView
+	statusBar  *tview.TextView
+	pages      *tview.Pages
+	suggestion *tview.TextView
 
 	startupSplashVisible   bool
 	reasoningSplashVisible bool
@@ -220,8 +220,8 @@ type App struct {
 	// run (or first user turn), it flips to false so we don't recap
 	// on every launch.
 	firstRun bool
-	rootFlex    tview.Primitive
-	inputRow    tview.Primitive
+	rootFlex tview.Primitive
+	inputRow tview.Primitive
 
 	mu sync.Mutex
 
@@ -274,10 +274,15 @@ func New(provider client.Provider, registry *tools.Registry, workspaceRoot, mode
 		palette:       darkPalette(),
 		config:        cfg,
 	}
+	// Set up sinks for tool integration (highlight_code, invoke_cli_command, etc.)
+	app.runner.CLICommandSink = app
 	trackReg := tracking.NewRegistry()
 	trackReg.Register(tracking.NewTaskTracker())
+	trackReg.Register(tracking.NewMemoryTracker())
 	registry.RegisterTool(tools.ManageItemsBridge{Impl: tools.NewManageItems(trackReg, &app.sessionState)})
 	app.resetEnabledTools(current.ToolNames)
+	app.runner.SessionState = &app.sessionState
+	app.runner.PersistSession = app.saveSession
 	app.build()
 	app.loadSession()
 	app.loadModelsAsync()
@@ -1328,17 +1333,35 @@ func (a *App) handleSlashCommand(cmd string) {
 		a.openReminderModal()
 	case "task":
 		a.openTaskModal()
+	case "memory", "memories":
+		a.openMemoryModal()
 	case "config":
 		a.openConfigModal()
 	case "tasks":
 		a.showPanel("tasks")
+	case "activity":
+		a.showPanel("activity")
 	case "test":
 		a.showPanel("test")
 	case "articles":
 		a.showPanel("articles")
 	default:
-		a.appendActivity(fmt.Sprintf("Unknown command: /%s. Try /agent, /tools, /model, /config, /scroll, /clear, /quit, /tasks", command))
+		a.appendActivity(fmt.Sprintf("Unknown command: /%s. Try /agent, /tools, /model, /config, /scroll, /clear, /quit, /task, /memory, /tasks", command))
 	}
+}
+
+// InvokeCLICommand implements the tools.CLICommandSink interface,
+// allowing tools to proactively invoke slash commands on behalf of the agent.
+// This is called from a background goroutine (the runner), so we queue the
+// command invocation through the event loop for thread safety.
+func (a *App) InvokeCLICommand(command string) error {
+	// Queue the command handler in the TUI event loop for thread safety.
+	// This ensures the command is executed in the correct context without
+	// race conditions or deadlocks.
+	a.tv.QueueUpdateDraw(func() {
+		a.handleSlashCommand("/" + command)
+	})
+	return nil
 }
 
 func (a *App) closeSuggestions() {
@@ -1401,6 +1424,36 @@ func (a *App) openTaskModal() {
 	form.AddButton("Cancel", func() { a.pages.RemovePage("modal"); a.tv.SetFocus(a.input) })
 	form.SetButtonsAlign(tview.AlignRight)
 	a.showModal("New Task", form)
+}
+
+func (a *App) openMemoryModal() {
+	form := tview.NewForm()
+	var title, body, tags string
+	form.AddInputField("Title", "", 40, nil, func(s string) { title = s })
+	form.AddInputField("Body", "", 60, nil, func(s string) { body = s })
+	form.AddInputField("Tags (comma separated)", "", 30, nil, func(s string) { tags = s })
+	form.AddButton("Save", func() {
+		parsedTags := []string{}
+		for _, part := range strings.Split(tags, ",") {
+			part = strings.TrimSpace(part)
+			if part != "" {
+				parsedTags = append(parsedTags, part)
+			}
+		}
+		result, err := memories.NewStore().Create(a.sessionState, memories.CreateInput{Title: title, Body: body, Tags: parsedTags, Source: "local"})
+		if err != nil {
+			a.appendActivity(fmt.Sprintf("Memory creation failed: %v", err))
+			return
+		}
+		a.sessionState = result.State
+		a.saveSession()
+		a.appendActivity(fmt.Sprintf("Stored memory: %s", title))
+		a.pages.RemovePage("modal")
+		a.tv.SetFocus(a.input)
+	})
+	form.AddButton("Cancel", func() { a.pages.RemovePage("modal"); a.tv.SetFocus(a.input) })
+	form.SetButtonsAlign(tview.AlignRight)
+	a.showModal("New Memory", form)
 }
 
 // openConfigModal shows a small JSON editor preloaded with the
@@ -1538,9 +1591,13 @@ func (a *App) runCognitionRecap() {
 	} else {
 		prompt = "Please review recent messages and output a one paragraph recap of the discussion which will be appended to the cognition pane of the tj coder CLI."
 	}
-	cmd := exec.Command(os.Args[0], "--model", "gemma4:latest", "-p", prompt, "--quiet")
-	cmd.Dir = a.workspaceRoot
-	out, err := cmd.CombinedOutput()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// Use the internal runner to avoid the overhead and risks of spawning a subprocess.
+	// We disable tools for the recap to ensure it's a plain text summary.
+	newHistory, err := a.runner.Run(ctx, a.history, prompt, a.currentAgent, a.currentModel, nil, nil)
 	if err != nil {
 		a.tv.QueueUpdateDraw(func() {
 			fmt.Fprintf(a.reasoning, "\n[%s::b]cognition recap failed[-:-:-] %v[-]\n", a.palette.HexOrchid, err)
@@ -1548,10 +1605,16 @@ func (a *App) runCognitionRecap() {
 		})
 		return
 	}
-	recapped := strings.TrimSpace(string(out))
+
+	if len(newHistory) == 0 {
+		return
+	}
+	recapped := newHistory[len(newHistory)-1].Content
 	if recapped == "" {
 		return
 	}
+	recapped = strings.TrimSpace(recapped)
+
 	a.tv.QueueUpdateDraw(func() {
 		fmt.Fprintf(a.reasoning, "\n[%s::b]─── RECAP ───[-:-:-]\n", a.palette.HexPurple)
 		fmt.Fprintf(a.reasoning, "[%s]%s[-]\n", a.palette.TextMain, recapped)
@@ -1569,25 +1632,25 @@ func (a *App) showPanel(name string) {
 		a.refreshTasksList()
 		a.setActivePanel("tasks")
 		a.rebuildLayout()
-		a.tv.SetFocus(a.input)
+		a.focusInput()
 		return
 	case "articles":
 		a.setActivePanel("articles")
 		a.activity.SetText("[articles] Not implemented yet\n")
 		a.rebuildLayout()
-		a.tv.SetFocus(a.input)
+		a.focusInput()
 		return
 	case "code":
 		a.setActivePanel("code")
 		a.refreshCodePanel()
 		a.rebuildLayout()
-		a.tv.SetFocus(a.input)
+		a.focusInput()
 		return
 	case "test":
 		a.setActivePanel("test")
 		a.testView.SetText("Test Pane: Active\n\nThis is an empty test pane used for troubleshooting hangs.")
 		a.rebuildLayout()
-		a.tv.SetFocus(a.input)
+		a.focusInput()
 		return
 	default:
 		a.setActivePanel("activity")
@@ -1597,7 +1660,7 @@ func (a *App) showPanel(name string) {
 			}
 		}
 		a.rebuildLayout()
-		a.tv.SetFocus(a.input)
+		a.focusInput()
 	}
 }
 
@@ -1606,6 +1669,12 @@ func (a *App) showPanel(name string) {
 // glyph and (when done) a struck-through, dimmed title. The user
 // navigates with Up/Down and presses Enter to toggle the task
 // between done and its previous open status.
+func (a *App) focusInput() {
+	if a.tv != nil && a.input != nil {
+		a.tv.SetFocus(a.input)
+	}
+}
+
 func (a *App) refreshTasksList() {
 	if a.tasksList == nil {
 		return
@@ -1741,11 +1810,47 @@ func (a *App) refreshCodePanel() {
 	))
 }
 
+// reloadTasksIfChanged checks if tasks were modified (e.g., by the agent),
+// reloads them from the saved session, and refreshes the pane if they changed.
+func (a *App) reloadTasksIfChanged() {
+	// Load the current session state from disk
+	saved, exists, err := session.Load(a.workspaceRoot)
+	if err != nil || !exists {
+		return
+	}
+	
+	// Simple comparison: if task count differs, tasks changed
+	if len(saved.Tasks) != len(a.sessionState.Tasks) {
+		a.sessionState.Tasks = append([]session.Task(nil), saved.Tasks...)
+		// Only refresh if the pane is currently visible
+		if a.activePanel == "tasks" && a.tasksList != nil {
+			a.refreshTasksList()
+		}
+		return
+	}
+	
+	// Check if any task content changed
+	for i, t := range saved.Tasks {
+		if i >= len(a.sessionState.Tasks) || 
+		   t.ID != a.sessionState.Tasks[i].ID ||
+		   t.Title != a.sessionState.Tasks[i].Title ||
+		   t.Status != a.sessionState.Tasks[i].Status {
+			a.sessionState.Tasks = append([]session.Task(nil), saved.Tasks...)
+			// Only refresh if the pane is currently visible
+			if a.activePanel == "tasks" && a.tasksList != nil {
+				a.refreshTasksList()
+			}
+			return
+		}
+	}
+}
+
 // renderTasks loads session state and formats tasks for display
 func (a *App) renderTasks(maxLines int) string {
 	list := tasks.Load(a.sessionState)
 	return tasks.FormatPromptBlock(list, maxLines)
 }
+
 
 func (a *App) clearSession() {
 	// Reset UI panels to default state
@@ -1808,6 +1913,18 @@ func (a *App) submit() {
 	a.addReferencesFromText(prompt)
 	a.refreshContextBar()
 
+	// CRITICAL: Save the session immediately and synchronously after rendering
+	// the user message. This must complete before we start the runner goroutine,
+	// so that if the user quits immediately, the message is already persisted.
+	// We hold the mutex during save to prevent concurrent modifications.
+	a.mu.Lock()
+	if err := a.saveSession(); err != nil {
+		a.mu.Unlock()
+		a.appendActivity(fmt.Sprintf("["+a.palette.HexOrchid+"::b]warning[-:-:-]: failed to save session: %v", err))
+	} else {
+		a.mu.Unlock()
+	}
+
 	enabled := a.enabledToolList()
 	history := append([]client.Message(nil), a.history...)
 	agentCfg := a.currentAgent
@@ -1845,6 +1962,9 @@ func (a *App) submit() {
 			a.refreshFooter()
 			a.tv.SetFocus(a.input)
 			a.saveSession()
+			
+			// Auto-refresh tasks pane if visible and tasks were modified by the agent
+			a.reloadTasksIfChanged()
 		})
 	}()
 }
@@ -2183,14 +2303,14 @@ func (a *App) buildRightColumn() *tview.Flex {
 	// allows content to adapt without leaving empty space.
 	cogProp := 1  // Cognition gets 1 part
 	bodyProp := 2 // Body gets 2 parts by default (2:3 ratio)
-	
+
 	// When viewing a non-activity panel, give more space to the body since it's
 	// the primary focus (1:1.5 ratio instead of 1:2)
 	if a.activePanel != "" && a.activePanel != "activity" {
 		bodyProp = 1
 		cogProp = 1
 	}
-	
+
 	// Pick the body primitive that matches the active panel.
 	// Defaults to the activity TextView so the right column still
 	// works even if a panel name is unknown.
@@ -2213,6 +2333,7 @@ func (a *App) buildRightColumn() *tview.Flex {
 	a.right = right
 	return right
 }
+
 // rebuildLayout reconstructs the page tree, hiding or showing the
 // right column based on a.fullscreen. We rebuild the layout from
 // scratch so fullscreen is fully reversible and idempotent.
@@ -2524,6 +2645,9 @@ func (a *App) openModelModal() {
 			a.currentModel = item.Name
 			a.refreshHeader()
 			a.appendActivity("Selected model: " + item.Name)
+			// Debug: log state before save
+			fmt.Fprintf(os.Stderr, "[DEBUG] Before saveSession: history=%d, tasks=%d, reasoning_len=%d\n", 
+				len(a.history), len(a.sessionState.Tasks), len(strings.TrimSpace(a.reasoning.GetText(true))))
 			a.saveSession()
 			a.pages.RemovePage("modal")
 			a.tv.SetFocus(a.input)

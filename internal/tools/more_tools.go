@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tjcoder-labs/coder-cli/internal/client"
+	"github.com/tjcoder-labs/cli/internal/client"
 )
 
 // fetchTool performs a simple HTTP fetch and returns body (truncated).

@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tjcoder-labs/coder-cli/internal/session"
+	"github.com/tjcoder-labs/cli/internal/session"
 )
 
 // Article is the public alias for the persisted type so callers

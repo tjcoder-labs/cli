@@ -13,10 +13,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 
-	"github.com/tjcoder-labs/coder-cli/internal/client"
+	"github.com/tjcoder-labs/cli/internal/client"
 )
 
 // DirName is the directory created under each workspace root for
@@ -63,6 +64,21 @@ type Task struct {
 	Meta        map[string]any `json:"meta,omitempty"`
 }
 
+// BackgroundJob tracks a long-running delegated command launched from the
+// current session. The main thread keeps a lightweight record here while the
+// child process writes to a job-specific log file under .ergo-cli-go/jobs/.
+type BackgroundJob struct {
+	ID          string `json:"id"`
+	Command     string `json:"command"`
+	Cwd         string `json:"cwd,omitempty"`
+	Status      string `json:"status"`
+	StartedAt   string `json:"started_at"`
+	CompletedAt string `json:"completed_at,omitempty"`
+	OutputPath  string `json:"output_path,omitempty"`
+	SessionPath string `json:"session_path,omitempty"`
+	Error       string `json:"error,omitempty"`
+}
+
 // Article is a single item in the session's article list. See
 // SENTINEL_BETA.md §4.
 type Article struct {
@@ -107,9 +123,10 @@ type State struct {
 	// Tasks, Articles, and Memories are added by the SENTINEL_BETA work
 	// and the unified-right-pane work. They are omitempty so old session
 	// files (which don't have them) decode cleanly into the same struct.
-	Tasks    []Task    `json:"tasks,omitempty"`
-	Articles []Article `json:"articles,omitempty"`
-	Memories []Memory  `json:"memories,omitempty"`
+	Tasks          []Task          `json:"tasks,omitempty"`
+	Articles       []Article       `json:"articles,omitempty"`
+	Memories       []Memory        `json:"memories,omitempty"`
+	BackgroundJobs []BackgroundJob `json:"background_jobs,omitempty"`
 }
 
 // Load reads the session file for the given workspace root. If the file
@@ -126,10 +143,90 @@ func Load(workspaceRoot string) (State, bool, error) {
 		}
 		return state, false, err
 	}
-	if err := json.Unmarshal(data, &state); err != nil {
+
+	var raw struct {
+		CurrentAgent   string           `json:"current_agent"`
+		CurrentModel   string           `json:"current_model"`
+		EnabledTools   []string         `json:"enabled_tools"`
+		History        []client.Message `json:"history"`
+		ContextInfo    string           `json:"context_info,omitempty"`
+		RefOrder       []string         `json:"ref_order,omitempty"`
+		Transcript     json.RawMessage  `json:"transcript"`
+		Reasoning      string           `json:"reasoning,omitempty"`
+		Activity       string           `json:"activity,omitempty"`
+		Tasks          []Task           `json:"tasks,omitempty"`
+		Articles       []Article        `json:"articles,omitempty"`
+		Memories       []Memory         `json:"memories,omitempty"`
+		BackgroundJobs []BackgroundJob  `json:"background_jobs,omitempty"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
 		return state, true, fmt.Errorf("session: decode %s: %w", Path(workspaceRoot), err)
 	}
+
+	state.CurrentAgent = raw.CurrentAgent
+	state.CurrentModel = raw.CurrentModel
+	state.EnabledTools = raw.EnabledTools
+	state.History = raw.History
+	state.ContextInfo = raw.ContextInfo
+	state.RefOrder = raw.RefOrder
+	state.Reasoning = raw.Reasoning
+	state.Activity = raw.Activity
+	state.Tasks = raw.Tasks
+	state.Articles = raw.Articles
+	state.Memories = raw.Memories
+	state.BackgroundJobs = raw.BackgroundJobs
+	state.Transcript = parseTranscript(raw.Transcript)
 	return state, true, nil
+}
+
+func parseTranscript(raw json.RawMessage) []TranscriptEntry {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil
+	}
+	var entries []TranscriptEntry
+	if err := json.Unmarshal(raw, &entries); err == nil {
+		return entries
+	}
+	var legacy string
+	if err := json.Unmarshal(raw, &legacy); err != nil {
+		return nil
+	}
+	return parseLegacyTranscript(legacy)
+}
+
+func parseLegacyTranscript(legacy string) []TranscriptEntry {
+	stripRe := regexp.MustCompile(`\[[^\]]+\]`)
+	var entries []TranscriptEntry
+	for _, block := range strings.Split(legacy, "\n\n") {
+		block = strings.TrimSpace(block)
+		if block == "" {
+			continue
+		}
+		role := "assistant"
+		if strings.Contains(strings.ToLower(block), "you") || strings.Contains(strings.ToLower(block), "[#c4a5ff") {
+			role = "user"
+		}
+		lines := strings.Split(block, "\n")
+		var content []string
+		for _, line := range lines {
+			trimmed := strings.TrimSpace(line)
+			if trimmed == "" {
+				continue
+			}
+			if strings.Contains(strings.ToLower(trimmed), "you") || strings.Contains(strings.ToLower(trimmed), "assistant") {
+				continue
+			}
+			cleaned := stripRe.ReplaceAllString(trimmed, "")
+			cleaned = strings.TrimSpace(cleaned)
+			if cleaned != "" {
+				content = append(content, cleaned)
+			}
+		}
+		if len(content) > 0 {
+			entries = append(entries, TranscriptEntry{Role: role, Content: strings.Join(content, "\n")})
+		}
+	}
+	return entries
 }
 
 // Save writes the state to the workspace's session file. It creates

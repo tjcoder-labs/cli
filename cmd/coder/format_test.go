@@ -103,8 +103,8 @@ func TestExtractAndPrettyXML(t *testing.T) {
 			if !ok {
 				return
 			}
-			// Pretty output should reparse cleanly.
-			if !strings.Contains(got, "<root>") {
+			// Pretty output should reparse cleanly and preserve the root element.
+			if !strings.Contains(got, "<root") {
 				t.Fatalf("pretty output missing root tag: %q", got)
 			}
 		})

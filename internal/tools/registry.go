@@ -7,7 +7,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/tjcoder-labs/coder-cli/internal/client"
+	"github.com/tjcoder-labs/cli/internal/client"
+	"github.com/tjcoder-labs/cli/internal/session"
 )
 
 type Result struct {
@@ -23,6 +24,14 @@ type ExecEnv struct {
 	// tool will return the rendered string as its tool result
 	// instead of streaming it to a panel.
 	Sink HighlightSink
+	// CommandSink, when non-nil, lets tools invoke slash commands on
+	// behalf of the agent. nil means "headless" — the invoke_cli_command
+	// tool will return a message about what would have been invoked.
+	CommandSink CLICommandSink
+	// SessionState and PersistSession let tools persist background jobs and
+	// other session-scoped metadata outside the active turn.
+	SessionState   *session.State
+	PersistSession func() error
 }
 
 // HighlightSink returns the /code panel sink wired to this env, or
@@ -71,6 +80,7 @@ func NewRegistry(provider client.Provider) *Registry {
 		openInIDETool{},
 		// UI control
 		uiControlTool{},
+		invokeCliCommandTool{},
 	} {
 		r.tools[tool.Definition().Function.Name] = tool
 	}

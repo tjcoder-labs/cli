@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tjcoder-labs/coder-cli/internal/client"
-	"github.com/tjcoder-labs/coder-cli/internal/tools"
+	"github.com/tjcoder-labs/cli/internal/client"
+	"github.com/tjcoder-labs/cli/internal/tools"
 )
 
 type mockProvider struct{}
