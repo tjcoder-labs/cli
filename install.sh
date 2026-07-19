@@ -12,7 +12,8 @@
 #   1. Detects OS/arch.
 #   2. If a prebuilt binary is available for this platform at the given
 #      release tag, downloads it.
-#   3. Otherwise falls back to building from source (requires `go`).
+#   3. Otherwise builds from source: reuses a local checkout when run from
+#      inside the repo, or clones the repo (requires `go` and `git`).
 #   4. Installs to $PREFIX (default: ~/.local/bin) and prints PATH hints.
 set -euo pipefail
 
@@ -81,6 +82,30 @@ download_release() {
   echo "$tmpdir/coder"
 }
 
+# --- clone source (for `curl | bash` with no local checkout) --------------
+clone_source() {
+  local tmpdir="$1"
+  local destdir="$tmpdir/src"
+  need git
+  local repo_url="https://github.com/${REPO}.git"
+  if [[ -n "$VERSION" ]]; then
+    # Try the exact tag first (with and without a leading `v`), then fall
+    # back to a shallow clone of the default branch.
+    local tag="v${VERSION#v}"
+    log "cloning $repo_url @ $tag"
+    if git clone --depth 1 --branch "$tag" "$repo_url" "$destdir" >/dev/null 2>&1 \
+       || git clone --depth 1 --branch "${VERSION#v}" "$repo_url" "$destdir" >/dev/null 2>&1; then
+      echo "$destdir"; return 0
+    fi
+    warn "tag $tag not found; cloning default branch"
+  else
+    log "cloning $repo_url"
+  fi
+  git clone --depth 1 "$repo_url" "$destdir" >/dev/null 2>&1 \
+    || die "failed to clone $repo_url"
+  echo "$destdir"
+}
+
 # --- build from source ----------------------------------------------------
 build_from_source() {
   local srcdir="$1" tmpdir="$2"
@@ -113,10 +138,17 @@ build_from_source() {
   fi
 
   log "building from source in $srcdir"
+  # cmd/coder/main.go uses //go:embed package.json, and go:embed forbids
+  # path traversal, so stage a sibling copy of the root package.json in the
+  # cmd dir for the embed to resolve (mirrors the Makefile).
+  if [[ -f "$srcdir/package.json" && ! -f "$srcdir/cmd/coder/package.json" ]]; then
+    cp "$srcdir/package.json" "$srcdir/cmd/coder/package.json"
+  fi
   ( cd "$srcdir" && \
     go build -trimpath \
       -ldflags "-X 'main.version=$version' -X 'main.productName=$product' -X 'main.author=$author'" \
-      -o "$tmpdir/coder" ./cmd/coder )
+      -o "$tmpdir/coder" ./cmd/coder ) || die "build failed in $srcdir"
+  [[ -x "$tmpdir/coder" ]] || die "build did not produce a 'coder' binary"
   echo "$tmpdir/coder"
 }
 
@@ -163,14 +195,18 @@ main() {
   log "platform: $platform"
   log "prefix:   $PREFIX"
 
-  # Try prebuilt release first, fall back to source.
+  # Try prebuilt release first, then a local checkout, then clone + build.
   if src=$(download_release "$platform" "$tmpdir" 2>/dev/null); then
     log "using prebuilt binary"
   elif srcdir=$(find_source_dir 2>/dev/null) && [[ -n "$srcdir" ]]; then
-    warn "no prebuilt binary for $platform; building from source"
+    warn "no prebuilt binary for $platform; building from local checkout"
+    src=$(build_from_source "$srcdir" "$tmpdir")
+  elif command -v go >/dev/null 2>&1 && command -v git >/dev/null 2>&1; then
+    warn "no prebuilt binary for $platform and no local checkout; cloning source"
+    srcdir=$(clone_source "$tmpdir")
     src=$(build_from_source "$srcdir" "$tmpdir")
   else
-    die "no prebuilt binary available and no source checkout found; clone the repo and run $0 from inside it"
+    die "no prebuilt binary available for $platform, and cannot build from source (need 'go' and 'git' on PATH)"
   fi
 
   installed=$(install_binary "$src" "$PREFIX")
