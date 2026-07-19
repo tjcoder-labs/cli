@@ -1616,7 +1616,7 @@ func (a *App) runCognitionRecap() {
 	recapped = strings.TrimSpace(recapped)
 
 	a.tv.QueueUpdateDraw(func() {
-		fmt.Fprintf(a.reasoning, "\n\n[%s]%s[-]\n", a.palette.TextMain, recapped)
+		fmt.Fprintf(a.reasoning, "\n\n%s\n", a.highlightTranscriptText(recapped))
 		a.reasoning.ScrollToEnd()
 	})
 }
@@ -1974,7 +1974,7 @@ func (a *App) handleEvent(event tooling.Event) {
 			a.assistantState = "thinking"
 			a.clearReasoningSplash()
 			a.cognitionActive = true
-			fmt.Fprint(a.reasoning, event.Text)
+			fmt.Fprint(a.reasoning, a.highlightTranscriptText(event.Text))
 			a.reasoning.ScrollToEnd()
 			a.addReferencesFromText(event.Text)
 		case tooling.EventCommentary:
