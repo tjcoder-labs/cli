@@ -57,8 +57,25 @@ type Runner struct {
 const defaultMaxToolSteps = 8
 
 type thoughtParser struct {
-	buf     string
-	inThink bool
+	buf        string
+	inThink    bool
+	inToolCall bool
+}
+
+// Streaming control-token variants. `<think>` reasoning is routed to the
+// cognition pane; tool-call wrappers are suppressed entirely so leaked tool
+// markup never reaches the live transcript. Models vary the delimiter shape
+// (plain `<tool_call>`, pipe-delimited `<|tool_call|>` / `<tool_call|>`, and
+// the single-angle-quote `‹tool_call›` form used by minimax-m3), so we treat
+// every recognized delimiter as a toggle: the first one opens a suppressed
+// span and the next closes it. This mirrors the post-hoc cleaning done by
+// scrubMessage/ExtractFallbackToolCall for stored history.
+var toolCallDelims = []string{
+	"<|/tool_call|>", "<|tool_call|>",
+	"<|/tool_call>", "<|tool_call>",
+	"</tool_call|>", "<tool_call|>",
+	"</tool_call>", "<tool_call>",
+	"\u2039/tool_call\u203a", "\u2039tool_call\u203a",
 }
 
 // partialSuffixLen checks if the end of string 's' contains an incomplete
@@ -76,10 +93,35 @@ func partialSuffixLen(s, target string) int {
 	return 0
 }
 
+// earliestToken returns the byte index and matched token for the earliest
+// occurrence of any of tokens within s, or (-1, "") if none are present.
+func earliestToken(s string, tokens []string) (int, string) {
+	bestIdx, best := -1, ""
+	for _, t := range tokens {
+		if i := strings.Index(s, t); i != -1 && (bestIdx == -1 || i < bestIdx) {
+			bestIdx, best = i, t
+		}
+	}
+	return bestIdx, best
+}
+
+// maxPartialSuffix returns the largest partial-suffix length across tokens so
+// a control token split across streaming chunks is held back until complete.
+func maxPartialSuffix(s string, tokens []string) int {
+	max := 0
+	for _, t := range tokens {
+		if n := partialSuffixLen(s, t); n > max {
+			max = n
+		}
+	}
+	return max
+}
+
 func (p *thoughtParser) Add(text string) (reasoning, commentary string) {
 	p.buf += text
 	for len(p.buf) > 0 {
-		if p.inThink {
+		switch {
+		case p.inThink:
 			idx := strings.Index(p.buf, "</think>")
 			if idx != -1 {
 				reasoning += p.buf[:idx]
@@ -87,48 +129,78 @@ func (p *thoughtParser) Add(text string) (reasoning, commentary string) {
 				p.inThink = false
 				continue
 			}
-
-			// If the buffer ends with a partial closing tag, hold it back
+			// If the buffer ends with a partial closing tag, hold it back.
 			partial := partialSuffixLen(p.buf, "</think>")
 			if partial > 0 {
 				reasoning += p.buf[:len(p.buf)-partial]
 				p.buf = p.buf[len(p.buf)-partial:]
-				break
+				return reasoning, commentary
 			}
-
 			reasoning += p.buf
 			p.buf = ""
-			break
+			return reasoning, commentary
 
-		} else {
-			idx := strings.Index(p.buf, "<think>")
+		case p.inToolCall:
+			// Suppress everything until the next delimiter (which closes the
+			// span); emit nothing.
+			idx, tok := earliestToken(p.buf, toolCallDelims)
 			if idx != -1 {
-				commentary += p.buf[:idx]
-				p.buf = p.buf[idx+len("<think>"):]
-				p.inThink = true
+				p.buf = p.buf[idx+len(tok):]
+				p.inToolCall = false
+				continue
+			}
+			// Hold back a partial delimiter; discard the rest.
+			partial := maxPartialSuffix(p.buf, toolCallDelims)
+			p.buf = p.buf[len(p.buf)-partial:]
+			return reasoning, commentary
+
+		default:
+			thinkIdx := strings.Index(p.buf, "<think>")
+			toolIdx, toolTok := earliestToken(p.buf, toolCallDelims)
+
+			// Pick whichever opener appears first in the buffer.
+			nextIdx, kind := -1, ""
+			if thinkIdx != -1 {
+				nextIdx, kind = thinkIdx, "think"
+			}
+			if toolIdx != -1 && (nextIdx == -1 || toolIdx < nextIdx) {
+				nextIdx, kind = toolIdx, "tool"
+			}
+			if nextIdx != -1 {
+				commentary += p.buf[:nextIdx]
+				if kind == "think" {
+					p.buf = p.buf[nextIdx+len("<think>"):]
+					p.inThink = true
+				} else {
+					p.buf = p.buf[nextIdx+len(toolTok):]
+					p.inToolCall = true
+				}
 				continue
 			}
 
-			// If the buffer ends with a partial opening tag, hold it back
-			partial := partialSuffixLen(p.buf, "<think>")
+			// No complete opener: hold back a partial opener of any kind.
+			openTokens := append([]string{"<think>"}, toolCallDelims...)
+			partial := maxPartialSuffix(p.buf, openTokens)
 			if partial > 0 {
 				commentary += p.buf[:len(p.buf)-partial]
 				p.buf = p.buf[len(p.buf)-partial:]
-				break
+				return reasoning, commentary
 			}
-
 			commentary += p.buf
 			p.buf = ""
-			break
+			return reasoning, commentary
 		}
 	}
 	return reasoning, commentary
 }
 
 func (p *thoughtParser) Flush() (reasoning, commentary string) {
-	if p.inThink {
+	switch {
+	case p.inThink:
 		reasoning = p.buf
-	} else {
+	case p.inToolCall:
+		// Discard incomplete/unclosed tool-call markup entirely.
+	default:
 		commentary = p.buf
 	}
 	p.buf = ""

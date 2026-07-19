@@ -37,12 +37,13 @@ func ExtractFallbackToolCall(content string, registry *tools.Registry) ([]client
 
 	// 0. Regex for escaped/angle-bracket tool_call wrappers emitted inside
 	// commentary by some models (e.g. minimax-m3). These appear as
-	// \u2039tool_call\u2039...\u2039/tool_call\u2039 (single angle quotes) or
-	// <tool_call>...</tool_call> (literal angle brackets), sometimes with
-	// stray backslashes from over-eager escaping. We strip the wrapper,
-	// recover the inner JSON, and dispatch through the same validation
+	// \u2039tool_call\u2039...\u2039/tool_call\u2039 (single angle quotes),
+	// <tool_call>...</tool_call> (literal angle brackets), or pipe-delimited
+	// forms such as <|tool_call|>...<|/tool_call|> / <tool_call|>...<tool_call|>,
+	// sometimes with stray backslashes from over-eager escaping. We strip the
+	// wrapper, recover the inner JSON, and dispatch through the same validation
 	// path as the markdown-fenced extractor.
-	escapedToolCallRe := regexp.MustCompile(`(?is)[‹<]tool_call[›>]([\s\S]*?)[‹<]/tool_call[›>]`)
+	escapedToolCallRe := regexp.MustCompile(`(?is)[‹<]\|?/?\s*tool_call\|?[›>]([\s\S]*?)[‹<]\|?/?\s*tool_call\|?[›>]`)
 	escapedMatches := escapedToolCallRe.FindAllStringSubmatch(cleanedContent, -1)
 	for _, match := range escapedMatches {
 		inner := match[1]
