@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/tjcoder-labs/cli/internal/client"
+	"github.com/tjcoder-labs/cli/internal/session"
 )
 
 func TestCmdAsk_SessionRetention(t *testing.T) {
@@ -83,7 +84,7 @@ func TestCmdAsk_SessionRetention(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to read session: %v", err)
 	}
-	var state persistedSession
+	var state session.State
 	if err := json.Unmarshal(data, &state); err != nil {
 		t.Fatalf("failed to unmarshal session: %v", err)
 	}

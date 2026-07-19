@@ -5,15 +5,47 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/tjcoder-labs/cli/internal/client"
 )
+
+// validateFetchURL rejects URLs that resolve to loopback, private,
+// link-local, or otherwise non-public addresses. Without this guard a
+// prompt-injected model could use the fetch tool as an SSRF primitive
+// to reach localhost services or the cloud metadata endpoint
+// (169.254.169.254) and exfiltrate credentials.
+func validateFetchURL(raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("invalid url: %w", err)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return fmt.Errorf("unsupported url scheme %q (only http/https allowed)", u.Scheme)
+	}
+	host := u.Hostname()
+	if host == "" {
+		return fmt.Errorf("url has no host")
+	}
+	ips, err := net.LookupIP(host)
+	if err != nil {
+		return fmt.Errorf("cannot resolve host %q: %w", host, err)
+	}
+	for _, ip := range ips {
+		if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified() {
+			return fmt.Errorf("refusing to fetch non-public address %s", ip)
+		}
+	}
+	return nil
+}
 
 // fetchTool performs a simple HTTP fetch and returns body (truncated).
 type fetchTool struct{}
@@ -42,6 +74,9 @@ func (fetchTool) Execute(_ context.Context, raw json.RawMessage, env ExecEnv) (R
 	}
 	if args.URL == "" {
 		return Result{}, fmt.Errorf("url is required")
+	}
+	if err := validateFetchURL(args.URL); err != nil {
+		return Result{}, err
 	}
 	client := http.Client{Timeout: 15 * time.Second}
 	resp, err := client.Get(args.URL)
@@ -90,7 +125,10 @@ func (appendFileTool) Execute(_ context.Context, raw json.RawMessage, env ExecEn
 	if args.Path == "" {
 		return Result{}, fmt.Errorf("path required")
 	}
-	path := resolvePath(env.WorkspaceRoot, args.Path)
+	path, err := resolveInWorkspace(env.WorkspaceRoot, args.Path)
+	if err != nil {
+		return Result{}, err
+	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return Result{}, err
 	}
@@ -134,7 +172,10 @@ func (deleteFileTool) Execute(_ context.Context, raw json.RawMessage, env ExecEn
 	if args.Path == "" {
 		return Result{}, fmt.Errorf("path required")
 	}
-	path := resolvePath(env.WorkspaceRoot, args.Path)
+	path, err := resolveInWorkspace(env.WorkspaceRoot, args.Path)
+	if err != nil {
+		return Result{}, err
+	}
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		if args.Force {
 			return Result{Content: "missing (ignored)", Preview: "missing (ignored)"}, nil
@@ -176,8 +217,14 @@ func (moveFileTool) Execute(_ context.Context, raw json.RawMessage, env ExecEnv)
 	if args.Src == "" || args.Dst == "" {
 		return Result{}, fmt.Errorf("src and dst required")
 	}
-	src := resolvePath(env.WorkspaceRoot, args.Src)
-	dst := resolvePath(env.WorkspaceRoot, args.Dst)
+	src, err := resolveInWorkspace(env.WorkspaceRoot, args.Src)
+	if err != nil {
+		return Result{}, err
+	}
+	dst, err := resolveInWorkspace(env.WorkspaceRoot, args.Dst)
+	if err != nil {
+		return Result{}, err
+	}
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 		return Result{}, err
 	}
@@ -222,6 +269,29 @@ func (gitLogTool) Execute(_ context.Context, raw json.RawMessage, env ExecEnv) (
 	return Result{Content: s, Preview: preview(s)}, nil
 }
 
+// validateCronExpr ensures cron_expr is a standard 5-field crontab
+// schedule and contains no shell metacharacters or newlines. This
+// prevents crontab injection: cron_expr is written verbatim into a
+// crontab line, so an unvalidated value could smuggle an arbitrary
+// command onto its own line and gain persistent code execution.
+var cronFieldRe = regexp.MustCompile(`^[0-9*/,\-]+$`)
+
+func validateCronExpr(expr string) error {
+	if strings.ContainsAny(expr, "\n\r") {
+		return fmt.Errorf("cron_expr must not contain newlines")
+	}
+	fields := strings.Fields(expr)
+	if len(fields) != 5 {
+		return fmt.Errorf("cron_expr must have exactly 5 fields, got %d", len(fields))
+	}
+	for _, f := range fields {
+		if !cronFieldRe.MatchString(f) {
+			return fmt.Errorf("cron_expr field %q contains invalid characters", f)
+		}
+	}
+	return nil
+}
+
 // reminderTool stores a reminder and optionally installs a cron entry.
 type reminderTool struct{}
 
@@ -252,6 +322,9 @@ func (reminderTool) Execute(_ context.Context, raw json.RawMessage, env ExecEnv)
 	if args.CronExpr == "" || args.Message == "" {
 		return Result{}, fmt.Errorf("cron_expr and message are required")
 	}
+	if err := validateCronExpr(args.CronExpr); err != nil {
+		return Result{}, err
+	}
 	// Persist to workspace reminders file
 	dir := filepath.Join(env.WorkspaceRoot, ".ergo-cli-go")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -274,6 +347,9 @@ func (reminderTool) Execute(_ context.Context, raw json.RawMessage, env ExecEnv)
 	}
 
 	if args.InstallCron {
+		if strings.ContainsAny(args.Message, "\n\r") {
+			return Result{}, fmt.Errorf("reminder message must not contain newlines when installing cron")
+		}
 		// Attempt to append a crontab line that writes the message to reminders.log
 		cronLine := fmt.Sprintf("%s echo '%s' >> %s/reminders.log", args.CronExpr, strings.ReplaceAll(args.Message, "'", "'\\''"), dir)
 		// read existing crontab

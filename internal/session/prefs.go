@@ -40,14 +40,18 @@ const prefsFileName = "prefs.json"
 // zero values should not appear) and to mergePrefs so a missing
 // field in an older file does not wipe a newly-added default.
 type Prefs struct {
-	// LastTUIModel is the model the user most recently picked
-	// from the TUI's model modal (or via the -model flag while
-	// the TUI was running). It is honored on the next TUI launch
-	// regardless of workspace.
+	// LastModel is the single, shared "most recently selected model"
+	// used by both the interactive TUI and the headless
+	// `coder -p`/`ask` paths. Selecting a model in either mode records
+	// it here so the choice persists across program sessions and
+	// across workspaces, regardless of which mode set it.
+	LastModel string `json:"last_model,omitempty"`
+	// LastTUIModel and LastHeadlessModel are retained only for
+	// backward-compatible migration: older prefs files wrote these
+	// per-mode slots. They are read as a fallback when LastModel is
+	// empty and are no longer written.
 	LastTUIModel string `json:"last_tui_model,omitempty"`
-	// LastHeadlessModel is the model used by the last successful
-	// headless `coder -p`/`ask` invocation. It is honored on the
-	// next headless run.
+	// LastHeadlessModel: see LastTUIModel.
 	LastHeadlessModel string `json:"last_headless_model,omitempty"`
 	// Theme is reserved for future cross-workspace UI prefs.
 	// Not used yet; kept here so the on-disk schema does not
@@ -57,10 +61,13 @@ type Prefs struct {
 
 // mergePrefs overlays overrides onto base, returning the merged
 // view. The two-arg form is what save callers use to make sure a
-// partial update (e.g. only flipping LastTUIModel) does not erase
+// partial update (e.g. only flipping LastModel) does not erase
 // the other field that the caller did not touch.
 func mergePrefs(base, overrides Prefs) Prefs {
 	out := base
+	if overrides.LastModel != "" {
+		out.LastModel = overrides.LastModel
+	}
 	if overrides.LastTUIModel != "" {
 		out.LastTUIModel = overrides.LastTUIModel
 	}
@@ -161,14 +168,14 @@ func savePrefsLocked(p Prefs) error {
 	return nil
 }
 
-// GetLastModel returns the persisted model for the given session
-// type. The boolean is false when no pref has been recorded yet,
-// so callers know to fall through to their next preference source
-// (usually the agent's DefaultModel).
+// GetLastModel returns the persisted model. The boolean is false when
+// no pref has been recorded yet, so callers know to fall through to
+// their next preference source (usually the agent's DefaultModel).
 //
-// isTUI=true reads the TUI slot; isTUI=false reads the headless
-// slot. The two slots are independent so the user's TUI choice
-// does not bleed into headless runs and vice versa.
+// The isTUI argument is retained for API compatibility but no longer
+// selects between separate slots: TUI and headless now share a single
+// remembered model (Prefs.LastModel). When LastModel is empty, the
+// legacy per-mode slots are consulted as a migration fallback.
 func GetLastModel(isTUI bool) (string, bool) {
 	prefsMu.Lock()
 	defer prefsMu.Unlock()
@@ -176,16 +183,24 @@ func GetLastModel(isTUI bool) (string, bool) {
 	if err != nil {
 		return "", false
 	}
-	if isTUI {
-		return p.LastTUIModel, p.LastTUIModel != ""
+	if p.LastModel != "" {
+		return p.LastModel, true
 	}
-	return p.LastHeadlessModel, p.LastHeadlessModel != ""
+	// Migration fallback: honor whichever legacy slot is populated so
+	// an existing prefs file keeps working before the first write.
+	if p.LastTUIModel != "" {
+		return p.LastTUIModel, true
+	}
+	if p.LastHeadlessModel != "" {
+		return p.LastHeadlessModel, true
+	}
+	return "", false
 }
 
-// SetLastModel records model as the user's most recent pick for
-// the given session type. Empty model is treated as a no-op so
-// callers can pass an uninitialized string without wiping the
-// stored value.
+// SetLastModel records model as the user's most recent pick, shared
+// across both the TUI and headless modes. Empty model is treated as a
+// no-op so callers can pass an uninitialized string without wiping the
+// stored value. The isTUI argument is retained for API compatibility.
 func SetLastModel(isTUI bool, model string) error {
 	if model == "" {
 		return nil
@@ -199,18 +214,14 @@ func SetLastModel(isTUI bool, model string) error {
 		// prefs document so the caller's intent is preserved.
 		p = Prefs{}
 	}
-	if isTUI {
-		p.LastTUIModel = model
-	} else {
-		p.LastHeadlessModel = model
-	}
+	p.LastModel = model
 	return savePrefsLocked(p)
 }
 
-// LastModelOrDefault returns the persisted model for the given
-// session type, falling back to fallback when no value has been
-// recorded. It is the one-call helper both runtimes use; it
-// guarantees the caller always gets a non-empty model.
+// LastModelOrDefault returns the persisted model, falling back to
+// fallback when no value has been recorded. It is the one-call helper
+// both runtimes use; it guarantees the caller always gets a non-empty
+// model.
 func LastModelOrDefault(isTUI bool, fallback string) string {
 	if m, ok := GetLastModel(isTUI); ok {
 		return m

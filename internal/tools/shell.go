@@ -112,7 +112,16 @@ func (runCommandTool) Execute(ctx context.Context, raw json.RawMessage, env Exec
 			return Result{}, fmt.Errorf("persist background job: %w", err)
 		}
 
-		runCtx, cancel := context.WithTimeout(ctx, time.Duration(args.TimeoutSeconds)*time.Second)
+		// Background jobs must outlive the current conversation turn, so
+		// they are detached from the turn context. Tying them to ctx
+		// caused the job to be cancelled the moment the turn ended,
+		// defeating the purpose of background execution. A generous
+		// independent timeout still guards against runaway processes.
+		bgTimeout := time.Duration(args.TimeoutSeconds) * time.Second
+		if bgTimeout < time.Hour {
+			bgTimeout = time.Hour
+		}
+		runCtx, cancel := context.WithTimeout(context.Background(), bgTimeout)
 		cmd := exec.CommandContext(runCtx, "bash", "-lc", args.Command)
 		if args.Cwd != "" {
 			cmd.Dir = resolvePath(env.WorkspaceRoot, args.Cwd)
@@ -121,6 +130,7 @@ func (runCommandTool) Execute(ctx context.Context, raw json.RawMessage, env Exec
 		}
 		logFile, err := os.Create(logPath)
 		if err != nil {
+			cancel()
 			job.Status = "failed"
 			job.Error = fmt.Sprintf("create log file: %v", err)
 			job.CompletedAt = time.Now().UTC().Format(time.RFC3339)
@@ -130,6 +140,7 @@ func (runCommandTool) Execute(ctx context.Context, raw json.RawMessage, env Exec
 		cmd.Stdout = logFile
 		cmd.Stderr = logFile
 		if err := cmd.Start(); err != nil {
+			cancel()
 			logFile.Close()
 			job.Status = "failed"
 			job.Error = fmt.Sprintf("start command: %v", err)
