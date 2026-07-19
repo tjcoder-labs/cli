@@ -1587,9 +1587,9 @@ func (a *App) runCognitionRecap() {
 	defer func() { a.firstRun = false }()
 	var prompt string
 	if len(a.history) == 0 {
-		prompt = "Please review recent messages and output a one paragraph recap of the discussion which will be appended to the cognition pane of the tj coder CLI. The user has not yet sent a message; produce a brief welcome that summarises the current session context (workspace, model, agent) and what kinds of tasks the user might want help with."
+		prompt = fmt.Sprintf("Please review recent messages and output a one paragraph recap of the discussion which will be appended to the cognition pane of the tj coder CLI. The user has not yet sent a message; produce a brief welcome that summarises the current session context and what kinds of tasks the user might want help with. Use exactly these session facts and do not invent others: workspace=%q, model=%q, agent=%q.", a.workspaceRoot, a.currentModel, a.currentAgent.Name)
 	} else {
-		prompt = "Please review recent messages and output a one paragraph recap of the discussion which will be appended to the cognition pane of the tj coder CLI."
+		prompt = fmt.Sprintf("Please review recent messages and output a one paragraph recap of the discussion which will be appended to the cognition pane of the tj coder CLI. If you reference the active model or agent, use exactly these session facts and do not invent others: model=%q, agent=%q.", a.currentModel, a.currentAgent.Name)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
