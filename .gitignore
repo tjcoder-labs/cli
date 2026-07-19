@@ -11,3 +11,10 @@ node_modules/
 
 # Logs
 *.log
+
+# Stray build artifact (canonical build output is bin/coder)
+/coder
+
+# TESTS.sh run output
+/report.json
+/tests.log
