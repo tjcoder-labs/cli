@@ -1616,8 +1616,7 @@ func (a *App) runCognitionRecap() {
 	recapped = strings.TrimSpace(recapped)
 
 	a.tv.QueueUpdateDraw(func() {
-		fmt.Fprintf(a.reasoning, "\n\n [%s]RECAP[-]\n", a.palette.HexPurple)
-		fmt.Fprintf(a.reasoning, "[%s]%s[-]\n", a.palette.TextMain, recapped)
+		fmt.Fprintf(a.reasoning, "\n\n[%s]%s[-]\n", a.palette.TextMain, recapped)
 		a.reasoning.ScrollToEnd()
 	})
 }
@@ -1908,8 +1907,7 @@ func (a *App) submit() {
 	a.cognitionActive = true
 	// New cognition entries are appended inline; no per-turn divider is
 	// rendered here so the pane does not accumulate blank header lines
-	// on a quiet session. The recap header (the RECAP label) remains the
-	// sole visual marker for fresh cognition content.
+	// on a quiet session.
 	a.addReferencesFromText(prompt)
 	a.refreshContextBar()
 
