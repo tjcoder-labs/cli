@@ -124,6 +124,36 @@ const marginX = 3
 
 const modelLoadTimeout = 12 * time.Second
 
+// slashCommand describes a single "/" command for the inline command
+// palette rendered on the input hint line. This is the single source of
+// truth used both by the input change handler (to build live matches)
+// and by Tab/Shift+Tab cycling.
+type slashCommand struct {
+	cmd  string
+	desc string
+}
+
+// slashCommands is the ordered set of commands offered by the inline
+// palette. Keep in sync with handleSlashCommand's switch.
+var slashCommands = []slashCommand{
+	{"agent", "Open agent selector"},
+	{"agentinfo", "View current agent prompt"},
+	{"tools", "Toggle tools"},
+	{"model", "Choose model"},
+	{"scroll", "Scroll transcript"},
+	{"clear", "Clear session"},
+	{"quit", "Quit application"},
+	{"trigger", "Trigger an event"},
+	{"reminder", "Create a reminder"},
+	{"task", "Create a task"},
+	{"tasks", "Open tasks panel"},
+	{"memory", "Store a memory"},
+	{"config", "Edit user config (JSON)"},
+	{"environment", "Edit injected environment/context template"},
+	{"activity", "Open activity panel"},
+	{"about", "Open the about / welcome screen"},
+}
+
 type App struct {
 	tv *tview.Application
 	// running is true between App.Run() entering tv.Run() and
@@ -181,7 +211,7 @@ type App struct {
 	// right is the right-column Flex (Cognition stacked over the
 	// active body). Cached so buildRightColumn can read its current
 	// size for adaptive height calculations.
-	right      *tview.Flex
+	right *tview.Flex
 	// leftPane, when non-nil, replaces the Conversation column in the
 	// normal layout branch. It is how modal-style commands (/config,
 	// /environment, /agent, /model, /tools, form editors, etc.) render
@@ -193,7 +223,17 @@ type App struct {
 	footer     *tview.TextView
 	statusBar  *tview.TextView
 	pages      *tview.Pages
-	suggestion *tview.TextView
+
+	// Inline input-hint palette state. The line beneath the input
+	// (contextBar) alternates between session meta (cwd/context/refs)
+	// and a horizontally-scrolling command/reference palette driven by
+	// the first character of the input: "" = meta, "command" (leading
+	// "/"), "reference" (leading "@", stubbed for now). hintMatches is
+	// the current filtered command list and hintSelected the index of
+	// the highlighted entry (used for Tab cycling and marquee windowing).
+	hintMode     string
+	hintMatches  []slashCommand
+	hintSelected int
 
 	startupSplashVisible   bool
 	reasoningSplashVisible bool
@@ -427,8 +467,10 @@ func (a *App) build() {
 	a.input.SetPlaceholder("Type a command or message (use / for commands)")
 	a.input.SetPlaceholderTextColor(a.palette.TextFaint)
 	a.input.SetPlaceholderStyle(tcell.StyleDefault.Foreground(a.palette.TextFaint).Background(a.palette.BgInput))
-	// Keep slash suggestions lightweight and non-focusable so the input
-	// stays fully usable while still showing matching commands inline.
+	// The input hint line (contextBar) alternates between session meta
+	// and an inline command/reference palette based on the input's
+	// first character. updateInputHint recomputes that state and
+	// refreshContextBar renders it.
 	a.input.SetChangedFunc(func(text string) {
 		// Any non-empty text input (including slash commands) exits
 		// about mode automatically so the user can chat without
@@ -436,41 +478,8 @@ func (a *App) build() {
 		if a.aboutMode && text != "" {
 			a.setAboutMode(false)
 		}
-		if a.suggestion == nil {
-			return
-		}
-		if !strings.HasPrefix(text, "/") {
-			a.suggestion.SetText("")
-			return
-		}
-		cmds := []struct{ cmd, desc string }{
-			{"agent", "Open agent selector"},
-			{"agentinfo", "View current agent prompt"},
-			{"tools", "Toggle tools"},
-			{"model", "Choose model"},
-			{"scroll", "Scroll transcript"},
-			{"clear", "Clear session"},
-			{"quit", "Quit application"},
-			{"trigger", "Trigger an event"},
-			{"event", "Alias for trigger"},
-			{"reminder", "Create a reminder"},
-			{"task", "Create a task"},
-			{"config", "Edit user config (JSON)"},
-			{"environment", "Edit injected environment/context template"},
-			{"about", "Open the about / welcome screen"},
-		}
-		q := strings.ToLower(strings.TrimPrefix(text, "/"))
-		var matches []string
-		for _, c := range cmds {
-			if q == "" || strings.HasPrefix(c.cmd, q) {
-				matches = append(matches, fmt.Sprintf("[%s]/%s[-]", a.palette.HexPurple, c.cmd))
-			}
-		}
-		if len(matches) == 0 {
-			a.suggestion.SetText("")
-			return
-		}
-		a.suggestion.SetText(strings.Join(matches, "  "))
+		a.updateInputHint(text)
+		a.refreshContextBar()
 	})
 	a.input.SetBackgroundColor(a.palette.BgInput)
 	a.input.SetBorderPadding(1, 0, 2, 2)
@@ -479,12 +488,40 @@ func (a *App) build() {
 			a.submit()
 		}
 	})
-
-	a.suggestion = tview.NewTextView().SetDynamicColors(true)
-	a.suggestion.SetBackgroundColor(a.palette.BgInput)
-	a.suggestion.SetTextColor(a.palette.TextDim)
-	a.suggestion.SetWrap(false)
-	a.suggestion.SetText("")
+	// Tab / Shift+Tab cycle the highlighted entry in the command
+	// palette while it is active; Enter completes the highlighted
+	// command into the input unless the typed token is already an
+	// exact command (then it submits normally). Arrow keys are left
+	// untouched so the text cursor behaves as usual.
+	a.input.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+		if a.hintMode != "command" || len(a.hintMatches) == 0 {
+			return event
+		}
+		switch event.Key() {
+		case tcell.KeyTab:
+			a.hintSelected = (a.hintSelected + 1) % len(a.hintMatches)
+			a.refreshContextBar()
+			return nil
+		case tcell.KeyBacktab:
+			a.hintSelected = (a.hintSelected - 1 + len(a.hintMatches)) % len(a.hintMatches)
+			a.refreshContextBar()
+			return nil
+		case tcell.KeyEnter:
+			typed := strings.ToLower(strings.TrimPrefix(strings.TrimSpace(a.input.GetText()), "/"))
+			// Exact match already typed: let submit run it.
+			for _, c := range a.hintMatches {
+				if c.cmd == typed {
+					return event
+				}
+			}
+			// Otherwise complete to the highlighted command and stay
+			// in the field so the user can add arguments / confirm.
+			sel := a.hintMatches[a.hintSelected]
+			a.input.SetText("/" + sel.cmd + " ")
+			return nil
+		}
+		return event
+	})
 
 	// Pre-build the About TextViews so toggling aboutMode (via
 	// /about) is just a layout swap rather than a rebuild. The ASCII
@@ -1056,6 +1093,155 @@ func (a *App) refreshHeaderRight() {
 }
 
 func (a *App) refreshContextBar() string {
+	// The hint line alternates between the inline command/reference
+	// palette (while the user is typing a "/" or "@" prefix) and the
+	// session meta line (cwd / context / refs) otherwise.
+	var line string
+	switch a.hintMode {
+	case "command":
+		line = a.renderCommandPalette()
+	case "reference":
+		line = a.renderReferencePalette()
+	default:
+		line = a.renderMetaBar()
+	}
+	if a.contextBar != nil {
+		a.contextBar.SetText(line)
+	}
+	return line
+}
+
+// updateInputHint inspects the current input text and sets the hint-line
+// mode and (for command mode) the filtered command matches. A leading
+// "/" activates the command palette; a leading "@" activates the
+// reference palette (stubbed pending a workspace file index); anything
+// else reverts the line to session meta.
+func (a *App) updateInputHint(text string) {
+	switch {
+	case strings.HasPrefix(text, "/"):
+		q := strings.ToLower(strings.TrimPrefix(text, "/"))
+		// Match on the first token only so arguments don't disturb the
+		// palette once a command has been chosen.
+		if i := strings.IndexAny(q, " \t"); i != -1 {
+			q = q[:i]
+		}
+		matches := make([]slashCommand, 0, len(slashCommands))
+		for _, c := range slashCommands {
+			if q == "" || strings.HasPrefix(c.cmd, q) {
+				matches = append(matches, c)
+			}
+		}
+		a.hintMode = "command"
+		a.hintMatches = matches
+		if a.hintSelected >= len(matches) {
+			a.hintSelected = 0
+		}
+	case strings.HasPrefix(text, "@"):
+		a.hintMode = "reference"
+		a.hintMatches = nil
+		a.hintSelected = 0
+	default:
+		a.hintMode = ""
+		a.hintMatches = nil
+		a.hintSelected = 0
+	}
+}
+
+// paletteWidth returns the number of columns available for the hint line
+// content, accounting for the contextBar's horizontal border padding.
+func (a *App) paletteWidth() int {
+	if a.contextBar == nil {
+		return 80
+	}
+	_, _, w, _ := a.contextBar.GetInnerRect()
+	if w <= 0 {
+		w = 80
+	}
+	return w
+}
+
+// renderCommandPalette renders the matched "/" commands as a single
+// horizontally-windowed line. The highlighted entry (hintSelected) is
+// always kept within the visible window; minimal chevrons ("‹" / "›")
+// flag content clipped off either edge.
+func (a *App) renderCommandPalette() string {
+	if len(a.hintMatches) == 0 {
+		return fmt.Sprintf(" [%s]no matching commands[-] ", a.palette.HexFaint)
+	}
+	// Plain (untagged) label per entry, used for width accounting.
+	labels := make([]string, len(a.hintMatches))
+	for i, c := range a.hintMatches {
+		labels[i] = "/" + c.cmd
+	}
+	const sep = "  "
+	width := a.paletteWidth()
+	// Reserve two columns for potential chevrons on each side.
+	budget := width - 4
+	if budget < 8 {
+		budget = 8
+	}
+
+	// Grow a window around hintSelected until it no longer fits.
+	start, end := a.hintSelected, a.hintSelected+1
+	used := len(labels[a.hintSelected])
+	for {
+		grew := false
+		if end < len(labels) {
+			if cost := len(sep) + len(labels[end]); used+cost <= budget {
+				used += cost
+				end++
+				grew = true
+			}
+		}
+		if start > 0 {
+			if cost := len(sep) + len(labels[start-1]); used+cost <= budget {
+				used += cost
+				start--
+				grew = true
+			}
+		}
+		if !grew {
+			break
+		}
+	}
+
+	var b strings.Builder
+	b.WriteString(" ")
+	if start > 0 {
+		b.WriteString(fmt.Sprintf("[%s]‹[-] ", a.palette.HexPurple))
+	}
+	for i := start; i < end; i++ {
+		if i > start {
+			b.WriteString(sep)
+		}
+		if i == a.hintSelected {
+			// Highlighted entry: bright lavender + description hint.
+			b.WriteString(fmt.Sprintf("[%s::b]%s[-:-:-]", a.palette.HexLavender, labels[i]))
+		} else {
+			b.WriteString(fmt.Sprintf("[%s]%s[-]", a.palette.HexPurple, labels[i]))
+		}
+	}
+	if end < len(labels) {
+		b.WriteString(fmt.Sprintf(" [%s]›[-]", a.palette.HexPurple))
+	}
+	// Append the highlighted command's description as a faint trailer
+	// when there's room, so the user knows what the selection does.
+	desc := a.hintMatches[a.hintSelected].desc
+	if desc != "" && used+len(desc)+3 <= budget {
+		b.WriteString(fmt.Sprintf("   [%s]%s[-]", a.palette.HexFaint, desc))
+	}
+	b.WriteString(" ")
+	return b.String()
+}
+
+// renderReferencePalette is a placeholder for the forthcoming "@" file
+// reference picker. Until a workspace file index is wired up, it simply
+// advertises the feature so the mode is discoverable.
+func (a *App) renderReferencePalette() string {
+	return fmt.Sprintf(" [%s]@ file references — coming soon[-] ", a.palette.HexFaint)
+}
+
+func (a *App) renderMetaBar() string {
 	cwd := a.workspaceRoot
 	if cwd == "" {
 		cwd = "."
@@ -1374,15 +1560,9 @@ func (a *App) InvokeCLICommand(command string) error {
 	return nil
 }
 
-func (a *App) closeSuggestions() {
-	if a.suggestion != nil {
-		a.suggestion.SetText("")
-	}
-	a.tv.SetFocus(a.input)
-}
-
 func (a *App) openTriggerModal() {
 	form := tview.NewForm()
+	a.styleModalForm(form)
 	var name, payload string
 	form.AddInputField("Event name", "", 20, nil, func(s string) { name = s })
 	form.AddInputField("Payload (optional)", "", 40, nil, func(s string) { payload = s })
@@ -1391,12 +1571,12 @@ func (a *App) openTriggerModal() {
 		a.closeModal()
 	})
 	form.AddButton("Cancel", func() { a.closeModal() })
-	form.SetButtonsAlign(tview.AlignRight)
 	a.showModal("Trigger Event", form)
 }
 
 func (a *App) openReminderModal() {
 	form := tview.NewForm()
+	a.styleModalForm(form)
 	var cronExpr, message string
 	var install bool
 	form.AddInputField("Cron (5 fields)", "", 20, nil, func(s string) { cronExpr = s })
@@ -1408,12 +1588,12 @@ func (a *App) openReminderModal() {
 		a.closeModal()
 	})
 	form.AddButton("Cancel", func() { a.closeModal() })
-	form.SetButtonsAlign(tview.AlignRight)
 	a.showModal("Set Reminder", form)
 }
 
 func (a *App) openTaskModal() {
 	form := tview.NewForm()
+	a.styleModalForm(form)
 	var title, due string
 	form.AddInputField("Title", "", 40, nil, func(s string) { title = s })
 	form.AddInputField("Due (optional)", "", 20, nil, func(s string) { due = s })
@@ -1429,12 +1609,12 @@ func (a *App) openTaskModal() {
 		a.closeModal()
 	})
 	form.AddButton("Cancel", func() { a.closeModal() })
-	form.SetButtonsAlign(tview.AlignRight)
 	a.showModal("New Task", form)
 }
 
 func (a *App) openMemoryModal() {
 	form := tview.NewForm()
+	a.styleModalForm(form)
 	var title, body, tags string
 	form.AddInputField("Title", "", 40, nil, func(s string) { title = s })
 	form.AddInputField("Body", "", 60, nil, func(s string) { body = s })
@@ -1458,7 +1638,6 @@ func (a *App) openMemoryModal() {
 		a.closeModal()
 	})
 	form.AddButton("Cancel", func() { a.closeModal() })
-	form.SetButtonsAlign(tview.AlignRight)
 	a.showModal("New Memory", form)
 }
 
@@ -1468,21 +1647,16 @@ func (a *App) openMemoryModal() {
 // are surfaced in the activity log rather than as a popup so the
 // editor stays focused for quick corrections.
 func (a *App) openConfigModal() {
+	bg := a.palette.BgInput
 	editor := tview.NewTextArea()
-	editor.SetBackgroundColor(a.palette.BgModal)
-	editor.SetBorder(true).
-		SetTitle(" config.json — edit values, Ctrl+S to save, Esc to cancel ").
-		SetTitleAlign(tview.AlignLeft)
+	editor.SetBackgroundColor(bg)
 	editor.SetText(formatConfigJSON(a.config), true)
 
 	help := tview.NewTextView().SetDynamicColors(true)
-	help.SetBackgroundColor(a.palette.BgModal)
+	help.SetBackgroundColor(bg)
 	help.SetTextColor(a.palette.TextDim)
-	help.SetText(fmt.Sprintf(" [%s]editing:[-] %s   [%s]hint:[-] toolMax caps tool steps per turn",
-		a.palette.HexFaint, a.configPath(), a.palette.HexFaint))
-
-	buttons := tview.NewFlex()
-	buttons.SetBackgroundColor(a.palette.BgModal)
+	help.SetText(fmt.Sprintf(" [%s]%s[-]   [%s]ctrl+s[-] save · [%s]esc[-] cancel · toolMax caps tool steps/turn",
+		a.palette.HexFaint, a.configPath(), a.palette.HexLavender, a.palette.HexLavender))
 
 	// capture by value so Cancel always closes over the editor it
 	// opened, even after a future Save replaces a.config.
@@ -1505,20 +1679,11 @@ func (a *App) openConfigModal() {
 		closeModal()
 	}
 
-	saveBtn := tview.NewButton("Save").SetSelectedFunc(save)
-	cancelBtn := tview.NewButton("Cancel").SetSelectedFunc(closeModal)
-	for _, b := range []*tview.Button{saveBtn, cancelBtn} {
-		b.SetBackgroundColor(a.palette.BgModal)
-		b.SetLabelColor(a.palette.TextMain)
-	}
-	buttons.AddItem(saveBtn, 0, 1, false)
-	buttons.AddItem(cancelBtn, 0, 1, false)
-
 	body := tview.NewFlex().SetDirection(tview.FlexRow).
 		AddItem(help, 1, 0, false).
-		AddItem(editor, 0, 1, true).
-		AddItem(buttons, 1, 0, false)
-	body.SetBackgroundColor(a.palette.BgModal)
+		AddItem(spacerBox(bg), 1, 0, false).
+		AddItem(editor, 0, 1, true)
+	body.SetBackgroundColor(bg)
 
 	// Ctrl+S saves, Esc cancels. We wire these on the TextArea's
 	// input capture so they work regardless of focus.
@@ -1559,15 +1724,13 @@ func (a *App) renderedEnvironment() string {
 // supports {{token}} interpolation (cwd, shell, os, model, agent, …)
 // resolved live at each turn. Ctrl+S saves, Esc cancels.
 func (a *App) openEnvironmentModal() {
+	bg := a.palette.BgInput
 	editor := tview.NewTextArea()
-	editor.SetBackgroundColor(a.palette.BgModal)
-	editor.SetBorder(true).
-		SetTitle(" environment.tmpl — Ctrl+S to save, Esc to cancel ").
-		SetTitleAlign(tview.AlignLeft)
+	editor.SetBackgroundColor(bg)
 	editor.SetText(ctxpkg.LoadTemplate(a.workspaceRoot), true)
 
 	preview := tview.NewTextView().SetDynamicColors(true).SetWrap(true)
-	preview.SetBackgroundColor(a.palette.BgModal)
+	preview.SetBackgroundColor(bg)
 	preview.SetTextColor(a.palette.TextDim)
 	renderPreview := func() {
 		out := a.buildEnvironmentInfo().Render(editor.GetText())
@@ -1575,8 +1738,14 @@ func (a *App) openEnvironmentModal() {
 	}
 	renderPreview()
 
+	hint := tview.NewTextView().SetDynamicColors(true)
+	hint.SetBackgroundColor(bg)
+	hint.SetTextColor(a.palette.TextDim)
+	hint.SetText(fmt.Sprintf(" [%s]%s[-]   [%s]ctrl+s[-] save · [%s]esc[-] cancel",
+		a.palette.HexFaint, ctxpkg.TemplatePath(a.workspaceRoot), a.palette.HexLavender, a.palette.HexLavender))
+
 	help := tview.NewTextView().SetDynamicColors(true)
-	help.SetBackgroundColor(a.palette.BgModal)
+	help.SetBackgroundColor(bg)
 	help.SetTextColor(a.palette.TextDim)
 	help.SetText(fmt.Sprintf(" [%s]tokens:[-] {{cwd}} {{workspace}} {{shell}} {{os}} {{arch}} {{user}} {{hostname}} {{time}} {{timezone}} {{home}} {{locale}} {{model}} {{agent}} {{cli_version}}",
 		a.palette.HexFaint))
@@ -1593,23 +1762,12 @@ func (a *App) openEnvironmentModal() {
 
 	editor.SetChangedFunc(renderPreview)
 
-	saveBtn := tview.NewButton("Save").SetSelectedFunc(save)
-	cancelBtn := tview.NewButton("Cancel").SetSelectedFunc(closeEnv)
-	for _, b := range []*tview.Button{saveBtn, cancelBtn} {
-		b.SetBackgroundColor(a.palette.BgModal)
-		b.SetLabelColor(a.palette.TextMain)
-	}
-	buttons := tview.NewFlex()
-	buttons.SetBackgroundColor(a.palette.BgModal)
-	buttons.AddItem(saveBtn, 0, 1, false)
-	buttons.AddItem(cancelBtn, 0, 1, false)
-
 	body := tview.NewFlex().SetDirection(tview.FlexRow).
+		AddItem(hint, 1, 0, false).
 		AddItem(help, 2, 0, false).
 		AddItem(editor, 0, 2, true).
-		AddItem(preview, 0, 1, false).
-		AddItem(buttons, 1, 0, false)
-	body.SetBackgroundColor(a.palette.BgModal)
+		AddItem(preview, 0, 1, false)
+	body.SetBackgroundColor(bg)
 
 	editor.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 		switch event.Key() {
@@ -1627,32 +1785,31 @@ func (a *App) openEnvironmentModal() {
 }
 
 func (a *App) openAgentInfoModal() {
-	body := tview.NewTextView().SetDynamicColors(true).SetWrap(true)
-	body.SetBackgroundColor(a.palette.BgModal)
+	bg := a.palette.BgInput
+	body := tview.NewTextView().SetDynamicColors(true).SetWrap(true).SetScrollable(true)
+	body.SetBackgroundColor(bg)
 	body.SetTextColor(a.palette.TextMain)
 	prompt := strings.TrimSpace(a.currentAgent.Prompt)
 	if prompt == "" {
 		prompt = "<no system prompt available>"
 	}
-	body.SetText(fmt.Sprintf("[yellow]Agent:[-] %s\n[yellow]Title:[-] %s\n[yellow]Default model:[-] %s\n[yellow]Tools:[-] %s\n\n[yellow]System prompt:[-]\n%s",
-		a.currentAgent.Name,
-		a.currentAgent.Title,
-		a.currentAgent.DefaultModel,
-		strings.Join(a.currentAgent.ToolNames, ", "),
-		prompt,
+	p := a.palette.HexPurple
+	body.SetText(fmt.Sprintf("[%s]Agent:[-] %s\n[%s]Title:[-] %s\n[%s]Default model:[-] %s\n[%s]Tools:[-] %s\n\n[%s]System prompt:[-]\n%s\n\n[%s]esc[-] close",
+		p, a.currentAgent.Name,
+		p, a.currentAgent.Title,
+		p, a.currentAgent.DefaultModel,
+		p, strings.Join(a.currentAgent.ToolNames, ", "),
+		p, prompt,
+		a.palette.HexLavender,
 	))
-
-	closeButton := tview.NewButton("Close").SetSelectedFunc(func() {
-		a.closeModal()
+	body.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+		if event.Key() == tcell.KeyEsc {
+			a.closeModal()
+			return nil
+		}
+		return event
 	})
-	closeButton.SetBackgroundColor(a.palette.BgModal)
-	closeButton.SetLabelColor(a.palette.TextMain)
-
-	container := tview.NewFlex().SetDirection(tview.FlexRow).
-		AddItem(body, 0, 1, false).
-		AddItem(closeButton, 1, 0, true)
-	container.SetBackgroundColor(a.palette.BgModal)
-	a.showModal("Agent Info", container)
+	a.showModal("Agent Info", body)
 }
 
 // setActivePanel records which right-column body is currently
@@ -1910,7 +2067,7 @@ func (a *App) reloadTasksIfChanged() {
 	if err != nil || !exists {
 		return
 	}
-	
+
 	// Simple comparison: if task count differs, tasks changed
 	if len(saved.Tasks) != len(a.sessionState.Tasks) {
 		a.sessionState.Tasks = append([]session.Task(nil), saved.Tasks...)
@@ -1920,13 +2077,13 @@ func (a *App) reloadTasksIfChanged() {
 		}
 		return
 	}
-	
+
 	// Check if any task content changed
 	for i, t := range saved.Tasks {
-		if i >= len(a.sessionState.Tasks) || 
-		   t.ID != a.sessionState.Tasks[i].ID ||
-		   t.Title != a.sessionState.Tasks[i].Title ||
-		   t.Status != a.sessionState.Tasks[i].Status {
+		if i >= len(a.sessionState.Tasks) ||
+			t.ID != a.sessionState.Tasks[i].ID ||
+			t.Title != a.sessionState.Tasks[i].Title ||
+			t.Status != a.sessionState.Tasks[i].Status {
 			a.sessionState.Tasks = append([]session.Task(nil), saved.Tasks...)
 			// Only refresh if the pane is currently visible
 			if a.activePanel == "tasks" && a.tasksList != nil {
@@ -1942,7 +2099,6 @@ func (a *App) renderTasks(maxLines int) string {
 	list := tasks.Load(a.sessionState)
 	return tasks.FormatPromptBlock(list, maxLines)
 }
-
 
 func (a *App) clearSession() {
 	// Reset UI panels to default state
@@ -2059,7 +2215,7 @@ func (a *App) submit() {
 			a.refreshFooter()
 			a.tv.SetFocus(a.input)
 			a.saveSession()
-			
+
 			// Auto-refresh tasks pane if visible and tasks were modified by the agent
 			a.reloadTasksIfChanged()
 		})
@@ -2794,18 +2950,47 @@ func (a *App) openToolModal() {
 // showModal renders a modal-style primitive (editor, form, or selector
 // list) in place of the Conversation column, keeping the right column
 // visible alongside. This replaces the old floating-window presentation
-// so the UI adapts consistently for every applicable command. Use
-// closeModal to dismiss and restore the transcript.
+// so the UI adapts consistently for every applicable command. The modal
+// borrows the borderless design language of the prompt bar
+// (newInputSurface): a subtly elevated bgInput surface fronted by a
+// single left accent beam instead of a box border, with an uppercase
+// purple title label matching the panels. Use closeModal to dismiss and
+// restore the transcript.
 func (a *App) showModal(title string, primitive tview.Primitive) {
+	bg := a.palette.BgInput
+
 	label := tview.NewTextView().SetDynamicColors(true)
-	label.SetBackgroundColor(a.palette.BgModal)
-	label.SetText(fmt.Sprintf(" [%s]%s[-]", a.palette.HexFaint, strings.ToUpper(title)))
+	label.SetBackgroundColor(bg)
+	label.SetText(fmt.Sprintf(" [%s]%s[-]", a.palette.HexPurple, strings.ToUpper(title)))
 	label.SetBorderPadding(1, 0, 2, 2)
 
-	panel := tview.NewFlex().SetDirection(tview.FlexRow).
+	inner := tview.NewFlex().SetDirection(tview.FlexRow).
 		AddItem(label, 2, 0, false).
 		AddItem(primitive, 0, 1, true)
-	panel.SetBackgroundColor(a.palette.BgModal)
+	inner.SetBackgroundColor(bg)
+
+	// Signature left accent beam (mirrors newInputSurface): a single
+	// vertical rule that lights up in purple while the modal owns focus
+	// and dims when it does not, standing in for a box border.
+	beam := tview.NewBox()
+	beam.SetBackgroundColor(bg)
+	beam.SetDrawFunc(func(screen tcell.Screen, x, y, width, height int) (int, int, int, int) {
+		style := tcell.StyleDefault.Foreground(a.palette.Purple).Background(bg)
+		if !primitive.HasFocus() {
+			style = tcell.StyleDefault.Foreground(tcell.NewRGBColor(84, 49, 124)).Background(bg)
+		}
+		for row := 0; row < height; row++ {
+			screen.SetContent(x, y+row, '│', nil, style)
+		}
+		return x, y, width, height
+	})
+
+	panel := tview.NewFlex().
+		AddItem(beam, 1, 0, false).
+		AddItem(spacerBox(bg), marginX-1, 0, false).
+		AddItem(inner, 0, 1, true).
+		AddItem(spacerBox(bg), marginX, 0, false)
+	panel.SetBackgroundColor(bg)
 
 	// About and fullscreen modes own the left column too; clear them so
 	// the modal pane is what actually renders.
@@ -2825,12 +3010,25 @@ func (a *App) closeModal() {
 }
 
 func (a *App) styleModalList(list *tview.List) {
-	list.SetBackgroundColor(a.palette.BgModal)
+	list.SetBackgroundColor(a.palette.BgInput)
 	list.SetBorderPadding(1, 1, 2, 2)
 	list.SetMainTextColor(a.palette.TextMain)
 	list.SetSecondaryTextColor(a.palette.TextDim)
 	list.SetSelectedBackgroundColor(a.palette.BgSelect)
 	list.SetSelectedTextColor(a.palette.Lavender)
+}
+
+// styleModalForm applies the borderless modal surface palette to a form
+// so input fields and buttons read as part of the same bgInput surface
+// as the rest of the modal rather than tview's default black widgets.
+func (a *App) styleModalForm(form *tview.Form) {
+	form.SetBackgroundColor(a.palette.BgInput)
+	form.SetFieldBackgroundColor(a.palette.BgSelect)
+	form.SetFieldTextColor(a.palette.TextMain)
+	form.SetLabelColor(a.palette.Lavender)
+	form.SetButtonBackgroundColor(a.palette.BgSelect)
+	form.SetButtonTextColor(a.palette.TextMain)
+	form.SetButtonsAlign(tview.AlignRight)
 }
 
 func (a *App) ToolNames() []string {
