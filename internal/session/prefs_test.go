@@ -45,24 +45,32 @@ func TestSetAndGetRoundTrip(t *testing.T) {
 	if err := SetLastModel(true, "minimax-m3:cloud"); err != nil {
 		t.Fatalf("SetLastModel(tui): %v", err)
 	}
-	if err := SetLastModel(false, "qwen3:32b"); err != nil {
-		t.Fatalf("SetLastModel(headless): %v", err)
-	}
 	if m, ok := GetLastModel(true); !ok || m != "minimax-m3:cloud" {
 		t.Fatalf("GetLastModel(tui) = (%q, %v), want minimax-m3:cloud/true", m, ok)
 	}
-	if m, ok := GetLastModel(false); !ok || m != "qwen3:32b" {
-		t.Fatalf("GetLastModel(headless) = (%q, %v), want qwen3:32b/true", m, ok)
+	// The model choice is shared across modes, so a headless read sees
+	// the value written from the TUI (and vice versa).
+	if m, ok := GetLastModel(false); !ok || m != "minimax-m3:cloud" {
+		t.Fatalf("GetLastModel(headless) = (%q, %v), want minimax-m3:cloud/true", m, ok)
 	}
 }
 
-func TestSlotsAreIndependent(t *testing.T) {
+func TestSlotIsSharedAcrossModes(t *testing.T) {
 	withXDGConfigHome(t)
-	if err := SetLastModel(true, "tui-only"); err != nil {
+	if err := SetLastModel(true, "shared-model"); err != nil {
 		t.Fatalf("set tui: %v", err)
 	}
-	if m, ok := GetLastModel(false); ok || m != "" {
-		t.Fatalf("expected headless slot untouched, got (%q, %v)", m, ok)
+	// Both modes share a single remembered model, so setting it from
+	// the TUI is immediately visible to headless runs.
+	if m, ok := GetLastModel(false); !ok || m != "shared-model" {
+		t.Fatalf("expected shared slot, got (%q, %v)", m, ok)
+	}
+	// Writing from headless overwrites the same shared slot.
+	if err := SetLastModel(false, "shared-model-2"); err != nil {
+		t.Fatalf("set headless: %v", err)
+	}
+	if m, ok := GetLastModel(true); !ok || m != "shared-model-2" {
+		t.Fatalf("expected TUI to see shared update, got (%q, %v)", m, ok)
 	}
 }
 
@@ -116,8 +124,8 @@ func TestPrefsFileIsCreatedInExpectedLocation(t *testing.T) {
 	if err := json.Unmarshal(data, &p); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if p.LastTUIModel != "x" {
-		t.Fatalf("expected LastTUIModel=x, got %q", p.LastTUIModel)
+	if p.LastModel != "x" {
+		t.Fatalf("expected LastModel=x, got %q", p.LastModel)
 	}
 }
 

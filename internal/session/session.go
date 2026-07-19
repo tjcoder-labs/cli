@@ -43,9 +43,8 @@ type TranscriptEntry struct {
 	Author    string `json:"author,omitempty"`
 }
 
-// Task is a single item in the session's task list. See SENTINEL_BETA.md
-// §3.1 for the full design notes. Fields are deliberately flat so the
-// JSON stays greppable.
+// Task is a single item in the session's task list. Fields are
+// deliberately flat so the JSON stays greppable.
 //
 // PrioritySeq is the user/agent-controlled display order. Higher
 // values sort first. Zero means "use the default sort" (status rank,
@@ -79,8 +78,7 @@ type BackgroundJob struct {
 	Error       string `json:"error,omitempty"`
 }
 
-// Article is a single item in the session's article list. See
-// SENTINEL_BETA.md §4.
+// Article is a single item in the session's article list.
 type Article struct {
 	ID        string   `json:"id"`
 	Title     string   `json:"title"`
@@ -121,7 +119,7 @@ type State struct {
 	Reasoning    string            `json:"reasoning,omitempty"`
 	Activity     string            `json:"activity,omitempty"`
 
-	// Tasks, Articles, and Memories are added by the SENTINEL_BETA work
+	// Tasks, Articles, and Memories are added by the task-tracking work
 	// and the unified-right-pane work. They are omitempty so old session
 	// files (which don't have them) decode cleanly into the same struct.
 	Tasks          []Task          `json:"tasks,omitempty"`

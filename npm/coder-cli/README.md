@@ -65,7 +65,7 @@ coder --timeout 30m
 | Var | Default | Purpose |
 |---|---|---|
 | `GEMINI_API_KEY` | _(required for gemini)_ | API key for Google's Gemini API |
-| `ERGO_HTTP_TIMEOUT` | `5m` | HTTP client timeout (`time.ParseDuration`) |
+| `CODER_HTTP_TIMEOUT` | `5m` | HTTP client timeout (`time.ParseDuration`) |
 | `CODER_CLI_REPO` | `tcoder915/ergo-cli-go` | Override the GitHub repo used by `postinstall` |
 | `CODER_CLI_VERSION` | _(matches this package)_ | Pin a specific `coder` binary version |
 | `CODER_CLI_REQUIRE_DOWNLOAD` | _(unset)_ | Set to `1` to make a failed download fatal |
