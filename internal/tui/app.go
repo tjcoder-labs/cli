@@ -1616,7 +1616,7 @@ func (a *App) runCognitionRecap() {
 	recapped = strings.TrimSpace(recapped)
 
 	a.tv.QueueUpdateDraw(func() {
-		fmt.Fprintf(a.reasoning, "\n[%s::b]─── RECAP ───[-:-:-]\n", a.palette.HexPurple)
+		fmt.Fprintf(a.reasoning, "\n\n [%s]RECAP[-]\n", a.palette.HexPurple)
 		fmt.Fprintf(a.reasoning, "[%s]%s[-]\n", a.palette.TextMain, recapped)
 		a.reasoning.ScrollToEnd()
 	})
@@ -1908,7 +1908,7 @@ func (a *App) submit() {
 	a.cognitionActive = true
 	// New cognition entries are appended inline; no per-turn divider is
 	// rendered here so the pane does not accumulate blank header lines
-	// on a quiet session. The recap header (─── RECAP ───) remains the
+	// on a quiet session. The recap header (the RECAP label) remains the
 	// sole visual marker for fresh cognition content.
 	a.addReferencesFromText(prompt)
 	a.refreshContextBar()
@@ -2080,15 +2080,15 @@ func (a *App) updateAssistantTurnLabel() {
 		a.appendAssistantTurnLabel()
 		return
 	}
-	// Check if the next line is an old timestamp and skip it. Cap
-	// skipIdx to the slice length so the final lines[skipIdx:] splice
-	// can never run past the end of the buffer and panic.
-	skipIdx := idx + 1
-	if skipIdx < len(lines) && strings.Contains(lines[skipIdx], a.palette.HexDim) && regexp.MustCompile(`\d{1,2}:\d{2}`).MatchString(lines[skipIdx]) {
-		skipIdx++ // Skip the old timestamp line
-	}
-	if skipIdx > len(lines) {
-		skipIdx = len(lines)
+	// The timestamp is rendered on the line *above* the label (see
+	// appendAssistantTurnLabel). When this function is called more than
+	// once per turn — first on the initial commentary transition, then
+	// again when the turn completes — we must remove the previously
+	// inserted timestamp line so it is not duplicated. Start the
+	// replacement at the preceding dim timestamp line when present.
+	start := idx
+	if start > 0 && strings.Contains(lines[start-1], a.palette.HexDim) && timestampLineRe.MatchString(lines[start-1]) {
+		start--
 	}
 	var replacement []string
 	// Timestamp first, then label. The label uses an explicit
@@ -2098,13 +2098,19 @@ func (a *App) updateAssistantTurnLabel() {
 		replacement = append(replacement, fmt.Sprintf("[%s]%s[-]", a.palette.HexDim, a.assistantStamp))
 	}
 	replacement = append(replacement, fmt.Sprintf("[%s:%s:b]%s[-:-:-]", a.palette.HexPurple, a.palette.HexRoot, a.assistantLabel()))
-	newLines := append([]string{}, lines[:idx]...)
+	newLines := append([]string{}, lines[:start]...)
 	newLines = append(newLines, replacement...)
-	if skipIdx < len(lines) {
-		newLines = append(newLines, lines[skipIdx:]...)
+	if idx+1 < len(lines) {
+		newLines = append(newLines, lines[idx+1:]...)
 	}
 	a.transcript.SetText(strings.Join(newLines, "\n"))
 }
+
+// timestampLineRe matches a rendered clock stamp such as "5:04 PM" or
+// "11:15 AM" inside a transcript line. It is used to detect and
+// replace a previously inserted timestamp line so per-turn timestamps
+// are never duplicated.
+var timestampLineRe = regexp.MustCompile(`\d{1,2}:\d{2}`)
 
 // formatTimestamp renders a wall-clock stamp in the user's local time
 // using a 12-hour format with seconds (e.g. "5:04:04 PM"). It is the
@@ -2645,9 +2651,10 @@ func (a *App) openModelModal() {
 			a.currentModel = item.Name
 			a.refreshHeader()
 			a.appendActivity("Selected model: " + item.Name)
-			// Debug: log state before save
-			fmt.Fprintf(os.Stderr, "[DEBUG] Before saveSession: history=%d, tasks=%d, reasoning_len=%d\n", 
-				len(a.history), len(a.sessionState.Tasks), len(strings.TrimSpace(a.reasoning.GetText(true))))
+			// Remember the pick as the shared cross-mode model so it
+			// persists across program sessions and workspaces (and is
+			// honored by headless runs too).
+			_ = session.SetLastModel(true, item.Name)
 			a.saveSession()
 			a.pages.RemovePage("modal")
 			a.tv.SetFocus(a.input)

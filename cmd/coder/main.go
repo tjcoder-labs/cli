@@ -104,6 +104,7 @@ func main() {
 	askQuiet := flag.Bool("quiet", false, "headless ask mode: suppress tool activity on stderr")
 	askSystem := flag.String("system", "", "headless ask mode: extra text prepended to the system prompt")
 	askSession := flag.Bool("session", true, "headless ask mode: load and save session history from/to the workspace session file")
+	askToolMax := flag.Int("tool-max", 0, "headless ask mode: maximum number of tool calls (persisted in session)")
 	askFormat := flag.String("format", "text", "headless ask mode: coerce model output — one of {text, json, xml}. For json/xml the response is extracted, validated, and pretty-printed; tool activity remains enabled unless --no-tools is also set.")
 	flag.StringVar(askFormat, "output-format", "", "alias for --format (overrides --format when set)")
 
@@ -170,6 +171,7 @@ func main() {
 				System:        *askSystem,
 				Prompt:        text,
 				Session:       *askSession,
+				ToolMax:       askToolMax,
 				Format:        resolveFormatFlag(*askFormat),
 				ExplicitAgent: explicitAgent,
 				ExplicitModel: explicitModel,
@@ -211,6 +213,7 @@ func main() {
 			System:        *askSystem,
 			Prompt:        text,
 			Session:       *askSession,
+			ToolMax:       askToolMax,
 			Format:        resolveFormatFlag(*askFormat),
 			ExplicitAgent: explicitAgent,
 			ExplicitModel: explicitModel,
@@ -377,6 +380,7 @@ type askOptions struct {
 	System        string
 	Prompt        string
 	Session       bool
+	ToolMax       *int
 	ExplicitAgent bool
 	ExplicitModel bool
 	ExplicitTools bool
@@ -389,18 +393,6 @@ type askOptions struct {
 	// per-provider "format" parameters so it works uniformly across
 	// Ollama, Gemini, and any future provider.
 	Format string
-}
-
-type persistedSession struct {
-	CurrentAgent string           `json:"current_agent"`
-	CurrentModel string           `json:"current_model"`
-	EnabledTools []string         `json:"enabled_tools"`
-	History      []client.Message `json:"history"`
-	ContextInfo  string           `json:"context_info"`
-	RefOrder     []string         `json:"ref_order"`
-	Transcript   string           `json:"transcript"`
-	Reasoning    string           `json:"reasoning"`
-	Activity     string           `json:"activity"`
 }
 
 // cmdAsk runs a single prompt end-to-end without launching the tview TUI.
@@ -416,18 +408,13 @@ func isReasoningRelated(text string) bool {
 }
 
 func cmdAsk(opts askOptions) {
-	sessionPath := filepath.Join(opts.WorkspaceRoot, ".ergo-cli-go", "session.json")
-	var sessionState persistedSession
-	sessionExists := false
-
-	if opts.Session {
-		data, err := os.ReadFile(sessionPath)
-		if err == nil {
-			if err := json.Unmarshal(data, &sessionState); err == nil {
-				sessionExists = true
-			}
-		}
-	}
+	// Load the shared session document. We always load it (even when
+	// --session is off) so tools that mutate session state — tasks,
+	// articles, memories — see and preserve what a previous TUI or ask
+	// run wrote. sessionExists gates only whether we *restore* the saved
+	// agent/model/tools/history as defaults for this invocation.
+	sessionState, existsOnDisk, _ := session.Load(opts.WorkspaceRoot)
+	sessionExists := opts.Session && existsOnDisk
 
 	agentName := opts.Agent
 	if !opts.ExplicitAgent && sessionExists && sessionState.CurrentAgent != "" {
@@ -478,8 +465,18 @@ func cmdAsk(opts askOptions) {
 	}
 
 	model := opts.Model
-	if !opts.ExplicitModel && sessionExists && sessionState.CurrentModel != "" {
-		model = sessionState.CurrentModel
+	if !opts.ExplicitModel {
+		// Resolution priority: explicit -model flag (handled above) >
+		// this workspace's saved session model > the cross-mode
+		// remembered model (shared with the TUI) > agent default.
+		switch {
+		case sessionExists && sessionState.CurrentModel != "":
+			model = sessionState.CurrentModel
+		default:
+			if saved, ok := session.GetLastModel(false); ok && saved != "" {
+				model = saved
+			}
+		}
 	}
 	if model == "" {
 		model = agentCfg.DefaultModel
@@ -492,20 +489,24 @@ func cmdAsk(opts askOptions) {
 		model = defaultGeminiModel
 	}
 
-	registry := tools.NewRegistry(provider)
-
-	// Load full session state for tools that mutate session (tasks, articles).
-	fullState, _, fullErr := session.Load(opts.WorkspaceRoot)
-	if fullErr != nil {
-		// Non-fatal: continue with a zero state; manage_items will persist later
-		fullState = session.State{}
+	// When the user explicitly selects a model on a headless run
+	// (-model), remember it as the shared cross-mode choice so the next
+	// TUI or headless launch — in any workspace — starts on it. This
+	// mirrors the TUI, which persists an explicit model pick to the same
+	// prefs slot.
+	if opts.ExplicitModel && model != "" {
+		_ = session.SetLastModel(false, model)
 	}
 
-	// Register tracking-backed tools (task manager and memory manager) with access to session state.
+	registry := tools.NewRegistry(provider)
+
+	// Register tracking-backed tools (task manager and memory manager)
+	// with access to the shared session state so their mutations are
+	// persisted with the rest of the session below.
 	trackReg := tracking.NewRegistry()
 	trackReg.Register(tracking.NewTaskTracker())
 	trackReg.Register(tracking.NewMemoryTracker())
-	manageItems := tools.NewManageItems(trackReg, &fullState)
+	manageItems := tools.NewManageItems(trackReg, &sessionState)
 	registry.RegisterTool(tools.ManageItemsBridge{Impl: manageItems})
 
 	enabled := agentCfg.ToolNames
@@ -526,6 +527,16 @@ func cmdAsk(opts askOptions) {
 		WorkspaceRoot: filepath.Clean(opts.WorkspaceRoot),
 		MaxSteps:      8,
 	}
+
+	// Override default MaxSteps if provided in session or via flag.
+	maxSteps := 8
+	if sessionExists && sessionState.ToolMax > 0 {
+		maxSteps = sessionState.ToolMax
+	}
+	if opts.ToolMax != nil {
+		maxSteps = *opts.ToolMax
+	}
+	runner.MaxSteps = maxSteps
 
 	if !opts.Quiet {
 		fmt.Fprintf(os.Stderr, "%s ask: agent=%s model=%s provider=%s workspace=%s tools=%d\n",
@@ -607,18 +618,21 @@ func cmdAsk(opts askOptions) {
 		sessionState.EnabledTools = enabled
 		sessionState.History = newHistory
 
-		if sessionState.Transcript != "" && !strings.HasSuffix(sessionState.Transcript, "\n") {
-			sessionState.Transcript += "\n"
+		if opts.ToolMax != nil {
+			sessionState.ToolMax = *opts.ToolMax
 		}
-		sessionState.Transcript += fmt.Sprintf("[#C4A5FF::b]You[-:-:-]\n%s\n\n[#A77CF8::b]Assistant[-:-:-]\n%s\n\n", opts.Prompt, commentaryBuf.String())
+
+		stamp := time.Now().Format("3:04 PM")
+		sessionState.Transcript = append(sessionState.Transcript,
+			session.TranscriptEntry{Role: "user", Content: opts.Prompt, Timestamp: stamp},
+			session.TranscriptEntry{Role: "assistant", Content: commentaryBuf.String(), Timestamp: stamp},
+		)
 
 		sessionState.Reasoning += reasoningBuf.String()
 		sessionState.Activity += activityBuf.String()
 
-		dir := filepath.Dir(sessionPath)
-		_ = os.MkdirAll(dir, 0o700)
-		if data, jsonErr := json.MarshalIndent(sessionState, "", "  "); jsonErr == nil {
-			_ = os.WriteFile(sessionPath, data, 0o600)
+		if err := session.Save(opts.WorkspaceRoot, sessionState); err != nil && !opts.Quiet {
+			fmt.Fprintf(os.Stderr, "warning: failed to persist session: %v\n", err)
 		}
 	}
 

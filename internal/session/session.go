@@ -112,6 +112,7 @@ type Memory struct {
 type State struct {
 	CurrentAgent string            `json:"current_agent"`
 	CurrentModel string            `json:"current_model"`
+	ToolMax      int               `json:"tool_max,omitempty"`
 	EnabledTools []string          `json:"enabled_tools"`
 	History      []client.Message  `json:"history"`
 	ContextInfo  string            `json:"context_info,omitempty"`
@@ -147,6 +148,7 @@ func Load(workspaceRoot string) (State, bool, error) {
 	var raw struct {
 		CurrentAgent   string           `json:"current_agent"`
 		CurrentModel   string           `json:"current_model"`
+		ToolMax        int              `json:"tool_max,omitempty"`
 		EnabledTools   []string         `json:"enabled_tools"`
 		History        []client.Message `json:"history"`
 		ContextInfo    string           `json:"context_info,omitempty"`
@@ -165,6 +167,7 @@ func Load(workspaceRoot string) (State, bool, error) {
 
 	state.CurrentAgent = raw.CurrentAgent
 	state.CurrentModel = raw.CurrentModel
+	state.ToolMax = raw.ToolMax
 	state.EnabledTools = raw.EnabledTools
 	state.History = raw.History
 	state.ContextInfo = raw.ContextInfo

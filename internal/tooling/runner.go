@@ -46,11 +46,6 @@ type Runner struct {
 	Registry      *tools.Registry
 	WorkspaceRoot string
 	MaxSteps      int
-	// agentsAnnounced suppresses the per-turn "[context] Injected
-	// AGENTS.md from ..." reasoning event after the first emission in
-	// a process lifetime. The message is useful once but becomes
-	// noise on every subsequent turn.
-	agentsAnnounced bool
 	// Sinks for TUI integration. Set by the app before calling Run if
 	// running in TUI mode. nil in headless mode.
 	HighlightSink  tools.HighlightSink
@@ -149,13 +144,6 @@ func (r *Runner) Run(ctx context.Context, history []client.Message, prompt strin
 	systemPrompt := agentCfg.Prompt
 	if injected := loadAgentsPrompt(r.WorkspaceRoot); injected != "" {
 		systemPrompt += "\n\nRepository instructions from AGENTS.md (auto-injected):\n" + injected
-		if onEvent != nil && !r.agentsAnnounced {
-			onEvent(Event{
-				Type: EventReasoning,
-				Text: fmt.Sprintf("[context] Injected AGENTS.md from %s\n", filepath.Join(r.WorkspaceRoot, "AGENTS.md")),
-			})
-			r.agentsAnnounced = true
-		}
 	}
 	contextWindow, _ := r.Provider.ContextWindow(ctx, model)
 
@@ -308,11 +296,20 @@ func (r *Runner) Run(ctx context.Context, history []client.Message, prompt strin
 
 func (r *Runner) runChatTurn(ctx context.Context, model, systemPrompt string, history []client.Message, defs []client.ToolDefinition, onEvent func(Event)) (client.Message, error) {
 	parser := &thoughtParser{}
+	// Strip prior-turn chain-of-thought before replaying history to the
+	// model. Thinking is retained in stored history for display, but
+	// re-sending it bloats the context window and can destabilize
+	// smaller models by feeding their own reasoning back as input.
+	sanitized := make([]client.Message, len(history))
+	for i, m := range history {
+		m.Thinking = ""
+		sanitized[i] = m
+	}
 	req := client.ChatRequest{
 		Model: model,
 		Messages: append([]client.Message{
 			{Role: "system", Content: systemPrompt},
-		}, history...),
+		}, sanitized...),
 		Tools: defs,
 		Think: true,
 	}

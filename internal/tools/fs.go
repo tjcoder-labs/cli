@@ -24,6 +24,27 @@ func resolvePath(root, p string) string {
 	return filepath.Join(root, p)
 }
 
+// resolveInWorkspace resolves p against root and refuses any path that
+// escapes the workspace root (via "..", an absolute path outside root,
+// or a symlink-free traversal). This is the confinement boundary for
+// the file tools: without it, a prompt-injected model could read or
+// overwrite arbitrary files such as ~/.ssh/id_rsa or /etc/passwd.
+func resolveInWorkspace(root, p string) (string, error) {
+	resolved := resolvePath(root, p)
+	cleanRoot := filepath.Clean(root)
+	if resolved == cleanRoot {
+		return resolved, nil
+	}
+	rel, err := filepath.Rel(cleanRoot, resolved)
+	if err != nil {
+		return "", fmt.Errorf("path %q is not within the workspace", p)
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("path %q escapes the workspace root", p)
+	}
+	return resolved, nil
+}
+
 type searchCodeTool struct{}
 
 func (searchCodeTool) Definition() client.ToolDefinition {
@@ -63,7 +84,10 @@ func (searchCodeTool) Execute(_ context.Context, raw json.RawMessage, env ExecEn
 	if args.OutputMode == "" {
 		args.OutputMode = "files_only"
 	}
-	root := resolvePath(env.WorkspaceRoot, args.Path)
+	root, err := resolveInWorkspace(env.WorkspaceRoot, args.Path)
+	if err != nil {
+		return Result{}, err
+	}
 	re, err := regexp.Compile(args.Pattern)
 	if err != nil {
 		return Result{}, err
@@ -170,7 +194,10 @@ func (readFileTool) Execute(_ context.Context, raw json.RawMessage, env ExecEnv)
 	if err := json.Unmarshal(raw, &args); err != nil {
 		return Result{}, err
 	}
-	path := resolvePath(env.WorkspaceRoot, args.Path)
+	path, err := resolveInWorkspace(env.WorkspaceRoot, args.Path)
+	if err != nil {
+		return Result{}, err
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return Result{}, err
@@ -183,7 +210,7 @@ func (readFileTool) Execute(_ context.Context, raw json.RawMessage, env ExecEnv)
 		if args.EndLine > 0 && args.EndLine < end {
 			end = args.EndLine
 		}
-		if start > len(lines) {
+		if start > len(lines) || start > end {
 			text = ""
 		} else {
 			text = strings.Join(lines[start-1:end], "\n")
@@ -227,9 +254,12 @@ func (listDirectoryTool) Execute(_ context.Context, raw json.RawMessage, env Exe
 	if args.Depth <= 0 {
 		args.Depth = 2
 	}
-	root := resolvePath(env.WorkspaceRoot, args.Path)
+	root, err := resolveInWorkspace(env.WorkspaceRoot, args.Path)
+	if err != nil {
+		return Result{}, err
+	}
 	var entries []string
-	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, walkErr error) error {
+	err = filepath.WalkDir(root, func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return nil
 		}
@@ -293,7 +323,10 @@ func (editFileTool) Execute(_ context.Context, raw json.RawMessage, env ExecEnv)
 	if err := json.Unmarshal(raw, &args); err != nil {
 		return Result{}, err
 	}
-	path := resolvePath(env.WorkspaceRoot, args.Path)
+	path, err := resolveInWorkspace(env.WorkspaceRoot, args.Path)
+	if err != nil {
+		return Result{}, err
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return Result{}, err
@@ -307,7 +340,11 @@ func (editFileTool) Execute(_ context.Context, raw json.RawMessage, env ExecEnv)
 		return Result{}, fmt.Errorf("old_str not unique (%d occurrences)", count)
 	}
 	updated := strings.Replace(text, args.OldStr, args.NewStr, 1)
-	if err := os.WriteFile(path, []byte(updated), 0o644); err != nil {
+	mode := os.FileMode(0o644)
+	if info, statErr := os.Stat(path); statErr == nil {
+		mode = info.Mode().Perm()
+	}
+	if err := os.WriteFile(path, []byte(updated), mode); err != nil {
 		return Result{}, err
 	}
 	msg := fmt.Sprintf("updated %s", path)
@@ -338,7 +375,10 @@ func (createFileTool) Execute(_ context.Context, raw json.RawMessage, env ExecEn
 	if err := json.Unmarshal(raw, &args); err != nil {
 		return Result{}, err
 	}
-	path := resolvePath(env.WorkspaceRoot, args.Path)
+	path, err := resolveInWorkspace(env.WorkspaceRoot, args.Path)
+	if err != nil {
+		return Result{}, err
+	}
 	if _, err := os.Stat(path); err == nil {
 		return Result{}, fmt.Errorf("file already exists")
 	}
@@ -376,11 +416,18 @@ func (writeFileTool) Execute(_ context.Context, raw json.RawMessage, env ExecEnv
 	if err := json.Unmarshal(raw, &args); err != nil {
 		return Result{}, err
 	}
-	path := resolvePath(env.WorkspaceRoot, args.Path)
+	path, err := resolveInWorkspace(env.WorkspaceRoot, args.Path)
+	if err != nil {
+		return Result{}, err
+	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return Result{}, err
 	}
-	if err := os.WriteFile(path, []byte(args.Content), 0o644); err != nil {
+	mode := os.FileMode(0o644)
+	if info, statErr := os.Stat(path); statErr == nil {
+		mode = info.Mode().Perm()
+	}
+	if err := os.WriteFile(path, []byte(args.Content), mode); err != nil {
 		return Result{}, err
 	}
 	msg := fmt.Sprintf("wrote %s", path)
