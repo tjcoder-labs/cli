@@ -17,6 +17,7 @@ import (
 	"github.com/rivo/tview"
 	"github.com/tjcoder-labs/cli/internal/agent"
 	"github.com/tjcoder-labs/cli/internal/client"
+	ctxpkg "github.com/tjcoder-labs/cli/internal/context"
 	"github.com/tjcoder-labs/cli/internal/memories"
 	"github.com/tjcoder-labs/cli/internal/session"
 	"github.com/tjcoder-labs/cli/internal/tasks"
@@ -181,6 +182,12 @@ type App struct {
 	// active body). Cached so buildRightColumn can read its current
 	// size for adaptive height calculations.
 	right      *tview.Flex
+	// leftPane, when non-nil, replaces the Conversation column in the
+	// normal layout branch. It is how modal-style commands (/config,
+	// /environment, /agent, /model, /tools, form editors, etc.) render
+	// in-place in the left column instead of as a floating window, so
+	// the right column (cognition/activity) stays visible alongside.
+	leftPane   tview.Primitive
 	input      *tview.InputField
 	contextBar *tview.TextView
 	footer     *tview.TextView
@@ -449,6 +456,7 @@ func (a *App) build() {
 			{"reminder", "Create a reminder"},
 			{"task", "Create a task"},
 			{"config", "Edit user config (JSON)"},
+			{"environment", "Edit injected environment/context template"},
 			{"about", "Open the about / welcome screen"},
 		}
 		q := strings.ToLower(strings.TrimPrefix(text, "/"))
@@ -1337,6 +1345,8 @@ func (a *App) handleSlashCommand(cmd string) {
 		a.openMemoryModal()
 	case "config":
 		a.openConfigModal()
+	case "environment", "env":
+		a.openEnvironmentModal()
 	case "tasks":
 		a.showPanel("tasks")
 	case "activity":
@@ -1346,7 +1356,7 @@ func (a *App) handleSlashCommand(cmd string) {
 	case "articles":
 		a.showPanel("articles")
 	default:
-		a.appendActivity(fmt.Sprintf("Unknown command: /%s. Try /agent, /tools, /model, /config, /scroll, /clear, /quit, /task, /memory, /tasks", command))
+		a.appendActivity(fmt.Sprintf("Unknown command: /%s. Try /agent, /tools, /model, /config, /environment, /scroll, /clear, /quit, /task, /memory, /tasks", command))
 	}
 }
 
@@ -1378,10 +1388,9 @@ func (a *App) openTriggerModal() {
 	form.AddInputField("Payload (optional)", "", 40, nil, func(s string) { payload = s })
 	form.AddButton("Trigger", func() {
 		a.appendActivity(fmt.Sprintf("Triggered event: %s payload=%s", name, payload))
-		a.pages.RemovePage("modal")
-		a.tv.SetFocus(a.input)
+		a.closeModal()
 	})
-	form.AddButton("Cancel", func() { a.pages.RemovePage("modal"); a.tv.SetFocus(a.input) })
+	form.AddButton("Cancel", func() { a.closeModal() })
 	form.SetButtonsAlign(tview.AlignRight)
 	a.showModal("Trigger Event", form)
 }
@@ -1396,10 +1405,9 @@ func (a *App) openReminderModal() {
 	form.AddButton("Save", func() {
 		// Call reminder tool asynchronously could be added here.
 		a.appendActivity(fmt.Sprintf("Scheduled reminder: %s -> %s (install=%v)", cronExpr, message, install))
-		a.pages.RemovePage("modal")
-		a.tv.SetFocus(a.input)
+		a.closeModal()
 	})
-	form.AddButton("Cancel", func() { a.pages.RemovePage("modal"); a.tv.SetFocus(a.input) })
+	form.AddButton("Cancel", func() { a.closeModal() })
 	form.SetButtonsAlign(tview.AlignRight)
 	a.showModal("Set Reminder", form)
 }
@@ -1418,10 +1426,9 @@ func (a *App) openTaskModal() {
 		a.sessionState = result.State
 		a.saveSession()
 		a.appendActivity(fmt.Sprintf("Created task: %s due=%s", title, due))
-		a.pages.RemovePage("modal")
-		a.tv.SetFocus(a.input)
+		a.closeModal()
 	})
-	form.AddButton("Cancel", func() { a.pages.RemovePage("modal"); a.tv.SetFocus(a.input) })
+	form.AddButton("Cancel", func() { a.closeModal() })
 	form.SetButtonsAlign(tview.AlignRight)
 	a.showModal("New Task", form)
 }
@@ -1448,10 +1455,9 @@ func (a *App) openMemoryModal() {
 		a.sessionState = result.State
 		a.saveSession()
 		a.appendActivity(fmt.Sprintf("Stored memory: %s", title))
-		a.pages.RemovePage("modal")
-		a.tv.SetFocus(a.input)
+		a.closeModal()
 	})
-	form.AddButton("Cancel", func() { a.pages.RemovePage("modal"); a.tv.SetFocus(a.input) })
+	form.AddButton("Cancel", func() { a.closeModal() })
 	form.SetButtonsAlign(tview.AlignRight)
 	a.showModal("New Memory", form)
 }
@@ -1481,8 +1487,7 @@ func (a *App) openConfigModal() {
 	// capture by value so Cancel always closes over the editor it
 	// opened, even after a future Save replaces a.config.
 	closeModal := func() {
-		a.pages.RemovePage("modal")
-		a.tv.SetFocus(a.input)
+		a.closeModal()
 	}
 	save := func() {
 		parsed, err := parseConfigJSON(editor.GetText())
@@ -1532,6 +1537,95 @@ func (a *App) openConfigModal() {
 	a.showModal("Config", body)
 }
 
+// buildEnvironmentInfo gathers live runtime context for template
+// interpolation, including the currently selected model and agent.
+func (a *App) buildEnvironmentInfo() ctxpkg.Info {
+	info := ctxpkg.Build(os.Args[0], a.appVersion, a.workspaceRoot)
+	info.Model = a.currentModel
+	info.Agent = a.currentAgent.Name
+	return info
+}
+
+// renderedEnvironment returns the interpolated environment block to
+// prepend to the agent system prompt, or "" when the user has cleared
+// the template.
+func (a *App) renderedEnvironment() string {
+	tmpl := ctxpkg.LoadTemplate(a.workspaceRoot)
+	return strings.TrimSpace(a.buildEnvironmentInfo().Render(tmpl))
+}
+
+// openEnvironmentModal shows an in-pane editor for the environment
+// template injected into the agent's system prompt. The template
+// supports {{token}} interpolation (cwd, shell, os, model, agent, …)
+// resolved live at each turn. Ctrl+S saves, Esc cancels.
+func (a *App) openEnvironmentModal() {
+	editor := tview.NewTextArea()
+	editor.SetBackgroundColor(a.palette.BgModal)
+	editor.SetBorder(true).
+		SetTitle(" environment.tmpl — Ctrl+S to save, Esc to cancel ").
+		SetTitleAlign(tview.AlignLeft)
+	editor.SetText(ctxpkg.LoadTemplate(a.workspaceRoot), true)
+
+	preview := tview.NewTextView().SetDynamicColors(true).SetWrap(true)
+	preview.SetBackgroundColor(a.palette.BgModal)
+	preview.SetTextColor(a.palette.TextDim)
+	renderPreview := func() {
+		out := a.buildEnvironmentInfo().Render(editor.GetText())
+		preview.SetText(fmt.Sprintf("[%s]preview (interpolated):[-]\n%s", a.palette.HexFaint, out))
+	}
+	renderPreview()
+
+	help := tview.NewTextView().SetDynamicColors(true)
+	help.SetBackgroundColor(a.palette.BgModal)
+	help.SetTextColor(a.palette.TextDim)
+	help.SetText(fmt.Sprintf(" [%s]tokens:[-] {{cwd}} {{workspace}} {{shell}} {{os}} {{arch}} {{user}} {{hostname}} {{time}} {{timezone}} {{home}} {{locale}} {{model}} {{agent}} {{cli_version}}",
+		a.palette.HexFaint))
+
+	closeEnv := func() { a.closeModal() }
+	save := func() {
+		if err := ctxpkg.SaveTemplate(a.workspaceRoot, editor.GetText()); err != nil {
+			a.appendActivity(fmt.Sprintf("["+a.palette.HexOrchid+"::b]environment save failed[-:-:-]: %v", err))
+			return
+		}
+		a.appendActivity(fmt.Sprintf("Saved environment template to %s", ctxpkg.TemplatePath(a.workspaceRoot)))
+		closeEnv()
+	}
+
+	editor.SetChangedFunc(renderPreview)
+
+	saveBtn := tview.NewButton("Save").SetSelectedFunc(save)
+	cancelBtn := tview.NewButton("Cancel").SetSelectedFunc(closeEnv)
+	for _, b := range []*tview.Button{saveBtn, cancelBtn} {
+		b.SetBackgroundColor(a.palette.BgModal)
+		b.SetLabelColor(a.palette.TextMain)
+	}
+	buttons := tview.NewFlex()
+	buttons.SetBackgroundColor(a.palette.BgModal)
+	buttons.AddItem(saveBtn, 0, 1, false)
+	buttons.AddItem(cancelBtn, 0, 1, false)
+
+	body := tview.NewFlex().SetDirection(tview.FlexRow).
+		AddItem(help, 2, 0, false).
+		AddItem(editor, 0, 2, true).
+		AddItem(preview, 0, 1, false).
+		AddItem(buttons, 1, 0, false)
+	body.SetBackgroundColor(a.palette.BgModal)
+
+	editor.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+		switch event.Key() {
+		case tcell.KeyEsc:
+			closeEnv()
+			return nil
+		case tcell.KeyCtrlS:
+			save()
+			return nil
+		}
+		return event
+	})
+
+	a.showModal("Environment", body)
+}
+
 func (a *App) openAgentInfoModal() {
 	body := tview.NewTextView().SetDynamicColors(true).SetWrap(true)
 	body.SetBackgroundColor(a.palette.BgModal)
@@ -1549,8 +1643,7 @@ func (a *App) openAgentInfoModal() {
 	))
 
 	closeButton := tview.NewButton("Close").SetSelectedFunc(func() {
-		a.pages.RemovePage("modal")
-		a.tv.SetFocus(a.input)
+		a.closeModal()
 	})
 	closeButton.SetBackgroundColor(a.palette.BgModal)
 	closeButton.SetLabelColor(a.palette.TextMain)
@@ -1926,6 +2019,12 @@ func (a *App) submit() {
 	enabled := a.enabledToolList()
 	history := append([]client.Message(nil), a.history...)
 	agentCfg := a.currentAgent
+	// Inject the (interpolated) environment/context block ahead of the
+	// agent's own system prompt, mirroring headless mode. Editable via
+	// /environment. Empty template => no injection.
+	if env := a.renderedEnvironment(); env != "" {
+		agentCfg.Prompt = env + "\n\n" + agentCfg.Prompt
+	}
 	model := a.currentModel
 
 	go func() {
@@ -2389,8 +2488,12 @@ func (a *App) rebuildLayout() {
 		// that is never attached to the page tree, and focusing it
 		// would crash the TUI.
 		right := a.buildRightColumn()
+		leftPrim := tview.Primitive(a.transcriptPanel)
+		if a.leftPane != nil {
+			leftPrim = a.leftPane
+		}
 		mainFlex = tview.NewFlex().
-			AddItem(a.transcriptPanel, 0, 5, false).
+			AddItem(leftPrim, 0, 5, false).
 			AddItem(vGutter, panelGutter, 0, false).
 			AddItem(right, 0, 3, false)
 	}
@@ -2622,13 +2725,11 @@ func (a *App) openAgentModal() {
 			a.appendActivity("Selected agent: " + agentCfg.Name)
 			a.appendActivity("Enabled tools: " + strings.Join(a.enabledToolList(), ", "))
 			a.saveSession()
-			a.pages.RemovePage("modal")
-			a.tv.SetFocus(a.input)
+			a.closeModal()
 		})
 	}
 	list.SetDoneFunc(func() {
-		a.pages.RemovePage("modal")
-		a.tv.SetFocus(a.input)
+		a.closeModal()
 	})
 	a.showModal("Select Agent", list)
 }
@@ -2654,13 +2755,11 @@ func (a *App) openModelModal() {
 			// honored by headless runs too).
 			_ = session.SetLastModel(true, item.Name)
 			a.saveSession()
-			a.pages.RemovePage("modal")
-			a.tv.SetFocus(a.input)
+			a.closeModal()
 		})
 	}
 	list.SetDoneFunc(func() {
-		a.pages.RemovePage("modal")
-		a.tv.SetFocus(a.input)
+		a.closeModal()
 	})
 	a.showModal("Select Model", list)
 }
@@ -2687,34 +2786,42 @@ func (a *App) openToolModal() {
 	}
 	rebuild()
 	list.SetDoneFunc(func() {
-		a.pages.RemovePage("modal")
-		a.tv.SetFocus(a.input)
+		a.closeModal()
 	})
 	a.showModal("Toggle Tools (Enter toggles, Esc closes)", list)
 }
 
+// showModal renders a modal-style primitive (editor, form, or selector
+// list) in place of the Conversation column, keeping the right column
+// visible alongside. This replaces the old floating-window presentation
+// so the UI adapts consistently for every applicable command. Use
+// closeModal to dismiss and restore the transcript.
 func (a *App) showModal(title string, primitive tview.Primitive) {
 	label := tview.NewTextView().SetDynamicColors(true)
 	label.SetBackgroundColor(a.palette.BgModal)
 	label.SetText(fmt.Sprintf(" [%s]%s[-]", a.palette.HexFaint, strings.ToUpper(title)))
-	label.SetBorderPadding(0, 0, 2, 2)
+	label.SetBorderPadding(1, 0, 2, 2)
 
 	panel := tview.NewFlex().SetDirection(tview.FlexRow).
-		AddItem(label, 1, 0, false).
+		AddItem(label, 2, 0, false).
 		AddItem(primitive, 0, 1, true)
 	panel.SetBackgroundColor(a.palette.BgModal)
 
-	modal := tview.NewFlex().
-		AddItem(nil, 0, 1, false).
-		AddItem(panel, 0, 2, true).
-		AddItem(nil, 0, 1, false)
-	wrapper := tview.NewFlex().SetDirection(tview.FlexRow).
-		AddItem(nil, 0, 1, false).
-		AddItem(modal, 0, 2, true).
-		AddItem(nil, 0, 1, false)
-	wrapper.SetBackgroundColor(a.palette.BgRoot)
-	a.pages.AddAndSwitchToPage("modal", wrapper, true)
+	// About and fullscreen modes own the left column too; clear them so
+	// the modal pane is what actually renders.
+	a.aboutMode = false
+	a.fullscreen = false
+	a.leftPane = panel
+	a.rebuildLayout()
 	a.tv.SetFocus(primitive)
+}
+
+// closeModal dismisses an in-pane modal and restores the Conversation
+// column, returning focus to the input field.
+func (a *App) closeModal() {
+	a.leftPane = nil
+	a.rebuildLayout()
+	a.tv.SetFocus(a.input)
 }
 
 func (a *App) styleModalList(list *tview.List) {

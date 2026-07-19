@@ -453,12 +453,6 @@ func cmdAsk(opts askOptions) {
 		}
 	}
 
-	// Inject execution context at the top of the agent's prompt
-	if agentCfg.Prompt != "" {
-		ctx := ctxpkg.Build(os.Args[0], version, opts.WorkspaceRoot)
-		agentCfg.Prompt = ctx.FormatPrompt() + "\n" + agentCfg.Prompt
-	}
-
 	provider, err := client.NewProvider(opts.Provider, opts.Host, opts.GeminiKey, opts.Timeout)
 	if err != nil {
 		fatal("%v", err)
@@ -496,6 +490,19 @@ func cmdAsk(opts askOptions) {
 	// prefs slot.
 	if opts.ExplicitModel && model != "" {
 		_ = session.SetLastModel(false, model)
+	}
+
+	// Inject the (interpolated) environment/context block ahead of the
+	// agent's system prompt, using the user's /environment template when
+	// present. Done after model resolution so {{model}} reflects the
+	// actually selected model. Empty template => no injection.
+	if agentCfg.Prompt != "" {
+		envInfo := ctxpkg.Build(os.Args[0], version, opts.WorkspaceRoot)
+		envInfo.Model = model
+		envInfo.Agent = agentCfg.Name
+		if env := strings.TrimSpace(envInfo.Render(ctxpkg.LoadTemplate(opts.WorkspaceRoot))); env != "" {
+			agentCfg.Prompt = env + "\n\n" + agentCfg.Prompt
+		}
 	}
 
 	registry := tools.NewRegistry(provider)
