@@ -5,7 +5,7 @@
 //
 // Tasks are stored inside session.json alongside chat history. They
 // survive across turns in the same session and are not synced to any
-// remote service in this iteration. See SENTINEL_BETA.md §3.
+// remote service in this iteration.
 package tasks
 
 import (

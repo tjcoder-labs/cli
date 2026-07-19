@@ -339,13 +339,20 @@ func cmdModelsInfo(args []string, providerName, host, geminiKey string, timeout 
 }
 
 func defaultTimeout() time.Duration {
-	raw := os.Getenv("ERGO_HTTP_TIMEOUT")
+	raw := os.Getenv("CODER_HTTP_TIMEOUT")
+	name := "CODER_HTTP_TIMEOUT"
+	if raw == "" {
+		// Backward-compatible fallback for the pre-rebrand variable.
+		if legacy := os.Getenv("ERGO_HTTP_TIMEOUT"); legacy != "" {
+			raw, name = legacy, "ERGO_HTTP_TIMEOUT"
+		}
+	}
 	if raw == "" {
 		return client.DefaultRequestTimeout
 	}
 	d, err := time.ParseDuration(raw)
 	if err != nil {
-		fatal("invalid ERGO_HTTP_TIMEOUT %q: %v", raw, err)
+		fatal("invalid %s %q: %v", name, raw, err)
 	}
 	return d
 }

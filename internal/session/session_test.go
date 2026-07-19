@@ -119,7 +119,7 @@ func TestLoadCorruptFileReturnsError(t *testing.T) {
 }
 
 func TestLoadOldShapeWithoutTasksOrArticles(t *testing.T) {
-	// A session file written by a pre-SENTINEL_BETA binary won't have
+	// A session file written by an older binary won't have
 	// tasks/articles. Load should still succeed and leave those slices nil.
 	tmp := t.TempDir()
 	old := map[string]any{
