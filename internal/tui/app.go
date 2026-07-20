@@ -151,6 +151,7 @@ var slashCommands = []slashCommand{
 	{"config", "Edit user config (JSON)"},
 	{"environment", "Edit injected environment/context template"},
 	{"activity", "Open activity panel"},
+	{"canvas", "Open a file/range in the canvas panel"},
 	{"about", "Open the about / welcome screen"},
 }
 
@@ -241,9 +242,14 @@ type App struct {
 
 	// activePanel is the name of the right-column body currently
 	// showing in the unified right-hand pane ("activity", "tasks",
-	// "articles", "code"). It is independent of fullscreen; fullscreen
+	// "articles", "canvas"). It is independent of fullscreen; fullscreen
 	// controls visibility of the entire right column.
 	activePanel string
+	// canvasPath/canvasStart/canvasEnd hold the file and optional
+	// 1-based line range currently rendered in the "canvas" panel.
+	canvasPath  string
+	canvasStart int
+	canvasEnd   int
 	// fullscreen hides the right column so the transcript can use the
 	// full terminal width (useful for copying long output).
 	fullscreen bool
@@ -1441,7 +1447,7 @@ func (a *App) globalKeys(event *tcell.EventKey) *tcell.EventKey {
 			a.showPanel("tasks")
 			return nil
 		case 'c':
-			a.showPanel("code")
+			a.showPanel("canvas")
 			return nil
 		case 'i':
 			a.setReasoningSplash()
@@ -1541,6 +1547,19 @@ func (a *App) handleSlashCommand(cmd string) {
 		a.showPanel("test")
 	case "articles":
 		a.showPanel("articles")
+	case "canvas", "code", "reference":
+		// /canvas [path] [start[-end]] — open a file (optionally a
+		// line range) in the canvas panel. With no path it shows the
+		// current canvas (or placeholder).
+		if len(parts) > 1 {
+			start, end := 0, 0
+			if len(parts) > 2 {
+				start, end = parseLineRange(parts[2])
+			}
+			a.openCanvas(parts[1], start, end)
+		} else {
+			a.showPanel("canvas")
+		}
 	default:
 		a.appendActivity(fmt.Sprintf("Unknown command: /%s. Try /agent, /tools, /model, /config, /environment, /scroll, /clear, /quit, /task, /memory, /tasks", command))
 	}
@@ -1889,9 +1908,9 @@ func (a *App) showPanel(name string) {
 		a.rebuildLayout()
 		a.focusInput()
 		return
-	case "code":
-		a.setActivePanel("code")
-		a.refreshCodePanel()
+	case "canvas", "code", "reference":
+		a.setActivePanel("canvas")
+		a.refreshCanvasPanel()
 		a.rebuildLayout()
 		a.focusInput()
 		return
@@ -2045,18 +2064,117 @@ func (a *App) toggleTask(id string) {
 	a.tasksList.SetCurrentItem(next)
 }
 
-// refreshCodePanel renders the placeholder "code" view into the
-// right-column body. It is intentionally minimal until the dedicated
-// code-reference feature lands.
-func (a *App) refreshCodePanel() {
+// refreshCanvasPanel renders the canvas view into the right-column body.
+// When no file is loaded it shows a short placeholder; otherwise it
+// renders a.canvasPath (optionally scrolled to a.canvasStart..canvasEnd)
+// with line numbers and a highlighted range.
+func (a *App) refreshCanvasPanel() {
 	if a.activity == nil {
 		return
 	}
-	a.activity.SetText(fmt.Sprintf(
-		"[%s::b] CODE[-:-:-]\n\n[%s]Code references will appear here. The agent can call /ui_control to open files and line ranges in this panel. Use [%s]Alt+T[-] to switch back to tasks.[-]",
-		a.palette.HexPurple,
-		a.palette.HexLavender, a.palette.HexLavender,
-	))
+	if strings.TrimSpace(a.canvasPath) == "" {
+		a.activity.SetText(fmt.Sprintf(
+			"[%s::b] CANVAS[-:-:-]\n\n[%s]Files the agent reads or drafts appear here. The agent uses ui_control (panel=canvas, path, start_line, end_line) to open a file and range. Use [%s]/canvas <path>[-] or [%s]Alt+C[-] to open one yourself.[-]",
+			a.palette.HexPurple,
+			a.palette.HexLavender, a.palette.HexLavender, a.palette.HexLavender,
+		))
+		return
+	}
+	a.activity.SetText(a.renderCanvasBody(a.canvasPath, a.canvasStart, a.canvasEnd))
+	a.activity.ScrollTo(a.canvasScrollTo(a.canvasStart), 0)
+}
+
+// canvasScrollTo returns the transcript row the canvas should scroll to so
+// the highlighted range is comfortably in view (a couple of lines of lead-in).
+func (a *App) canvasScrollTo(start int) int {
+	if start <= 3 {
+		return 0
+	}
+	// +2 accounts for the CANVAS header + blank line prepended to the body.
+	return start - 3 + 2
+}
+
+// renderCanvasBody reads path and returns a tview-markup string with a
+// header, line numbers, and the [start,end] range highlighted. Reads are
+// capped so an accidental huge file cannot stall the UI.
+func (a *App) renderCanvasBody(path string, start, end int) string {
+	full := path
+	if !filepath.IsAbs(full) {
+		full = filepath.Join(a.workspaceRoot, path)
+	}
+	data, err := os.ReadFile(full)
+	if err != nil {
+		return fmt.Sprintf("[%s::b] CANVAS[-:-:-]\n\n[%s]could not open %s: %v[-]",
+			a.palette.HexPurple, a.palette.HexOrchid, tview.Escape(path), err)
+	}
+
+	const maxBytes = 512 * 1024
+	truncated := false
+	if len(data) > maxBytes {
+		data = data[:maxBytes]
+		truncated = true
+	}
+
+	lines := strings.Split(string(data), "\n")
+	const maxLines = 2000
+	if len(lines) > maxLines {
+		lines = lines[:maxLines]
+		truncated = true
+	}
+
+	rangeLabel := ""
+	if start > 0 {
+		if end > start {
+			rangeLabel = fmt.Sprintf(":%d-%d", start, end)
+		} else {
+			rangeLabel = fmt.Sprintf(":%d", start)
+		}
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "[%s::b] CANVAS[-:-:-]  [%s]%s%s[-]\n\n",
+		a.palette.HexPurple, a.palette.HexLavender, tview.Escape(path), rangeLabel)
+
+	width := len(strconv.Itoa(len(lines)))
+	for i, ln := range lines {
+		n := i + 1
+		gutter := fmt.Sprintf("[%s]%*d[-]", a.palette.HexDim, width, n)
+		text := tview.Escape(ln)
+		if start > 0 && n >= start && n <= max(start, end) {
+			fmt.Fprintf(&b, "%s [%s]│[-] [%s]%s[-]\n", gutter, a.palette.HexPurple, a.palette.HexLavender, text)
+		} else {
+			fmt.Fprintf(&b, "%s [%s]│[-] %s\n", gutter, a.palette.HexDim, text)
+		}
+	}
+	if truncated {
+		fmt.Fprintf(&b, "\n[%s]… output truncated[-]\n", a.palette.HexDim)
+	}
+	return b.String()
+}
+
+// parseLineRange parses "12", "12-40" or "12:40" into (start, end).
+// A bare number yields end==0 (single-line highlight); invalid input
+// yields (0, 0).
+func parseLineRange(s string) (int, int) {
+	s = strings.TrimSpace(s)
+	sep := strings.IndexAny(s, "-:")
+	if sep < 0 {
+		n, _ := strconv.Atoi(s)
+		return n, 0
+	}
+	start, _ := strconv.Atoi(strings.TrimSpace(s[:sep]))
+	end, _ := strconv.Atoi(strings.TrimSpace(s[sep+1:]))
+	return start, end
+}
+
+// openCanvas loads a file (and optional 1-based line range) into the canvas
+// panel and makes it the active right-hand panel. Callers on background
+// goroutines must wrap this via QueueUpdateDraw.
+func (a *App) openCanvas(path string, start, end int) {
+	a.canvasPath = strings.TrimSpace(path)
+	a.canvasStart = start
+	a.canvasEnd = end
+	a.showPanel("canvas")
 }
 
 // reloadTasksIfChanged checks if tasks were modified (e.g., by the agent),
@@ -2249,10 +2367,26 @@ func (a *App) handleEvent(event tooling.Event) {
 		case tooling.EventToolResult:
 			// ui_control tool: event.Text contains a marker 'panel:<name>:<action>'
 			if event.ToolName == "ui_control" && strings.HasPrefix(strings.TrimSpace(event.Text), "panel:") {
-				parts := strings.Split(strings.TrimSpace(event.Text), ":")
+				marker := strings.TrimSpace(event.Text)
+				parts := strings.SplitN(marker, ":", 6)
 				if len(parts) >= 3 {
 					panel := parts[1]
 					action := parts[2]
+					// canvas markers carry an optional
+					// start:end:path tail (parts[3..5]).
+					if panel == "canvas" && len(parts) >= 6 {
+						start, _ := strconv.Atoi(parts[3])
+						end, _ := strconv.Atoi(parts[4])
+						path := parts[5]
+						switch strings.ToLower(action) {
+						case "show", "toggle":
+							a.openCanvas(path, start, end)
+						case "hide":
+							a.showPanel("activity")
+						}
+						a.appendActivity(fmt.Sprintf("[%s]ui_control: canvas %s %s", a.palette.HexLavender, action, path))
+						return
+					}
 					switch strings.ToLower(action) {
 					case "show", "toggle":
 						a.showPanel(panel)
@@ -2579,10 +2713,10 @@ func (a *App) buildRightColumn() *tview.Flex {
 		bodyPrim = a.tasksPanel
 	case "test":
 		bodyPrim = a.testPanel
-	case "articles", "code":
-		// Articles and code currently reuse the activity TextView
-		// for their (placeholder) content, so the active body
-		// stays the same primitive.
+	case "articles", "code", "canvas", "reference":
+		// Articles reuse the activity TextView placeholder; canvas
+		// (and its /code, /reference aliases) renders file content
+		// into that same TextView, so the body stays this primitive.
 		bodyPrim = a.activityPanel
 	}
 	right := tview.NewFlex().SetDirection(tview.FlexRow).

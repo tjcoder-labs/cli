@@ -32,12 +32,12 @@ since you last loaded the file.
 
 The following tasks should be a reflection of those managed by the agent via the /task and /tasks commands, however because the feature is still unstable, you should always use the following task list as the source of truth, so be sure to add, update and mark as completed here in addition to using your tools. 
 
-- **T1 — Activity panel underline bug.** Tool-error activity entries
+- **T1 — Activity panel underline bug.** ~~Tool-error activity entries
   in the right-hand `ACTIVITY` panel render with an underline.
   Investigate the tview color tags in `internal/tui/app.go`
   `appendActivity` and the `EventError` branch (around line 1822);
   remove the offending `u` attribute from the tag string. Verify
-  with the headless CLI before declaring done.
+  with the headless CLI before declaring done.~~ ✅ COMPLETED
 - **T2 — Fullscreen toggle does not work.** Pressing the global
   fullscreen shortcut (`Ctrl+F` / `F11`) toggles `a.fullscreen` and
   emits the activity log entry but the right column does not
@@ -88,6 +88,12 @@ The following tasks should be a reflection of those managed by the agent via the
 - **T12 - -- RECAP -- title should instead take formatting cue from the ACTIVITY, CONVERSATION and COGNITION label typography, in terms of size and style -- uppercase and in the primary color. Make sure there's always at least 1 line gap above the RECAP label. 
 -- **T13 - timestamp formatting** - let's remove the seconds from the timestamps used throughout the app e.g. activity, conversation transcript and cognition (e.g. 11:15 AM) and let's make sure that the timestamp is listed above every message, both for user and assistant, right above the message's attribution. 
 -- **T14 - issue with model returning commentary with escaped tool code seems to be related to max tool call error and the agent's response to being asked to provide a checkpoint**
+- **T15 — Update ASCII art.** Update the ASCII art from `<tj/>` to `<coder/>`.
+- **T16 — MongoDB Review.** Review the MongoDB ergo db, hotspots collection, and tenant records for the development staging system.
+- **T17 — Specialized Agents.** Implement a new Network and System Security agent, and a Cloud Infrastructure agent (specializing in Google Cloud, gcloud CLI installation, auth, and management).
+- **T18 — Agent Steering.** Implement the ability to send messages in-TUI to the agent while it's still thinking to steer the model's output.
+- **T19 — Markdown Table Support.** Implement markdown table rendering support within the TUI (tasks pane and general conversation output).
+- **T20 — Auto Scroll on Load.** Ensure the TUI automatically scrolls to the bottom on initialization when a session with an existing transcript is loaded.
 -- ** - 
 
 
