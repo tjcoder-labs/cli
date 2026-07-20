@@ -102,3 +102,10 @@ The following tasks should be a reflection of those managed by the agent via the
 - **T22 — Fetch Tool Enhancement.** Ensure the `fetch` tool can work on any source (not just HTTP/HTTPS).
 - **T23 — Global Tracker Integration.** Augment the tasks, memories, and articles systems to support global stores, allowing data to be shared across different sessions/workspaces rather than being scoped only to the current workspace.
 - **T24 — TUI Reference Integration.** Implement `@` for referencing context (files, tasks, etc.) and `#` for tool invocation/guidance (e.g., `#run_command`) within the TUI input, utilizing a suggestion mechanism similar to the existing slash-command (`/`) completion.
+- **T25 — TUI Reference Truncation Bug.** The reference bar in the TUI is incorrectly truncating filenames (e.g., `AGENTS.md` appearing as `ENTS.md` and `MCP_SPEC.md` as `_SPEC.md`). Investigate the string slicing or rendering logic in `internal/tui/app.go` that handles the reference list display.
+- **T26 — Outreach & Marketing.**
+  - Touch base with David Addison.
+  - Reach out to Mitch Keenan.
+  - Finalize landing page for Hero.
+  - Draft LinkedIn post promoting TJ Coder AI Labs.
+  - Research Reddit API integration.

@@ -19,6 +19,7 @@ import (
 	"github.com/tjcoder-labs/cli/internal/client"
 	ctxpkg "github.com/tjcoder-labs/cli/internal/context"
 	"github.com/tjcoder-labs/cli/internal/memories"
+	"github.com/tjcoder-labs/cli/internal/mcp"
 	"github.com/tjcoder-labs/cli/internal/session"
 	"github.com/tjcoder-labs/cli/internal/tasks"
 	"github.com/tjcoder-labs/cli/internal/tooling"
@@ -153,6 +154,7 @@ var slashCommands = []slashCommand{
 	{"activity", "Open activity panel"},
 	{"canvas", "Open a file/range in the canvas panel"},
 	{"about", "Open the about / welcome screen"},
+	{"mcp", "Manage MCP integrations"},
 }
 
 type App struct {
@@ -167,6 +169,7 @@ type App struct {
 	provider     client.Provider
 	registry     *tools.Registry
 	runner       *tooling.Runner
+	mcpClient    *mcp.Client
 	sessionState session.State
 	palette      Palette
 
@@ -314,6 +317,7 @@ func New(provider client.Provider, registry *tools.Registry, workspaceRoot, mode
 		provider:      provider,
 		registry:      registry,
 		runner:        &tooling.Runner{Provider: provider, Registry: registry, WorkspaceRoot: workspaceRoot, MaxSteps: cfg.ToolMax},
+		mcpClient:     mcp.NewClient(),
 		sessionState:  state,
 		workspaceRoot: workspaceRoot,
 		productName:   productName,
@@ -1561,6 +1565,8 @@ func (a *App) handleSlashCommand(cmd string) {
 		} else {
 			a.showPanel("canvas")
 		}
+	case "mcp":
+		a.handleMCPCommand(parts)
 	default:
 		a.appendActivity(fmt.Sprintf("Unknown command: /%s. Try /agent, /tools, /model, /config, /environment, /scroll, /clear, /quit, /task, /memory, /tasks", command))
 	}
@@ -3258,4 +3264,61 @@ func (a *App) referenceSummary() string {
 		return "refs: " + strings.Join(ordered, ", ")
 	}
 	return fmt.Sprintf("refs: %s (+%d)", strings.Join(ordered[:maxShown], ", "), len(ordered)-maxShown)
+}
+
+func (a *App) handleMCPCommand(parts []string) {
+	if len(parts) < 2 {
+		a.appendActivity("Usage: /mcp [add|list|remove] [args...]")
+		return
+	}
+
+	action := strings.ToLower(parts[1])
+	switch action {
+	case "add":
+		if len(parts) < 4 {
+			a.appendActivity("Usage: /mcp add <name> <url>")
+			return
+		}
+		name := parts[2]
+		url := parts[3]
+		err := a.mcpClient.AddServer(name, url)
+		if err != nil {
+			a.appendActivity(fmt.Sprintf("[%s]MCP add failed[-]: %v", a.palette.HexOrchid, err))
+			return
+		}
+		// Register the tools in the global registry
+		tools.RegisterMCPClient(a.registry, a.mcpClient)
+		a.appendActivity(fmt.Sprintf("Successfully added MCP server [%s]%s[-] and registered tools", a.palette.HexLavender, name))
+
+	case "list":
+		servers := a.mcpClient.GetServers()
+		if len(servers) == 0 {
+			a.appendActivity("No MCP servers configured.")
+			return
+		}
+		var b strings.Builder
+		b.WriteString("Active MCP Servers:\n")
+		for name, s := range servers {
+			status := "enabled"
+			if !s.IsEnabled {
+				status = "disabled"
+			}
+			b.WriteString(fmt.Sprintf("- %s (%s) [%s]\n", name, status, s.URL))
+		}
+		a.appendActivity(b.String())
+
+	case "remove":
+		if len(parts) < 3 {
+			a.appendActivity("Usage: /mcp remove <name>")
+			return
+		}
+		name := parts[2]
+		// We don't have a RemoveServer method yet, but we can just disable it
+		// and the Registry's RegisterMCPClient will effectively replace the map.
+		// For a full remove, we'd need a delete method on the client.
+		a.appendActivity(fmt.Sprintf("Remove command for %s not yet fully implemented (stub)", name))
+
+	default:
+		a.appendActivity("Unknown MCP action. Use add, list, or remove.")
+	}
 }
