@@ -90,7 +90,7 @@ The following tasks should be a reflection of those managed by the agent via the
 -- **T14 - issue with model returning commentary with escaped tool code seems to be related to max tool call error and the agent's response to being asked to provide a checkpoint**
 - **T15 — Update ASCII art.** Update the ASCII art from `<tj/>` to `<coder/>`.
 - **T16 — MongoDB Review.** Review the MongoDB ergo db, hotspots collection, and tenant records for the development staging system.
-- **T17 — Specialized Agents.** Implement a new Network and System Security agent, and a Cloud Infrastructure agent (specializing in Google Cloud, gcloud CLI installation, auth, and management).
+- **T17 — Specialized Agents.** Implement a new Network and System Security agent, and a Cloud Infrastructure agent (specializing in Google Cloud, gcloud CLI installation, auth, and management). *(Cloud half DONE — `cloud-expert` agent added in a9f2711; Network & System Security agent still pending.)*
 - **T18 — Agent Steering.** Implement the ability to send messages in-TUI to the agent while it's still thinking to steer the model's output.
 - **T19 — Markdown Table Support.** Implement markdown table rendering support within the TUI (tasks pane and general conversation output).
 - **T20 — Auto Scroll on Load.** Ensure the TUI automatically scrolls to the bottom on initialization when a session with an existing transcript is loaded.
@@ -100,3 +100,5 @@ The following tasks should be a reflection of those managed by the agent via the
 
 - **T21 — Web Search Tool.** Implement a web search tool to allow the agent to perform real-time web searches to retrieve up-to-date information.
 - **T22 — Fetch Tool Enhancement.** Ensure the `fetch` tool can work on any source (not just HTTP/HTTPS).
+- **T23 — Global Tracker Integration.** Augment the tasks, memories, and articles systems to support global stores, allowing data to be shared across different sessions/workspaces rather than being scoped only to the current workspace.
+- **T24 — TUI Reference Integration.** Implement `@` for referencing context (files, tasks, etc.) and `#` for tool invocation/guidance (e.g., `#run_command`) within the TUI input, utilizing a suggestion mechanism similar to the existing slash-command (`/`) completion.
