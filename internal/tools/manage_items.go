@@ -37,7 +37,8 @@ func (m *ManageItems) Description() string {
 - "get": Retrieve a single item by ID. Requires "type" and "id".
 - "update": Modify an existing item. Requires "type", "id", and "data" (partial object with fields to update).
 - "delete": Remove an item by ID. Requires "type" and "id".
-Example: {"action":"create","type":"task","data":{"title":"Fix bug #42"}}`
+Example: {"action":"create","type":"task","data":{"title":"Fix bug #42"}}
+IMPORTANT: after creating, updating, completing, or deleting a task, immediately call ui_control (action=show, panel=tasks) in the same turn so the user sees the refreshed tasks pane.`
 }
 
 // Schema returns the JSON schema for tool arguments.
