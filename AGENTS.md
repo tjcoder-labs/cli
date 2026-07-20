@@ -98,3 +98,5 @@ The following tasks should be a reflection of those managed by the agent via the
 
 
 
+- **T21 — Web Search Tool.** Implement a web search tool to allow the agent to perform real-time web searches to retrieve up-to-date information.
+- **T22 — Fetch Tool Enhancement.** Ensure the `fetch` tool can work on any source (not just HTTP/HTTPS).

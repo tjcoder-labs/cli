@@ -428,25 +428,19 @@ func (r *Runner) runChatTurn(ctx context.Context, model, systemPrompt string, hi
 // tool markup in its prose can never leak that markup into the
 // transcript.
 func (r *Runner) scrubMessage(msg client.Message) (client.Message, bool) {
-	if len(msg.ToolCalls) > 0 {
-		// Native tool calls were already parsed by the provider, so
-		// we still want to clean the prose of any leftover wrapper
-		// fragments but there is nothing to promote.
-		fallbackCalls, cleanedContent := ExtractFallbackToolCall(msg.Content, r.Registry)
-		if len(fallbackCalls) > 0 {
-			msg.ToolCalls = append(msg.ToolCalls, fallbackCalls...)
-			msg.Content = cleanedContent
-			return msg, true
-		}
-		return msg, false
-	}
 	fallbackCalls, cleanedContent := ExtractFallbackToolCall(msg.Content, r.Registry)
+	// Always adopt the cleaned content: even when no fallback tool call
+	// was recovered, ExtractFallbackToolCall strips <think>...</think>
+	// blocks and HTML comments that must never persist into the stored
+	// transcript/history (reasoning is routed to Cognition separately).
+	msg.Content = cleanedContent
 	if len(fallbackCalls) > 0 {
 		msg.ToolCalls = append(msg.ToolCalls, fallbackCalls...)
-		msg.Content = cleanedContent
-		return msg, true
 	}
-	return msg, false
+	// The bool strictly means "fallback tool calls were promoted" — the
+	// caller uses it to inject a synthetic acknowledgement message, so it
+	// must NOT fire when only think-blocks/comments were stripped.
+	return msg, len(fallbackCalls) > 0
 }
 
 func EncodeArgs(v any) string {

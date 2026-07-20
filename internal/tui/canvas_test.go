@@ -14,10 +14,11 @@ func TestRenderCanvasBodyReadsFileAndHighlights(t *testing.T) {
 	}
 	a := &App{workspaceRoot: dir}
 	out := a.renderCanvasBody("sample.txt", 2, 3)
-	if !strings.Contains(out, "CANVAS") {
-		t.Errorf("expected CANVAS header, got: %q", out)
+	// The CANVAS title now lives in the panel label row, not the body.
+	if strings.Contains(out, "CANVAS") {
+		t.Errorf("body should not contain inner CANVAS header, got: %q", out)
 	}
-	for _, want := range []string{"alpha", "bravo", "charlie", "delta", "sample.txt:2-3"} {
+	for _, want := range []string{"alpha", "bravo", "charlie", "delta"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("expected output to contain %q, got: %q", want, out)
 		}

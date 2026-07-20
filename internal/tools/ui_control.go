@@ -74,19 +74,14 @@ func (uiControlTool) Execute(_ context.Context, raw json.RawMessage, env ExecEnv
 	// handler. Base form: "panel:<panel>:<action>". The canvas panel appends
 	// the (optional) start:end:path tail. path is placed last so it may
 	// contain colons without breaking the SplitN parse on the TUI side.
+	// NOTE: the runner emits result.Preview as EventToolResult.Text, so the
+	// marker must be carried in Preview as well as Content; the TUI handler
+	// intercepts the marker and logs its own succinct line.
 	marker := fmt.Sprintf("panel:%s:%s", panel, action)
-	preview := fmt.Sprintf("%s %s", action, panel)
 	if panel == "canvas" && strings.TrimSpace(a.Path) != "" {
 		marker = fmt.Sprintf("panel:canvas:%s:%s:%s:%s",
 			action, strconv.Itoa(a.StartLine), strconv.Itoa(a.EndLine), a.Path)
-		preview = fmt.Sprintf("%s canvas %s", action, a.Path)
-		if a.StartLine > 0 {
-			preview += fmt.Sprintf(":%d", a.StartLine)
-			if a.EndLine > a.StartLine {
-				preview += fmt.Sprintf("-%d", a.EndLine)
-			}
-		}
 	}
 
-	return Result{Content: marker, Preview: preview}, nil
+	return Result{Content: marker, Preview: marker}, nil
 }
