@@ -200,6 +200,7 @@ type App struct {
 	tasksTitle      *tview.TextView
 	reasoningPanel  *tview.Flex
 	activity        *tview.TextView
+	activityTitle   *tview.TextView
 	activityPanel   *tview.Flex
 	// tasksList is the interactive tview.List shown in the right
 	// column when the user opens /tasks. The user navigates with
@@ -399,7 +400,7 @@ func (a *App) build() {
 	a.reasoningPanel = reasoningPanel
 	// Use a unified background for the right-hand column so reasoning
 	// and activity read as a single connected pane.
-	a.activity, _, activityPanel = a.newPanel("ACTIVITY", a.palette.BgReasoning, 1)
+	a.activity, a.activityTitle, activityPanel = a.newPanel("ACTIVITY", a.palette.BgReasoning, 1)
 	a.activityPanel = activityPanel
 	a.reasoning.SetTextColor(a.palette.TextDim)
 
@@ -1904,6 +1905,7 @@ func (a *App) showPanel(name string) {
 		return
 	case "articles":
 		a.setActivePanel("articles")
+		a.setActivityTitle("ARTICLES", "")
 		a.activity.SetText("[articles] Not implemented yet\n")
 		a.rebuildLayout()
 		a.focusInput()
@@ -1922,6 +1924,7 @@ func (a *App) showPanel(name string) {
 		return
 	default:
 		a.setActivePanel("activity")
+		a.setActivityTitle("ACTIVITY", "")
 		if state, ok, err := session.Load(a.workspaceRoot); err == nil && ok {
 			if state.Activity != "" {
 				a.activity.SetText(state.Activity)
@@ -2064,34 +2067,58 @@ func (a *App) toggleTask(id string) {
 	a.tasksList.SetCurrentItem(next)
 }
 
+// setActivityTitle updates the right-column body label (the row that
+// normally reads ACTIVITY). The canvas view retitles it CANVAS, with an
+// optional dim suffix (e.g. the file path and range).
+func (a *App) setActivityTitle(title, suffix string) {
+	if a.activityTitle == nil {
+		return
+	}
+	text := fmt.Sprintf(" [%s]%s[-]", a.palette.HexPurple, strings.ToUpper(title))
+	if suffix != "" {
+		text += fmt.Sprintf("  [%s]%s[-]", a.palette.HexDim, tview.Escape(suffix))
+	}
+	a.activityTitle.SetText(text)
+}
+
 // refreshCanvasPanel renders the canvas view into the right-column body.
 // When no file is loaded it shows a short placeholder; otherwise it
 // renders a.canvasPath (optionally scrolled to a.canvasStart..canvasEnd)
-// with line numbers and a highlighted range.
+// with line numbers and a highlighted range. The panel label row is
+// retitled CANVAS (with the path as a dim suffix) instead of an inner
+// header line.
 func (a *App) refreshCanvasPanel() {
 	if a.activity == nil {
 		return
 	}
 	if strings.TrimSpace(a.canvasPath) == "" {
+		a.setActivityTitle("CANVAS", "")
 		a.activity.SetText(fmt.Sprintf(
-			"[%s::b] CANVAS[-:-:-]\n\n[%s]Files the agent reads or drafts appear here. The agent uses ui_control (panel=canvas, path, start_line, end_line) to open a file and range. Use [%s]/canvas <path>[-] or [%s]Alt+C[-] to open one yourself.[-]",
-			a.palette.HexPurple,
+			"[%s]Files the agent reads or drafts appear here. The agent uses ui_control (panel=canvas, path, start_line, end_line) to open a file and range. Use [%s]/canvas <path> [start[-end]][-] or [%s]Alt+C[-] to open one yourself.[-]",
 			a.palette.HexLavender, a.palette.HexLavender, a.palette.HexLavender,
 		))
 		return
 	}
+	rangeLabel := ""
+	if a.canvasStart > 0 {
+		if a.canvasEnd > a.canvasStart {
+			rangeLabel = fmt.Sprintf(":%d-%d", a.canvasStart, a.canvasEnd)
+		} else {
+			rangeLabel = fmt.Sprintf(":%d", a.canvasStart)
+		}
+	}
+	a.setActivityTitle("CANVAS", a.canvasPath+rangeLabel)
 	a.activity.SetText(a.renderCanvasBody(a.canvasPath, a.canvasStart, a.canvasEnd))
 	a.activity.ScrollTo(a.canvasScrollTo(a.canvasStart), 0)
 }
 
-// canvasScrollTo returns the transcript row the canvas should scroll to so
+// canvasScrollTo returns the body row the canvas should scroll to so
 // the highlighted range is comfortably in view (a couple of lines of lead-in).
 func (a *App) canvasScrollTo(start int) int {
 	if start <= 3 {
 		return 0
 	}
-	// +2 accounts for the CANVAS header + blank line prepended to the body.
-	return start - 3 + 2
+	return start - 3
 }
 
 // renderCanvasBody reads path and returns a tview-markup string with a
@@ -2104,8 +2131,8 @@ func (a *App) renderCanvasBody(path string, start, end int) string {
 	}
 	data, err := os.ReadFile(full)
 	if err != nil {
-		return fmt.Sprintf("[%s::b] CANVAS[-:-:-]\n\n[%s]could not open %s: %v[-]",
-			a.palette.HexPurple, a.palette.HexOrchid, tview.Escape(path), err)
+		return fmt.Sprintf("[%s]could not open %s: %v[-]",
+			a.palette.HexOrchid, tview.Escape(path), err)
 	}
 
 	const maxBytes = 512 * 1024
@@ -2122,19 +2149,7 @@ func (a *App) renderCanvasBody(path string, start, end int) string {
 		truncated = true
 	}
 
-	rangeLabel := ""
-	if start > 0 {
-		if end > start {
-			rangeLabel = fmt.Sprintf(":%d-%d", start, end)
-		} else {
-			rangeLabel = fmt.Sprintf(":%d", start)
-		}
-	}
-
 	var b strings.Builder
-	fmt.Fprintf(&b, "[%s::b] CANVAS[-:-:-]  [%s]%s%s[-]\n\n",
-		a.palette.HexPurple, a.palette.HexLavender, tview.Escape(path), rangeLabel)
-
 	width := len(strconv.Itoa(len(lines)))
 	for i, ln := range lines {
 		n := i + 1
@@ -2378,23 +2393,27 @@ func (a *App) handleEvent(event tooling.Event) {
 						start, _ := strconv.Atoi(parts[3])
 						end, _ := strconv.Atoi(parts[4])
 						path := parts[5]
+						// Log BEFORE switching: canvas reuses the
+						// activity TextView, so logging after would
+						// append onto the rendered file and wreck
+						// the scroll position.
+						a.appendActivity(fmt.Sprintf("[%s]ui_control: canvas %s %s", a.palette.HexLavender, action, path))
 						switch strings.ToLower(action) {
 						case "show", "toggle":
 							a.openCanvas(path, start, end)
 						case "hide":
 							a.showPanel("activity")
 						}
-						a.appendActivity(fmt.Sprintf("[%s]ui_control: canvas %s %s", a.palette.HexLavender, action, path))
 						return
 					}
+					// Log BEFORE switching panels for the same reason.
+					a.appendActivity(fmt.Sprintf("[%s]ui_control: %s %s", a.palette.HexLavender, panel, action))
 					switch strings.ToLower(action) {
 					case "show", "toggle":
 						a.showPanel(panel)
 					case "hide":
 						a.showPanel("activity")
 					}
-					// Log the UI action succinctly
-					a.appendActivity(fmt.Sprintf("[%s]ui_control: %s %s", a.palette.HexLavender, panel, action))
 					return
 				}
 			}

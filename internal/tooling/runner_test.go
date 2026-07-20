@@ -188,6 +188,28 @@ func TestRunner_ScrubMessageStripsLeakedToolCallMarkup(t *testing.T) {
 	}
 }
 
+// TestRunner_ScrubMessageStripsThinkBlocks guards the fix for think
+// blocks persisting into stored history/transcript: scrubMessage must
+// strip <think>...</think> even when no fallback tool call is found,
+// and must NOT report fallback promotion in that case (which would
+// inject a bogus interception ack into history).
+func TestRunner_ScrubMessageStripsThinkBlocks(t *testing.T) {
+	provider := &scriptedProvider{}
+	runner := &Runner{Provider: provider, Registry: tools.NewRegistry(provider), MaxSteps: 1}
+
+	in := "I'll check the file now.\n\n<think>\nplan: list the dir, then read.\n</think>\n"
+	out, promoted := runner.scrubMessage(client.Message{Role: "assistant", Content: in})
+	if promoted {
+		t.Error("scrubMessage reported fallback promotion for a think-only strip")
+	}
+	if strings.Contains(out.Content, "<think") || strings.Contains(out.Content, "plan:") {
+		t.Errorf("think block survived scrub: %q", out.Content)
+	}
+	if !strings.Contains(out.Content, "I'll check the file now.") {
+		t.Errorf("user-facing prose lost in scrub: %q", out.Content)
+	}
+}
+
 // TestRunner_CheckpointResponseStripsLeakedToolCalls is the end-to-end
 // guard for T4: when the runner hits MaxSteps and falls through to
 // the budget-reached checkpoint branch, the final assistant message
