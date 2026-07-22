@@ -109,3 +109,63 @@ The following tasks should be a reflection of those managed by the agent via the
   - Finalize landing page for Hero.
   - Draft LinkedIn post promoting TJ Coder AI Labs.
   - Research Reddit API integration.
+
+
+### Ollama Usage 
+
+The following snippet can be run in the chrome dev tools when visiting the ollama.com/settings panel to immediately output ollama consumption breakdown, pressure and limits:
+
+```javascript
+(function() {
+  var allDivs = document.getElementsByTagName('div');
+  var sessionDec = 0;
+  var weeklyDec = 0;
+
+  for (var i = 0; i < allDivs.length; i++) {
+    var label = allDivs[i].getAttribute('aria-label');
+    if (label) {
+      // Check for Session Usage
+      if (label.indexOf('Session usage') !== -1) {
+        var children = allDivs[i].getElementsByTagName('div');
+        for (var j = 0; j < children.length; j++) {
+          var width = children[j].style.width;
+          if (width && width.indexOf('%') !== -1) {
+            sessionDec = parseFloat(width) / 100;
+            break;
+          }
+        }
+      }
+      // Check for Weekly Usage
+      if (label.indexOf('Weekly usage') !== -1) {
+        var childrenW = allDivs[i].getElementsByTagName('div');
+        for (var k = 0; k < childrenW.length; k++) {
+          var widthW = childrenW[k].style.width;
+          if (widthW && widthW.indexOf('%') !== -1) {
+            weeklyDec = parseFloat(widthW) / 100;
+            break;
+          }
+        }
+      }
+    }
+  }
+
+  var pressure = sessionDec > weeklyDec ? sessionDec : weeklyDec;
+  
+  var result = {
+    "usage_pressure": Number(pressure.toFixed(4)),
+    "status": pressure > 0.95 ? "CRITICAL" : (pressure > 0.8 ? "WARNING" : "HEALTHY"),
+    "breakdown": {
+      "session": sessionDec,
+      "weekly": weeklyDec
+    },
+    "limiting_factor": weeklyDec >= sessionDec ? "weekly" : "session",
+    "timestamp": new Date().toTimeString().split(' ')[0]
+  };
+
+  console.log("Report Generated:", result);
+  return result;
+})();
+```
+
+This would be executed in the dev tools console and is intended for development purposes only.
+- **T27 — Ollama Limit Inference.** Develop a more reliable means of infering or determining Ollama session limits for cloud models, like breakdown and pressure. Use the existing snippet in this document (Ollama Usage section) along with page evaluation and programatic download to get around the terrible Ollama UX. It'll be a hack but will work for now.

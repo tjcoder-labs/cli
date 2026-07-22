@@ -1,7 +1,9 @@
 package context
 
 import (
+	"context"
 	"os"
+	"os/exec"
 	"os/user"
 	"path/filepath"
 	"regexp"
@@ -57,7 +59,7 @@ const DefaultEnvironmentTemplate = `[execution-context]
 // Missing or unavailable fields are set to sensible defaults.
 func Build(cliPath, cliVersion, workspaceRoot string) Info {
 	info := Info{
-		CLIPath:       getOrDefault(cliPath, "unknown"),
+		CLIPath:       resolveCLIPath(cliPath),
 		CLIVersion:    getOrDefault(cliVersion, "dev"),
 		WorkspaceRoot: getOrDefault(workspaceRoot, getCWD()),
 	}
@@ -117,9 +119,47 @@ func (i Info) tokens() map[string]string {
 // tokenRe matches {{name}} placeholders (optionally padded with spaces).
 var tokenRe = regexp.MustCompile(`\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}`)
 
-// Render interpolates {{name}} placeholders in tmpl using the live Info
-// values. Unknown tokens are left untouched so authors can spot typos.
+// exprRe matches {{$(command)}} expressions. The command is captured
+// up to the first matching "}}". We allow any character except '}'
+// inside the command so users can pass flags, quotes, pipes, etc.
+var exprRe = regexp.MustCompile(`\{\{\s*\$\((.*?)\)\s*\}\}`)
+
+// commandTimeout caps how long an immediate-evaluation expression
+// (e.g. {{$(coder -v)}}) is allowed to run. Templates run inline
+// during the agent's prompt construction, so a slow command would
+// stall the user-facing turn.
+const commandTimeout = 5 * time.Second
+
+// Render interpolates placeholders in tmpl using the live Info values.
+// It runs in two passes:
+//
+//  1. {{$(command)}} — executed via the user's $SHELL with a 5s
+//     timeout. The captured stdout (trimmed) replaces the
+//     placeholder. On error, the literal expression is left in place
+//     so authors can spot a broken template.
+//
+//  2. {{name}} — looked up in the Info tokens map. Unknown names
+//     are left untouched.
+//
+// The immediate-evaluation pass runs first so a command that
+// happens to print "{{cwd}}" is treated as a literal string, not a
+// nested token.
 func (i Info) Render(tmpl string) string {
+	tmpl = exprRe.ReplaceAllStringFunc(tmpl, func(match string) string {
+		sub := exprRe.FindStringSubmatch(match)
+		if len(sub) < 2 {
+			return match
+		}
+		cmd := strings.TrimSpace(sub[1])
+		if cmd == "" {
+			return match
+		}
+		out, err := runShellCommand(cmd)
+		if err != nil {
+			return match
+		}
+		return out
+	})
 	vals := i.tokens()
 	return tokenRe.ReplaceAllStringFunc(tmpl, func(match string) string {
 		key := strings.ToLower(strings.TrimSpace(tokenRe.FindStringSubmatch(match)[1]))
@@ -128,6 +168,33 @@ func (i Info) Render(tmpl string) string {
 		}
 		return match
 	})
+}
+
+// runShellCommand executes cmd via the user's $SHELL (falling back
+// to /bin/sh on non-Windows, cmd /c on Windows) and returns the
+// trimmed stdout. Stderr is discarded; errors (non-zero exit, spawn
+// failure, timeout) are reported to the caller.
+func runShellCommand(cmd string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), commandTimeout)
+	defer cancel()
+
+	var name string
+	var args []string
+	if runtime.GOOS == "windows" {
+		name = "cmd"
+		args = []string{"/c", cmd}
+	} else {
+		shell := getEnv("SHELL", "/bin/sh")
+		name = shell
+		args = []string{"-c", cmd}
+	}
+
+	c := exec.CommandContext(ctx, name, args...)
+	out, err := c.Output()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimRight(string(out), "\r\n"), nil
 }
 
 // FormatPrompt returns the default environment block with the live Info
@@ -243,4 +310,30 @@ func ExpandPath(p string) string {
 		return home
 	}
 	return filepath.Join(home, strings.TrimPrefix(p, "~/"))
+}
+
+// resolveCLIPath canonicalizes the path to the running coder binary
+// so that {{cli_path}} always expands to a usable absolute path,
+// even when the user invoked the binary as a bare `coder` from $PATH
+// or as a relative `./bin/coder`. Falls back to the original arg if
+// no absolute resolution is possible.
+func resolveCLIPath(arg string) string {
+	if arg == "" {
+		return "unknown"
+	}
+	// Already absolute.
+	if filepath.IsAbs(arg) {
+		return arg
+	}
+	// Try a $PATH lookup (covers `coder`, `coder-cli`, etc.).
+	if abs, err := exec.LookPath(arg); err == nil {
+		return abs
+	}
+	// Try resolving relative to CWD.
+	if abs, err := filepath.Abs(arg); err == nil {
+		if _, statErr := os.Stat(abs); statErr == nil {
+			return abs
+		}
+	}
+	return arg
 }

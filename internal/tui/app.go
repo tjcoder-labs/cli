@@ -143,6 +143,7 @@ var slashCommands = []slashCommand{
 	{"model", "Choose model"},
 	{"scroll", "Scroll transcript"},
 	{"clear", "Clear session"},
+	{"compact", "Summarize transcript to free context"},
 	{"quit", "Quit application"},
 	{"trigger", "Trigger an event"},
 	{"reminder", "Create a reminder"},
@@ -1562,6 +1563,8 @@ func (a *App) handleSlashCommand(cmd string) {
 		a.appendActivity(fmt.Sprintf("Scrolled %s by %d lines", dir, lines))
 	case "clear":
 		a.clearSession()
+	case "compact":
+		a.compactHistory()
 	case "quit":
 		a.tv.Stop()
 	case "agentinfo":
@@ -1807,8 +1810,8 @@ func (a *App) openEnvironmentModal() {
 	help := tview.NewTextView().SetDynamicColors(true)
 	help.SetBackgroundColor(bg)
 	help.SetTextColor(a.palette.TextDim)
-	help.SetText(fmt.Sprintf(" [%s]tokens:[-] {{cwd}} {{workspace}} {{shell}} {{os}} {{arch}} {{user}} {{hostname}} {{time}} {{timezone}} {{home}} {{locale}} {{model}} {{agent}} {{cli_version}}",
-		a.palette.HexFaint))
+	help.SetText(fmt.Sprintf(" [%s]tokens:[-] {{cwd}} {{workspace}} {{shell}} {{os}} {{arch}} {{user}} {{hostname}} {{time}} {{timezone}} {{home}} {{locale}} {{model}} {{agent}} {{cli_path}} {{cli_version}}   [%s]expr:[-] {{$(command)}}",
+		a.palette.HexFaint, a.palette.HexFaint))
 
 	closeEnv := func() { a.closeModal() }
 	save := func() {
@@ -2288,6 +2291,85 @@ func (a *App) clearSession() {
 	a.refreshContextBar()
 	a.appendActivity("Session cleared.")
 	a.saveSession()
+}
+
+// compactHistory summarizes the current transcript to free context
+// space. The model is asked to produce a structured summary of every
+// user request, every assistant decision, and any code/file changes;
+// the in-memory history is then replaced with a small "compaction
+// marker" pair so subsequent turns see a compact but complete
+// narrative.
+//
+// If the transcript is already short, the operation is a no-op with
+// an activity log notice. If the summarization call fails, history
+// is left untouched so the user does not lose context.
+func (a *App) compactHistory() {
+	if len(a.history) < 4 {
+		a.appendActivity(fmt.Sprintf("[%s]compact[-]: nothing to compact (history has %d messages)", a.palette.HexFaint, len(a.history)))
+		return
+	}
+
+	preCount := len(a.history)
+	preChars := 0
+	for _, m := range a.history {
+		preChars += len(m.Content)
+	}
+
+	prompt := strings.Join([]string{
+		"Please produce a structured, compact summary of our entire conversation above. The summary will replace the prior messages in the transcript, so it must be sufficient to continue the work without re-asking any question I have already answered.",
+		"",
+		"Format the summary as Markdown with these sections:",
+		"- **Goal**: the user's overarching objective in one or two sentences",
+		"- **Decisions**: numbered list of every concrete decision the assistant made, with one-line rationale each",
+		"- **Files touched**: list of file paths modified, created, or read, with one-sentence reason each",
+		"- **Open questions**: any unresolved question or TODO the user or assistant flagged",
+		"- **Next steps**: the most likely next thing the user will ask for",
+		"",
+		"Be specific (function names, command names, exact paths). Do not include pleasantries or meta-commentary. Do not exceed ~600 words.",
+	}, "\n")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	newHistory, err := a.runner.Run(ctx, a.history, prompt, a.currentAgent, a.currentModel, nil, nil)
+	if err != nil {
+		a.appendActivity(fmt.Sprintf("[%s]compact failed[-]: %v", a.palette.HexOrchid, err))
+		return
+	}
+	if len(newHistory) <= len(a.history) {
+		a.appendActivity(fmt.Sprintf("[%s]compact failed[-]: runner produced no new messages", a.palette.HexOrchid))
+		return
+	}
+
+	summary := newHistory[len(newHistory)-1].Content
+	if strings.TrimSpace(summary) == "" {
+		a.appendActivity(fmt.Sprintf("[%s]compact failed[-]: model returned an empty summary", a.palette.HexOrchid))
+		return
+	}
+
+	// Replace in-memory history with a two-message marker: a
+	// user/assistant pair describing the compaction. The agent
+	// system prompt still injects the workspace context block
+	// (model, agent, env), so this is enough to keep the model
+	// grounded.
+	a.history = []client.Message{
+		{Role: "user", Content: "[Compaction] The prior conversation has been summarized to free context. Treat the assistant's summary below as authoritative for any earlier decision, file change, or open question."},
+		{Role: "assistant", Content: summary},
+	}
+
+	// Persist immediately so a crash before the next save does not
+	// leave a half-compacted transcript on disk.
+	if err := a.saveSession(); err != nil {
+		a.appendActivity(fmt.Sprintf("[%s]compact saved in-memory but session persist failed[-]: %v", a.palette.HexOrchid, err))
+		return
+	}
+
+	postChars := 0
+	for _, m := range a.history {
+		postChars += len(m.Content)
+	}
+	a.appendActivity(fmt.Sprintf("[%s]compacted[-]: %d → %d messages, %d → %d chars",
+		a.palette.HexLavender, preCount, len(a.history), preChars, postChars))
 }
 
 func (a *App) submit() {
