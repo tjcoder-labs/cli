@@ -97,6 +97,25 @@ func (r *Registry) RegisterTool(t Tool) {
 	r.tools[name] = t
 }
 
+// UnregisterTool removes a single tool by name. No-op if not present.
+func (r *Registry) UnregisterTool(name string) {
+	delete(r.tools, name)
+}
+
+// UnregisterPrefix removes every tool whose name starts with the
+// given prefix. Used by the MCP bridge to wipe `mcp_{server}_*`
+// entries when a server is removed.
+func (r *Registry) UnregisterPrefix(prefix string) {
+	if prefix == "" {
+		return
+	}
+	for name := range r.tools {
+		if strings.HasPrefix(name, prefix) {
+			delete(r.tools, name)
+		}
+	}
+}
+
 func (r *Registry) Definitions(names []string) []client.ToolDefinition {
 	defs := make([]client.ToolDefinition, 0, len(names))
 	for _, name := range names {

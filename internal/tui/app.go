@@ -344,6 +344,7 @@ func New(provider client.Provider, registry *tools.Registry, workspaceRoot, mode
 	app.build()
 	app.loadSession()
 	app.loadModelsAsync()
+	app.loadMCPServers()
 	// Persist defaults on first run so the file exists for the
 	// in-app editor and so a config write is always recoverable.
 	if workspaceRoot != "" {
@@ -352,6 +353,39 @@ func New(provider client.Provider, registry *tools.Registry, workspaceRoot, mode
 		}
 	}
 	return app
+}
+
+// loadMCPServers hydrates the in-memory mcpClient from the persisted
+// config.MCPServers map. Each enabled entry is registered; failures
+// (network errors during tools/list discovery, bad URLs) are recorded
+// in the activity log so the user knows why a server didn't come up.
+// It is safe to call before the TUI event loop starts — appendActivity
+// just appends to a TextView and is benign if the view isn't yet
+// attached to a page.
+func (a *App) loadMCPServers() {
+	if a.mcpClient == nil || len(a.config.MCPServers) == 0 {
+		return
+	}
+	for name, sc := range a.config.MCPServers {
+		if !sc.Enabled {
+			continue
+		}
+		if sc.Type != "" && sc.Type != "sse" {
+			a.appendActivity(fmt.Sprintf("[%s]MCP %s skipped[-]: transport %q not yet supported (only \"sse\")",
+				a.palette.HexOrchid, name, sc.Type))
+			continue
+		}
+		if sc.URL == "" {
+			a.appendActivity(fmt.Sprintf("[%s]MCP %s skipped[-]: missing url", a.palette.HexOrchid, name))
+			continue
+		}
+		if err := a.mcpClient.AddServer(name, sc.URL); err != nil {
+			a.appendActivity(fmt.Sprintf("[%s]MCP %s failed[-]: %v", a.palette.HexOrchid, name, err))
+			continue
+		}
+		tools.RegisterMCPClient(a.registry, a.mcpClient)
+		a.appendActivity(fmt.Sprintf("MCP server [%s]%s[-] restored from config", a.palette.HexLavender, name))
+	}
 }
 
 func (a *App) Run() error {
@@ -3288,6 +3322,21 @@ func (a *App) handleMCPCommand(parts []string) {
 		}
 		// Register the tools in the global registry
 		tools.RegisterMCPClient(a.registry, a.mcpClient)
+		// Persist to config so the integration survives restarts and
+		// shows up in /config's JSON editor.
+		if a.config.MCPServers == nil {
+			a.config.MCPServers = make(map[string]MCPServerConfig)
+		}
+		a.config.MCPServers[name] = MCPServerConfig{
+			Type:    "sse",
+			URL:     url,
+			Enabled: true,
+		}
+		if saveErr := a.saveConfig(a.config); saveErr != nil {
+			a.appendActivity(fmt.Sprintf("[%s]MCP %s added in-memory but config save failed[-]: %v",
+				a.palette.HexOrchid, name, saveErr))
+			return
+		}
 		a.appendActivity(fmt.Sprintf("Successfully added MCP server [%s]%s[-] and registered tools", a.palette.HexLavender, name))
 
 	case "list":
@@ -3313,10 +3362,23 @@ func (a *App) handleMCPCommand(parts []string) {
 			return
 		}
 		name := parts[2]
-		// We don't have a RemoveServer method yet, but we can just disable it
-		// and the Registry's RegisterMCPClient will effectively replace the map.
-		// For a full remove, we'd need a delete method on the client.
-		a.appendActivity(fmt.Sprintf("Remove command for %s not yet fully implemented (stub)", name))
+		if err := a.mcpClient.RemoveServer(name); err != nil {
+			a.appendActivity(fmt.Sprintf("[%s]MCP remove failed[-]: %v", a.palette.HexOrchid, err))
+			return
+		}
+		// Drop the mcp_{name}_* tools from the agent's tool set so
+		// they stop being offered as available functions.
+		tools.UnregisterMCPServer(a.registry, name)
+		// Drop from persisted config.
+		if _, ok := a.config.MCPServers[name]; ok {
+			delete(a.config.MCPServers, name)
+			if saveErr := a.saveConfig(a.config); saveErr != nil {
+				a.appendActivity(fmt.Sprintf("[%s]MCP %s removed in-memory but config save failed[-]: %v",
+					a.palette.HexOrchid, name, saveErr))
+				return
+			}
+		}
+		a.appendActivity(fmt.Sprintf("Removed MCP server [%s]%s[-]", a.palette.HexLavender, name))
 
 	default:
 		a.appendActivity("Unknown MCP action. Use add, list, or remove.")

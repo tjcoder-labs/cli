@@ -67,6 +67,53 @@ func (c *Client) AddServer(name, url string) error {
 	return nil
 }
 
+// RemoveServer disconnects (best-effort) and unregisters an MCP
+// server. Returns an error if the server is not registered. The
+// caller is responsible for re-registering the tool registry so
+// stale `mcp_{name}_*` tools stop being offered to the agent.
+func (c *Client) RemoveServer(name string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	s, ok := c.servers[name]
+	if !ok {
+		return fmt.Errorf("server %q not found", name)
+	}
+
+	if s.Transport != nil {
+		// Transport is currently HTTP-only; no explicit Close hook
+		// exists, but clearing the reference lets the underlying
+		// http.Client be GC'd once in-flight requests finish.
+		s.Transport = nil
+	}
+
+	s.mu.Lock()
+	s.tools = make(map[string]ToolDefinition)
+	s.mu.Unlock()
+
+	delete(c.servers, name)
+	return nil
+}
+
+// SetToolsForServer replaces the discovered tool list for a server.
+// Intended for tests that need to seed `mcp_{name}_*` registrations
+// without performing a real `tools/list` round-trip. It is exported
+// so external test packages can drive the client deterministically.
+func (c *Client) SetToolsForServer(name string, defs map[string]ToolDefinition) {
+	c.mu.RLock()
+	s, ok := c.servers[name]
+	c.mu.RUnlock()
+	if !ok {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.tools = make(map[string]ToolDefinition, len(defs))
+	for k, v := range defs {
+		s.tools[k] = v
+	}
+}
+
 // discoverTools fetches the list of tools from the MCP server.
 func (c *Client) discoverTools(s *Server) error {
 	var resp ListToolsResponse
@@ -112,6 +159,25 @@ func (c *Client) GetToolsForServer(name string) map[string]ToolDefinition {
 		tools[k] = v
 	}
 	return tools
+}
+
+// SetToolsForTest injects a tool definition into a server's tool
+// map. It is intended for tests that want to exercise the registry
+// bridge without standing up a real MCP server. Not safe to call
+// from production code.
+func (c *Client) SetToolsForTest(serverName string, defs map[string]ToolDefinition) {
+	c.mu.RLock()
+	s, ok := c.servers[serverName]
+	c.mu.RUnlock()
+	if !ok {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.tools = make(map[string]ToolDefinition, len(defs))
+	for k, v := range defs {
+		s.tools[k] = v
+	}
 }
 
 // CallTool invokes a tool on a specific MCP server.
