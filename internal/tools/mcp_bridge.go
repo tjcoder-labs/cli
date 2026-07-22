@@ -58,3 +58,13 @@ func RegisterMCPClient(r *Registry, c *mcp.Client) {
 		}
 	}
 }
+
+// UnregisterMCPServer removes every `mcp_{serverName}_*` tool from
+// the registry. Call this after Client.RemoveServer so the agent's
+// tool set no longer offers a server that has been disconnected.
+func UnregisterMCPServer(r *Registry, serverName string) {
+	if serverName == "" {
+		return
+	}
+	r.UnregisterPrefix("mcp_" + serverName + "_")
+}

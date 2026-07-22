@@ -33,6 +33,26 @@ type AppConfig struct {
 	// Agent is the default agent to select on launch. An empty
 	// string means "use the first agent".
 	Agent string `json:"agent,omitempty"`
+	// MCPServers is the persisted set of Model Context Protocol
+	// integrations. Each entry maps a stable name (used by /mcp
+	// add|list|remove and by the mcp_{server}_{tool} tool
+	// namespace) onto the connection details. The /mcp slash
+	// command mutates this map; the /config JSON editor round-trips
+	// it verbatim.
+	MCPServers map[string]MCPServerConfig `json:"mcp_servers,omitempty"`
+}
+
+// MCPServerConfig is the on-disk shape of a single MCP integration.
+// `Type` is "sse" (HTTP) or "stdio" (local process). For SSE, URL is
+// required; for stdio, Command + Args describe how to launch the
+// process. The current transport in internal/mcp only implements
+// HTTP/SSE — stdio is parsed but not yet wired up; see MCP_SPEC.md.
+type MCPServerConfig struct {
+	Type    string   `json:"type"`              // "sse" or "stdio"
+	URL     string   `json:"url,omitempty"`     // for SSE
+	Command string   `json:"command,omitempty"` // for stdio
+	Args    []string `json:"args,omitempty"`    // for stdio
+	Enabled bool     `json:"enabled"`
 }
 
 // DefaultConfig returns a sane, zero-value config used when no
