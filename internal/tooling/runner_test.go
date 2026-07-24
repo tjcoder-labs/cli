@@ -279,3 +279,232 @@ func TestRunner_CheckpointResponseStripsLeakedToolCalls(t *testing.T) {
 		}
 	}
 }
+
+// cancellingProvider is a test-only Provider whose Chat method
+// blocks until the supplied context is cancelled. This mirrors
+// what the real Ollama provider does once the watcher's
+// cancelTurn aborts an in-flight HTTP request: it returns
+// context.Canceled, which the runner translates into
+// errTurnCancelledBySteering. We embed a scriptedProvider so
+// subsequent (post-steering) calls can be scripted as usual.
+type cancellingProvider struct {
+	scripted *scriptedProvider
+}
+
+func (p *cancellingProvider) Chat(ctx context.Context, req client.ChatRequest, onEvent func(client.StreamEvent) error) (client.Message, error) {
+	// Honor ctx cancellation the same way the real provider
+	// does: wait for the request to be aborted (e.g. by the
+	// runner's steering watcher) and surface the error. This
+	// is the path the runner's errTurnCancelledBySteering
+	// branch is designed to handle.
+	<-ctx.Done()
+	return client.Message{}, ctx.Err()
+}
+
+func (p *cancellingProvider) ListModels(context.Context) ([]client.ModelInfo, error) {
+	return nil, nil
+}
+
+func (p *cancellingProvider) ContextWindow(context.Context, string) (int, error) {
+	return 8192, nil
+}
+
+func (p *cancellingProvider) BaseURL() string {
+	return "http://localhost:11434"
+}
+
+// TestRunner_SteeringBetweenStepsAppendsToHistory verifies the
+// between-steps steering path: when a steering message is queued
+// on r.Steering *after* the model's first turn has produced a
+// tool call but *before* the next iteration's runChatTurn, the
+// runner appends the steering message to history as a user-role
+// message and the next provider call sees it.
+func TestRunner_SteeringBetweenStepsAppendsToHistory(t *testing.T) {
+	steer := make(chan string, 1)
+	steer <- "actually, just summarize what you have"
+
+	provider := &scriptedProvider{
+		responses: []client.Message{
+			// Step 1: assistant calls a tool, runner will append
+			// the tool result to history, then the between-steps
+			// drain should pull the steering message in.
+			{
+				Role: "assistant",
+				ToolCalls: []client.ToolCall{
+					{
+						Type: "function",
+						Function: client.ToolFunctionCall{
+							Name:      "list_directory",
+							Arguments: json.RawMessage(`{"path":".","depth":1}`),
+						},
+					},
+				},
+			},
+			// Step 2: after seeing the steering message the
+			// model just answers in prose.
+			{Role: "assistant", Content: "Got it. Here is the summary."},
+		},
+	}
+
+	registry := tools.NewRegistry(provider)
+	runner := &Runner{
+		Provider:      provider,
+		Registry:      registry,
+		WorkspaceRoot: t.TempDir(),
+		MaxSteps:      4,
+		Steering:      steer,
+	}
+
+	history, err := runner.Run(
+		context.Background(),
+		nil,
+		"list the workspace",
+		agent.Config{Name: "test-agent", Prompt: "You are a test agent."},
+		"test-model",
+		[]string{"list_directory"},
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("Run() returned unexpected error: %v", err)
+	}
+
+	if len(provider.requests) < 2 {
+		t.Fatalf("expected at least 2 provider calls, got %d", len(provider.requests))
+	}
+
+	// The second provider call must contain the steering message
+	// as a user-role entry in the conversation history.
+	second := provider.requests[1]
+	found := false
+	for _, m := range second.Messages {
+		if m.Role == "user" && strings.Contains(m.Content, "actually, just summarize") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected steering message in second request history, got %d messages: %+v", len(second.Messages), second.Messages)
+	}
+
+	// The steering message must also be present in the
+	// returned history (so the TUI / persisted session sees it).
+	foundInHistory := false
+	for _, m := range history {
+		if m.Role == "user" && strings.Contains(m.Content, "actually, just summarize") {
+			foundInHistory = true
+			break
+		}
+	}
+	if !foundInHistory {
+		t.Errorf("steering message missing from returned history")
+	}
+}
+
+// TestRunner_SteeringMidStreamCancelsTurn verifies the mid-stream
+// steering path: a steering message queued *during* an in-flight
+// Provider.Chat causes the per-turn context to be cancelled, the
+// in-flight turn to return errTurnCancelledBySteering, and the
+// next provider call to see the steering message in history.
+// This is the regression-guard for T18.
+func TestRunner_SteeringMidStreamCancelsTurn(t *testing.T) {
+	steer := make(chan string, 1)
+	// Pre-buffer the steering message so the in-flight watcher
+	// fires immediately on the first call.
+	steer <- "pivot: focus on the failing test"
+
+	provider := &cancellingProvider{
+		scripted: &scriptedProvider{
+			responses: []client.Message{
+				// Post-steering clean reply.
+				{Role: "assistant", Content: "Acknowledged: pivoting now."},
+			},
+		},
+	}
+
+	registry := tools.NewRegistry(provider)
+	runner := &Runner{
+		Provider:      provider,
+		Registry:      registry,
+		WorkspaceRoot: t.TempDir(),
+		MaxSteps:      4,
+		Steering:      steer,
+	}
+
+	history, err := runner.Run(
+		context.Background(),
+		nil,
+		"start the refactor",
+		agent.Config{Name: "test-agent", Prompt: "You are a test agent."},
+		"test-model",
+		[]string{},
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("Run() returned unexpected error: %v", err)
+	}
+
+	if len(provider.scripted.requests) < 1 {
+		t.Fatalf("expected at least 1 post-cancel provider call, got %d", len(provider.scripted.requests))
+	}
+
+	// The first post-cancel request must contain the steering
+	// message as a user-role entry.
+	first := provider.scripted.requests[0]
+	found := false
+	for _, m := range first.Messages {
+		if m.Role == "user" && strings.Contains(m.Content, "pivot: focus on the failing test") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected steering message in first post-cancel request history, got messages: %+v", first.Messages)
+	}
+
+	// And the post-steering assistant reply must be the final
+	// history entry.
+	if len(history) == 0 {
+		t.Fatal("expected non-empty history")
+	}
+	last := history[len(history)-1]
+	if last.Role != "assistant" || !strings.Contains(last.Content, "Acknowledged") {
+		t.Errorf("expected final assistant message to contain post-steering reply, got role=%q content=%q", last.Role, last.Content)
+	}
+}
+
+// TestRunner_NilSteeringPreservesBehavior is the safety guard:
+// with r.Steering == nil (the default for headless / recap /
+// compact callers) the runner must behave exactly as before.
+// It also exercises the in-flight ctx path: cancelling the
+// parent context must still surface as context.Canceled (NOT
+// as errTurnCancelledBySteering), because the watcher is not
+// installed when Steering is nil.
+func TestRunner_NilSteeringPreservesBehavior(t *testing.T) {
+	provider := &scriptedProvider{
+		responses: []client.Message{{Role: "assistant", Content: "ok"}},
+	}
+	registry := tools.NewRegistry(provider)
+	runner := &Runner{
+		Provider:      provider,
+		Registry:      registry,
+		WorkspaceRoot: t.TempDir(),
+		MaxSteps:      1,
+		// Steering intentionally nil.
+	}
+
+	_, err := runner.Run(
+		context.Background(),
+		nil,
+		"hello",
+		agent.Config{Name: "test-agent", Prompt: "You are a test agent."},
+		"test-model",
+		[]string{},
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("Run() returned unexpected error: %v", err)
+	}
+	if len(provider.requests) != 1 {
+		t.Fatalf("expected exactly 1 provider call, got %d", len(provider.requests))
+	}
+}
