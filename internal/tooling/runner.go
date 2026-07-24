@@ -3,6 +3,7 @@ package tooling
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -14,6 +15,15 @@ import (
 	"github.com/tjcoder-labs/cli/internal/session"
 	"github.com/tjcoder-labs/cli/internal/tools"
 )
+
+// errTurnCancelledBySteering is returned by runChatTurn when the
+// in-flight turn was aborted by a user steering message. The main
+// Run loop checks for this sentinel (via errors.Is) and continues
+// the next iteration instead of bubbling the error up to the
+// caller. It is package-private because only the runner cares
+// about the distinction; TUI callers see a normal, successful
+// Run return.
+var errTurnCancelledBySteering = errors.New("runner: turn cancelled by user steering")
 
 type EventType string
 
@@ -33,6 +43,14 @@ const (
 	EventToolResult           EventType = "tool_result"
 	EventContext              EventType = "context"
 	EventError                EventType = "error"
+	// EventSteering is emitted when the runner has accepted a
+	// mid-turn user steering message and queued it for the next
+	// provider call. The Text field carries the user's message.
+	// UIs should render the steering as a tagged user message in
+	// the transcript so the user can see it took effect, and use
+	// the ToolName field (always "steering") to style it
+	// differently from a regular /submit message.
+	EventSteering EventType = "steering"
 )
 
 type Event struct {
@@ -52,6 +70,21 @@ type Runner struct {
 	CLICommandSink tools.CLICommandSink
 	SessionState   *session.State
 	PersistSession func() error
+
+	// Steering, if non-nil, is a buffered channel of user
+	// mid-turn steering messages. The runner drains it at two
+	// points: (1) between tool steps in Run's main loop, where a
+	// queued message is appended to history and the next provider
+	// call sees it, and (2) during an in-flight Chat stream, where
+	// the first queued message cancels the in-flight turn (the
+	// per-turn context derived in runChatTurn) so the runner can
+	// re-enter the loop with the steering message already in
+	// history. The send-side contract is non-blocking: producers
+	// (e.g. the TUI's input capture) should size the channel and
+	// use a non-blocking send so a user typing into a backed-up
+	// channel never blocks the input goroutine. nil = disabled,
+	// which is the default for headless / recap / compact callers.
+	Steering <-chan string
 }
 
 const defaultMaxToolSteps = 8
@@ -233,9 +266,61 @@ func (r *Runner) Run(ctx context.Context, history []client.Message, prompt strin
 
 	for step := 0; step < r.MaxSteps; step++ {
 
+		// 0. Mid-turn steering drain. Before each model call, drain
+		// at most one queued steering message and append it to
+		// history as a user-role message. This is the entry point
+		// for both forms of steering:
+		//   - "steered between steps": a message was sent while the
+		//     runner was between tool executions; the previous
+		//     iteration's tool loop completed normally, this
+		//     iteration's drain picks it up, and the next provider
+		//     call sees it.
+		//   - "steered mid-stream": the in-flight turn was
+		//     cancelled by the watcher in runChatTurn, which
+		//     returned errTurnCancelledBySteering; the main loop
+		//     continues (handled below) and this drain then
+		//     appends the user's message to history before the
+		//     next provider call.
+		// Drain at most one message per step so the runner keeps
+		// making forward progress; stacked messages are picked up
+		// FIFO in subsequent iterations. nil channel => disabled.
+		if r.Steering != nil {
+			select {
+			case s := <-r.Steering:
+				if s = strings.TrimSpace(s); s != "" {
+					if onEvent != nil {
+						onEvent(Event{
+							Type:     EventSteering,
+							ToolName: "steering",
+							Text:     s,
+						})
+					}
+					history = append(history, client.Message{
+						Role:    "user",
+						Content: s,
+					})
+				}
+			default:
+			}
+		}
+
 		// 1. The model generates its response for the current turn
 		msg, err := r.runChatTurn(ctx, model, systemPrompt, history, defs, onEvent)
 		if err != nil {
+			// The per-turn context was cancelled because a steering
+			// message arrived mid-stream. The watcher in
+			// runChatTurn already consumed that first message from
+			// r.Steering, so we don't drain again here; we just
+			// loop so the next iteration's top-of-loop drain
+			// appends the same message to history. Decrement step
+			// so the cancelled turn doesn't burn one of the
+			// tool-call budget slots — the cancellation happened
+			// before the model produced a response, so it counts
+			// against the user's UX, not the budget.
+			if errors.Is(err, errTurnCancelledBySteering) {
+				step--
+				continue
+			}
 			return history, err
 		}
 
@@ -367,6 +452,44 @@ func (r *Runner) Run(ctx context.Context, history []client.Message, prompt strin
 }
 
 func (r *Runner) runChatTurn(ctx context.Context, model, systemPrompt string, history []client.Message, defs []client.ToolDefinition, onEvent func(Event)) (client.Message, error) {
+	// Derive a per-turn cancellable context. The watcher goroutine
+	// below cancels this context (only) when a steering message
+	// arrives on r.Steering mid-stream, which causes the
+	// in-flight HTTP request to abort and Provider.Chat to
+	// return with an error wrapping context.Canceled. We then
+	// translate that into errTurnCancelledBySteering so the
+	// main loop can distinguish "user steered" from a real
+	// failure. The parent ctx is never touched by the watcher;
+	// if the caller cancels the whole Run we still surface
+	// context.Canceled unchanged.
+	turnCtx, cancelTurn := context.WithCancel(ctx)
+	defer cancelTurn()
+
+	// Watcher: drains the first steering message that arrives
+	// during this turn and cancels turnCtx. The watcher exits
+	// as soon as the turn finishes (done channel closes) so
+	// it never outlives the call to Provider.Chat and never
+	// races with the next turn's watcher.
+	watcherDone := make(chan struct{})
+	if r.Steering != nil {
+		go func() {
+			select {
+			case <-r.Steering:
+				cancelTurn()
+			case <-watcherDone:
+			}
+		}()
+	}
+	closeWatcher := func() {
+		select {
+		case <-watcherDone:
+			// already closed
+		default:
+			close(watcherDone)
+		}
+	}
+	defer closeWatcher()
+
 	parser := &thoughtParser{}
 	// Strip prior-turn chain-of-thought before replaying history to the
 	// model. Thinking is retained in stored history for display, but
@@ -385,7 +508,7 @@ func (r *Runner) runChatTurn(ctx context.Context, model, systemPrompt string, hi
 		Tools: defs,
 		Think: true,
 	}
-	msg, err := r.Provider.Chat(ctx, req, func(stream client.StreamEvent) error {
+	msg, err := r.Provider.Chat(turnCtx, req, func(stream client.StreamEvent) error {
 		if stream.Reasoning != "" && onEvent != nil {
 			onEvent(Event{Type: EventReasoning, Text: stream.Reasoning})
 		}
@@ -401,6 +524,18 @@ func (r *Runner) runChatTurn(ctx context.Context, model, systemPrompt string, hi
 		return nil
 	})
 	if err != nil {
+		// Discriminate: was this turn cancelled because the
+		// user steered, or because the caller cancelled the
+		// parent context, or because the provider hit a real
+		// error? We only translate to the steering sentinel
+		// when the *per-turn* context is cancelled but the
+		// parent context is still alive — that's the exact
+		// pattern the watcher produces. Any other
+		// context.Canceled / DeadlineExceeded propagates
+		// untouched.
+		if errors.Is(err, context.Canceled) && turnCtx.Err() != nil && ctx.Err() == nil {
+			return client.Message{}, errTurnCancelledBySteering
+		}
 		return client.Message{}, err
 	}
 	if onEvent != nil {
