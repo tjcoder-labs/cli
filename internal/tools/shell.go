@@ -1,20 +1,35 @@
 package tools
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/creack/pty"
 	"github.com/tjcoder-labs/cli/internal/client"
 	"github.com/tjcoder-labs/cli/internal/session"
 )
 
 const maxOutput = 50000
+
+func readOutput(path string, limit int) (string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	text := string(data)
+	if limit > 0 && len(text) > limit {
+		text = text[len(text)-limit:]
+	}
+	return text, nil
+}
 
 func truncateOutput(text string) string {
 	if len(text) <= maxOutput {
@@ -55,12 +70,13 @@ func (runCommandTool) Definition() client.ToolDefinition {
 		Type: "function",
 		Function: client.FunctionDefinition{
 			Name:        "run_command",
-			Description: "Run a shell command inside the workspace with timeout protection. Set background=true for long-running or parallel work that should continue after the current turn.",
+			Description: "Run a shell command inside the workspace with timeout protection. Set background=true for long-running or parallel work that should continue after the current turn, then use background_job to read its status and output.",
 			Parameters: objectSchema([]string{"command"}, map[string]any{
 				"command":         stringProp("Shell command to execute."),
 				"cwd":             stringProp("Optional working directory."),
-				"timeout_seconds": numberProp("Optional timeout in seconds. Default 20, max 300."),
-				"background":      boolProp("If true, start the command in the background and return immediately with a job id."),
+				"timeout_seconds": numberProp("Optional timeout in seconds. Default 20, max 1800."),
+				"background":      boolProp("If true, start the command in the background and return immediately with a job id. For interactive scans, prefer a command's native timeout and set timeout_seconds slightly higher."),
+				"use_pty":         boolProp("If true, run the command in a pseudo-terminal (PTY). This is required for tools that detect if they are running in a real terminal, like bluetoothctl."),
 			}),
 		},
 	}
@@ -72,6 +88,7 @@ func (runCommandTool) Execute(ctx context.Context, raw json.RawMessage, env Exec
 		Cwd            string `json:"cwd"`
 		TimeoutSeconds int    `json:"timeout_seconds"`
 		Background     bool   `json:"background"`
+		UsePty         bool   `json:"use_pty"`
 	}
 	if err := json.Unmarshal(raw, &args); err != nil {
 		return Result{}, err
@@ -82,8 +99,8 @@ func (runCommandTool) Execute(ctx context.Context, raw json.RawMessage, env Exec
 	if args.TimeoutSeconds <= 0 {
 		args.TimeoutSeconds = 20
 	}
-	if args.TimeoutSeconds > 300 {
-		args.TimeoutSeconds = 300
+	if args.TimeoutSeconds > 1800 {
+		args.TimeoutSeconds = 1800
 	}
 	if ctx == nil {
 		ctx = context.Background()
@@ -161,7 +178,7 @@ func (runCommandTool) Execute(ctx context.Context, raw json.RawMessage, env Exec
 			job.CompletedAt = time.Now().UTC().Format(time.RFC3339)
 			updateBackgroundJob(env, jobID, job)
 		}()
-		msg := fmt.Sprintf("Started background job %s", jobID)
+		msg := fmt.Sprintf("Started background job %s. Use background_job with job_id %s to read its status and output.", jobID, jobID)
 		return Result{Content: msg, Preview: msg}, nil
 	}
 
@@ -173,12 +190,126 @@ func (runCommandTool) Execute(ctx context.Context, raw json.RawMessage, env Exec
 	} else {
 		cmd.Dir = filepath.Clean(env.WorkspaceRoot)
 	}
+
+	if args.UsePty {
+		ptmx, tty, err := pty.Open()
+		if err != nil {
+			return Result{}, fmt.Errorf("pty open: %w", err)
+		}
+		defer ptmx.Close()
+
+		cmd.Stdout = tty
+		cmd.Stdin = tty
+		cmd.Stderr = tty
+		if err := cmd.Start(); err != nil {
+			tty.Close()
+			return Result{}, fmt.Errorf("pty start: %w", err)
+		}
+		// Once the child has the slave fd, we can close it in the parent
+		// so reads on ptmx EOF when the child exits.
+		tty.Close()
+
+		var buf bytes.Buffer
+		done := make(chan error, 1)
+		go func() {
+			_, err := io.Copy(&buf, ptmx)
+			done <- err
+		}()
+
+		waitErr := make(chan error, 1)
+		go func() { waitErr <- cmd.Wait() }()
+
+		select {
+		case <-runCtx.Done():
+			// Context timeout or cancellation. Best-effort SIGKILL the
+			// child; closing the PTY alone does not stop the process.
+			_ = cmd.Process.Kill()
+			<-waitErr
+		case err := <-waitErr:
+			// Process exited; the io.Copy goroutine will close ptmx
+			// once it sees EOF, which it will because the slave fd is
+			// gone. Wait for the drain so the buffer is complete.
+			_ = err
+			<-done
+		}
+
+		text := truncateOutput(buf.String())
+		if cmd.ProcessState != nil && !cmd.ProcessState.Success() {
+			return Result{Content: text, Preview: preview(text)}, fmt.Errorf("command failed: exit code %d", cmd.ProcessState.ExitCode())
+		}
+		return Result{Content: text, Preview: preview(text)}, nil
+	}
+
 	out, err := cmd.CombinedOutput()
 	text := truncateOutput(string(out))
 	if err != nil {
 		return Result{Content: text, Preview: preview(text)}, fmt.Errorf("command failed: %w", err)
 	}
 	return Result{Content: text, Preview: preview(text)}, nil
+}
+
+type backgroundJobTool struct{}
+
+func (backgroundJobTool) Definition() client.ToolDefinition {
+	return client.ToolDefinition{
+		Type: "function",
+		Function: client.FunctionDefinition{
+			Name:        "background_job",
+			Description: "Read the status and captured output of a background run_command job.",
+			Parameters: objectSchema([]string{"job_id"}, map[string]any{
+				"job_id":        stringProp("The job id returned by run_command."),
+				"max_bytes":     numberProp("Optional maximum number of output bytes to return from the end of the log. Default 50000."),
+				"include_empty": boolProp("If true, return an empty output field when the job has not produced output yet."),
+			}),
+		},
+	}
+}
+
+func (backgroundJobTool) Execute(_ context.Context, raw json.RawMessage, env ExecEnv) (Result, error) {
+	var args struct {
+		JobID        string `json:"job_id"`
+		MaxBytes     int    `json:"max_bytes"`
+		IncludeEmpty bool   `json:"include_empty"`
+	}
+	if err := json.Unmarshal(raw, &args); err != nil {
+		return Result{}, err
+	}
+	if strings.TrimSpace(args.JobID) == "" {
+		return Result{}, fmt.Errorf("job_id is required")
+	}
+	if args.MaxBytes <= 0 || args.MaxBytes > maxOutput {
+		args.MaxBytes = maxOutput
+	}
+	if env.SessionState == nil {
+		return Result{}, fmt.Errorf("background job state is unavailable")
+	}
+	var job *session.BackgroundJob
+	for i := range env.SessionState.BackgroundJobs {
+		if env.SessionState.BackgroundJobs[i].ID == args.JobID {
+			job = &env.SessionState.BackgroundJobs[i]
+			break
+		}
+	}
+	if job == nil {
+		return Result{}, fmt.Errorf("background job %q not found", args.JobID)
+	}
+
+	output, err := readOutput(job.OutputPath, args.MaxBytes)
+	if err != nil && !os.IsNotExist(err) {
+		return Result{}, fmt.Errorf("read background job output: %w", err)
+	}
+	if err != nil && !args.IncludeEmpty {
+		output = "(no output yet)"
+	}
+	content := fmt.Sprintf("job_id: %s\nstatus: %s\nstarted_at: %s", job.ID, job.Status, job.StartedAt)
+	if job.CompletedAt != "" {
+		content += "\ncompleted_at: " + job.CompletedAt
+	}
+	if job.Error != "" {
+		content += "\nerror: " + job.Error
+	}
+	content += "\noutput:\n" + output
+	return Result{Content: content, Preview: preview(content)}, nil
 }
 
 func updateBackgroundJob(env ExecEnv, id string, job session.BackgroundJob) {
