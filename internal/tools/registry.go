@@ -60,6 +60,7 @@ func NewRegistry(provider client.Provider) *Registry {
 		readFileTool{},
 		listDirectoryTool{},
 		runCommandTool{},
+		backgroundJobTool{},
 		editFileTool{},
 		createFileTool{},
 		writeFileTool{},
