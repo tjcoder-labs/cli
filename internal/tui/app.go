@@ -170,6 +170,12 @@ type App struct {
 	provider     client.Provider
 	registry     *tools.Registry
 	runner       *tooling.Runner
+	// steeringCh carries mid-turn user steering messages from the
+	// TUI's submit() handler to Runner.Steering. It is buffered so
+	// a quick double-Enter doesn't drop; submit() does a non-blocking
+	// send and falls back to an activity-log warning if the buffer
+	// is saturated (per the contract documented on Runner.Steering).
+	steeringCh   chan string
 	mcpClient    *mcp.Client
 	sessionState session.State
 	palette      Palette
@@ -318,6 +324,7 @@ func New(provider client.Provider, registry *tools.Registry, workspaceRoot, mode
 		provider:      provider,
 		registry:      registry,
 		runner:        &tooling.Runner{Provider: provider, Registry: registry, WorkspaceRoot: workspaceRoot, MaxSteps: cfg.ToolMax},
+		steeringCh:    make(chan string, 16),
 		mcpClient:     mcp.NewClient(),
 		sessionState:  state,
 		workspaceRoot: workspaceRoot,
@@ -342,6 +349,10 @@ func New(provider client.Provider, registry *tools.Registry, workspaceRoot, mode
 	app.resetEnabledTools(current.ToolNames)
 	app.runner.SessionState = &app.sessionState
 	app.runner.PersistSession = app.saveSession
+	// Wire the steering channel last: it must exist on the App
+	// before we hand a reference to the runner so a submit() that
+	// races with the very first turn still has somewhere to send.
+	app.runner.Steering = app.steeringCh
 	app.build()
 	app.loadSession()
 	app.loadModelsAsync()
@@ -2375,6 +2386,26 @@ func (a *App) compactHistory() {
 func (a *App) submit() {
 	a.mu.Lock()
 	if a.busy {
+		// Mid-turn: route the prompt into the runner's steering
+		// channel instead of dropping it. Non-blocking send: if the
+		// channel buffer is saturated (the runner is mid-drain or
+		// the user pasted a wall of text faster than we can keep
+		// up), surface a warning in the activity log so the user
+		// knows to retry, instead of silently swallowing the input.
+		prompt := strings.TrimSpace(a.input.GetText())
+		if prompt == "" {
+			a.mu.Unlock()
+			return
+		}
+		select {
+		case a.steeringCh <- prompt:
+			a.appendActivity(fmt.Sprintf("[%s]steering[-]: queued %q for the in-flight turn", a.palette.HexOrchid, truncateForActivity(prompt)))
+		default:
+			a.appendActivity(fmt.Sprintf("[%s]steering[-]: queue full, message dropped; wait for the current turn to settle and try again", a.palette.HexOrchid))
+		}
+		a.input.SetText("")
+		a.setInputPlaceholder()
+		a.refreshContextBar()
 		a.mu.Unlock()
 		return
 	}
@@ -2551,6 +2582,18 @@ func (a *App) handleEvent(event tooling.Event) {
 		case tooling.EventContext:
 			a.contextInfo = event.Text
 			a.refreshContextBar()
+		case tooling.EventSteering:
+			// Mid-turn user steering. Render as a transcript line
+			// distinct from a fresh-turn user message: same body
+			// styling but a "steered:" prefix and a dimmed
+			// "mid-turn" tag so the user can see exactly what was
+			// injected into the in-flight conversation. The
+			// activity log already records the queue event from
+			// submit(), so we don't double-log here.
+			stamp := formatTimestamp(time.Now())
+			fmt.Fprintf(a.transcript, "[%s]%s[-]\n", a.palette.HexDim, stamp)
+			fmt.Fprintf(a.transcript, "[%s::b]you steered[-:-:-] %s\n", a.palette.HexLavender, event.Text)
+			a.transcript.ScrollToEnd()
 		}
 	})
 }
@@ -2681,6 +2724,19 @@ func (a *App) appendActivity(line string) {
 	stamp := formatTimestamp(time.Now())
 	fmt.Fprintf(a.activity, "["+a.palette.HexFaint+"]%s[-] %s\n", stamp, line)
 	a.activity.ScrollToEnd()
+}
+
+// truncateForActivity shortens a user-typed prompt so that activity
+// log entries (which appear in a narrow right column on most
+// terminals) stay on a single line. Long prompts are clipped with
+// an ellipsis at 60 runes; short prompts are returned verbatim.
+func truncateForActivity(s string) string {
+	const max = 60
+	runes := []rune(s)
+	if len(runes) <= max {
+		return s
+	}
+	return string(runes[:max-1]) + "…"
 }
 
 // appendUserMessage renders the user's prompt as a filled ergo-a.palette.Purple
