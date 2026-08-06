@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-
 	"github.com/tjcoder-labs/cli/internal/agent"
 	"github.com/tjcoder-labs/cli/internal/client"
 	"github.com/tjcoder-labs/cli/internal/memories"
@@ -85,6 +84,9 @@ type Runner struct {
 	// channel never blocks the input goroutine. nil = disabled,
 	// which is the default for headless / recap / compact callers.
 	Steering <-chan string
+	// pendingSteering stores a message consumed by the runChatTurn
+	// watcher that hasn't yet been processed by the main Run loop.
+	pendingSteering string
 }
 
 const defaultMaxToolSteps = 8
@@ -279,28 +281,29 @@ func (r *Runner) Run(ctx context.Context, history []client.Message, prompt strin
 		//     cancelled by the watcher in runChatTurn, which
 		//     returned errTurnCancelledBySteering; the main loop
 		//     continues (handled below) and this drain then
-		//     appends the user's message to history before the
+		//     appends the same message to history before the
 		//     next provider call.
-		// Drain at most one message per step so the runner keeps
-		// making forward progress; stacked messages are picked up
-		// FIFO in subsequent iterations. nil channel => disabled.
 		if r.Steering != nil {
+			var s string
 			select {
-			case s := <-r.Steering:
-				if s = strings.TrimSpace(s); s != "" {
-					if onEvent != nil {
-						onEvent(Event{
-							Type:     EventSteering,
-							ToolName: "steering",
-							Text:     s,
-						})
-					}
-					history = append(history, client.Message{
-						Role:    "user",
-						Content: s,
+			case s = <-r.Steering:
+			default:
+				s = r.pendingSteering
+				r.pendingSteering = ""
+			}
+
+			if s = strings.TrimSpace(s); s != "" {
+				if onEvent != nil {
+					onEvent(Event{
+					Type:     EventSteering,
+					ToolName: "steering",
+					Text:     s,
 					})
 				}
-			default:
+				history = append(history, client.Message{
+					Role:    "user",
+					Content: s,
+				})
 			}
 		}
 
@@ -474,7 +477,8 @@ func (r *Runner) runChatTurn(ctx context.Context, model, systemPrompt string, hi
 	if r.Steering != nil {
 		go func() {
 			select {
-			case <-r.Steering:
+			case s := <-r.Steering:
+				r.pendingSteering = s
 				cancelTurn()
 			case <-watcherDone:
 			}
