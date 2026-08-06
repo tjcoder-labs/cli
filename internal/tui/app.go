@@ -247,6 +247,15 @@ type App struct {
 	hintMatches  []slashCommand
 	hintSelected int
 
+	// Global input history (decoupled from session.json). Stored
+	// in ~/.config/tjcoder/coder-cli/input_history.json so it
+	// persists across sessions and workspaces. The index tracks
+	// the current position when the user navigates with Up/Down;
+	// -1 means "at the bottom (new input)".
+	inputHistory     []string
+	inputHistoryIdx  int
+	inputHistoryDraft string
+
 	startupSplashVisible   bool
 	reasoningSplashVisible bool
 	cognitionActive        bool
@@ -357,6 +366,11 @@ func New(provider client.Provider, registry *tools.Registry, workspaceRoot, mode
 	app.loadSession()
 	app.loadModelsAsync()
 	app.loadMCPServers()
+	// Load the global input history (decoupled from session.json).
+	if h, err := session.LoadInputHistory(); err == nil {
+		app.inputHistory = h
+	}
+	app.inputHistoryIdx = -1
 	// Persist defaults on first run so the file exists for the
 	// in-app editor and so a config write is always recoverable.
 	if workspaceRoot != "" {
@@ -551,6 +565,20 @@ func (a *App) build() {
 	// exact command (then it submits normally). Arrow keys are left
 	// untouched so the text cursor behaves as usual.
 	a.input.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+		// Global input history navigation (Up/Down). This takes
+		// priority over the command palette so the user can always
+		// recall prior input regardless of what hint mode is active.
+		// When hintMode is "command" (slash palette), Up/Down still
+		// navigate history rather than the palette — Tab/Shift+Tab
+		// remain the palette navigation keys.
+		switch event.Key() {
+		case tcell.KeyUp:
+			a.navigateInputHistory(-1)
+			return nil
+		case tcell.KeyDown:
+			a.navigateInputHistory(1)
+			return nil
+		}
 		if a.hintMode != "command" || len(a.hintMatches) == 0 {
 			return event
 		}
@@ -1575,7 +1603,7 @@ func (a *App) handleSlashCommand(cmd string) {
 	case "clear":
 		a.clearSession()
 	case "compact":
-		a.compactHistory()
+		a.compactHistory(parts)
 	case "quit":
 		a.tv.Stop()
 	case "agentinfo":
@@ -2314,10 +2342,31 @@ func (a *App) clearSession() {
 // If the transcript is already short, the operation is a no-op with
 // an activity log notice. If the summarization call fails, history
 // is left untouched so the user does not lose context.
-func (a *App) compactHistory() {
+// compactHistory summarizes the current transcript to free context
+// space. The model is asked to produce a structured summary of every
+// user request, every assistant decision, and any code/file changes;
+// the in-memory history is then replaced with a small "compaction
+// marker" pair so subsequent turns see a compact but complete
+// narrative.
+//
+// The compaction runs asynchronously in a goroutine so the event
+// loop is never blocked. While the model is working, an indeterminate
+// progress indicator ("compacting…") is shown in the transcript and
+// the context-bar spinner animates. When the summary returns, the
+// transcript is updated with the result and the context bar is
+// refreshed to reflect the freed tokens.
+//
+// /compact [model] optionally specifies the model used for the
+// compaction; it defaults to the current model.
+func (a *App) compactHistory(parts []string) {
 	if len(a.history) < 4 {
 		a.appendActivity(fmt.Sprintf("[%s]compact[-]: nothing to compact (history has %d messages)", a.palette.HexFaint, len(a.history)))
 		return
+	}
+
+	model := a.currentModel
+	if len(parts) > 1 {
+		model = parts[1]
 	}
 
 	preCount := len(a.history)
@@ -2339,48 +2388,152 @@ func (a *App) compactHistory() {
 		"Be specific (function names, command names, exact paths). Do not include pleasantries or meta-commentary. Do not exceed ~600 words.",
 	}, "\n")
 
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
+	// Show indeterminate progress in the transcript immediately.
+	stamp := formatTimestamp(time.Now())
+	fmt.Fprintf(a.transcript, "[%s]%s[-]\n", a.palette.HexDim, stamp)
+	fmt.Fprintf(a.transcript, "[%s::b]Coder is compacting[-:-:-] [%s]using %s…[-]\n", a.palette.HexPurple, a.palette.HexDim, model)
+	a.transcript.ScrollToEnd()
 
-	newHistory, err := a.runner.Run(ctx, a.history, prompt, a.currentAgent, a.currentModel, nil, nil)
-	if err != nil {
-		a.appendActivity(fmt.Sprintf("[%s]compact failed[-]: %v", a.palette.HexOrchid, err))
+	// Set busy state and start spinner.
+	a.mu.Lock()
+	a.busy = true
+	a.mu.Unlock()
+	a.startSpinner()
+	a.appendActivity(fmt.Sprintf("[%s]compacting history using model %s…[-] ", a.palette.HexLavender, model))
+
+	// Capture the history snapshot for the goroutine.
+	history := append([]client.Message(nil), a.history...)
+	agentCfg := a.currentAgent
+	if env := a.renderedEnvironment(); env != "" {
+		agentCfg.Prompt = env + "\n\n" + agentCfg.Prompt
+	}
+
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+
+		newHistory, err := a.runner.Run(ctx, history, prompt, agentCfg, model, nil, nil)
+
+		a.tv.QueueUpdateDraw(func() {
+			a.mu.Lock()
+			a.busy = false
+			a.mu.Unlock()
+			a.stopSpinner()
+
+			if err != nil {
+				a.appendActivity(fmt.Sprintf("[%s]compact failed[-]: %v", a.palette.HexOrchid, err))
+				fmt.Fprintf(a.transcript, "[%s]compact failed: %v[-]\n", a.palette.HexOrchid, err)
+				a.transcript.ScrollToEnd()
+				return
+			}
+			if len(newHistory) <= len(history) {
+				a.appendActivity(fmt.Sprintf("[%s]compact failed[-]: runner produced no new messages", a.palette.HexOrchid))
+				fmt.Fprintf(a.transcript, "[%s]compact failed: no summary produced[-]\n", a.palette.HexOrchid)
+				a.transcript.ScrollToEnd()
+				return
+			}
+
+			summary := newHistory[len(newHistory)-1].Content
+			if strings.TrimSpace(summary) == "" {
+				a.appendActivity(fmt.Sprintf("[%s]compact failed[-]: model returned an empty summary", a.palette.HexOrchid))
+				fmt.Fprintf(a.transcript, "[%s]compact failed: empty summary[-]\n", a.palette.HexOrchid)
+				a.transcript.ScrollToEnd()
+				return
+			}
+
+			// Replace in-memory history with a two-message marker.
+			a.history = []client.Message{
+				{Role: "user", Content: "[Compaction] The prior conversation has been summarized to free context. Treat the assistant's summary below as authoritative for any earlier decision, file change, or open question."},
+				{Role: "assistant", Content: summary},
+			}
+
+			// Persist immediately.
+			if err := a.saveSession(); err != nil {
+				a.appendActivity(fmt.Sprintf("[%s]compact saved in-memory but session persist failed[-]: %v", a.palette.HexOrchid, err))
+			}
+
+			postChars := 0
+			for _, m := range a.history {
+				postChars += len(m.Content)
+			}
+			a.appendActivity(fmt.Sprintf("[%s]compacted[-]: %d → %d messages, %d → %d chars",
+				a.palette.HexLavender, preCount, len(a.history), preChars, postChars))
+
+			// Update the transcript with the RECAP label (uppercase, primary
+			// color, matching the ACTIVITY/CONVERSATION/COGNITION label style)
+			// followed by the stats line and the summary body.
+			fmt.Fprintf(a.transcript, "\n\n[%s]%s[-]\n", a.palette.HexDim, formatTimestamp(time.Now()))
+			fmt.Fprintf(a.transcript, "[%s::b]RECAP[-:-:-]\n", a.palette.HexPurple)
+			fmt.Fprintf(a.transcript, "[%s]%d → %d messages, %d → %d chars[-]\n\n", a.palette.HexDim, preCount, len(a.history), preChars, postChars)
+			fmt.Fprint(a.transcript, a.highlightTranscriptText(summary))
+			fmt.Fprint(a.transcript, "\n\n")
+			a.transcript.ScrollToEnd()
+
+			// Refresh the context bar to reflect freed tokens.
+			a.contextInfo = "ctx: recalculating…"
+			a.refreshContextBar()
+		})
+	}()
+}
+
+// navigateInputHistory moves through the global input history in
+// response to Up/Down arrow keys. Up (-1) goes to older entries;
+// Down (+1) goes to newer, eventually returning to the draft the
+// user was typing before they started navigating. The current
+// draft is saved when the user first presses Up so pressing Down
+// all the way back restores it.
+func (a *App) navigateInputHistory(dir int) {
+	if len(a.inputHistory) == 0 {
 		return
 	}
-	if len(newHistory) <= len(a.history) {
-		a.appendActivity(fmt.Sprintf("[%s]compact failed[-]: runner produced no new messages", a.palette.HexOrchid))
+
+	// On the first Up press, save the current draft text.
+	if a.inputHistoryIdx == -1 && dir < 0 {
+		a.inputHistoryDraft = a.input.GetText()
+	}
+
+	newIdx := a.inputHistoryIdx + dir
+	if dir < 0 {
+		// Up: clamp at the oldest entry (index 0).
+		if newIdx < 0 {
+			newIdx = 0
+		}
+	} else {
+		// Down: past the newest entry returns to draft.
+		if newIdx >= len(a.inputHistory) {
+			newIdx = -1
+		}
+	}
+	a.inputHistoryIdx = newIdx
+
+	if newIdx == -1 {
+		a.input.SetText(a.inputHistoryDraft)
+	} else {
+		a.input.SetText(a.inputHistory[newIdx])
+	}
+}
+
+// recordInputHistory appends prompt to the global input history
+// (both in-memory and on-disk) and resets the navigation index so
+// the next Up press starts from the newest entry. The disk write
+// is non-blocking: it runs in a goroutine so the event loop is
+// never stalled by file I/O.
+func (a *App) recordInputHistory(prompt string) {
+	prompt = strings.TrimSpace(prompt)
+	if prompt == "" {
 		return
 	}
-
-	summary := newHistory[len(newHistory)-1].Content
-	if strings.TrimSpace(summary) == "" {
-		a.appendActivity(fmt.Sprintf("[%s]compact failed[-]: model returned an empty summary", a.palette.HexOrchid))
+	// Update in-memory copy (dedup against last entry).
+	if len(a.inputHistory) > 0 && a.inputHistory[len(a.inputHistory)-1] == prompt {
+		a.inputHistoryIdx = -1
 		return
 	}
-
-	// Replace in-memory history with a two-message marker: a
-	// user/assistant pair describing the compaction. The agent
-	// system prompt still injects the workspace context block
-	// (model, agent, env), so this is enough to keep the model
-	// grounded.
-	a.history = []client.Message{
-		{Role: "user", Content: "[Compaction] The prior conversation has been summarized to free context. Treat the assistant's summary below as authoritative for any earlier decision, file change, or open question."},
-		{Role: "assistant", Content: summary},
-	}
-
-	// Persist immediately so a crash before the next save does not
-	// leave a half-compacted transcript on disk.
-	if err := a.saveSession(); err != nil {
-		a.appendActivity(fmt.Sprintf("[%s]compact saved in-memory but session persist failed[-]: %v", a.palette.HexOrchid, err))
-		return
-	}
-
-	postChars := 0
-	for _, m := range a.history {
-		postChars += len(m.Content)
-	}
-	a.appendActivity(fmt.Sprintf("[%s]compacted[-]: %d → %d messages, %d → %d chars",
-		a.palette.HexLavender, preCount, len(a.history), preChars, postChars))
+	a.inputHistory = append(a.inputHistory, prompt)
+	a.inputHistoryIdx = -1
+	// Persist asynchronously.
+	go func() {
+		_ = session.AppendInputHistory(prompt)
+	}()
 }
 
 func (a *App) submit() {
@@ -2397,6 +2550,8 @@ func (a *App) submit() {
 			a.mu.Unlock()
 			return
 		}
+		// Record in global input history (non-blocking best-effort).
+		a.recordInputHistory(prompt)
 		select {
 		case a.steeringCh <- prompt:
 			a.appendActivity(fmt.Sprintf("[%s]steering[-]: queued %q for the in-flight turn", a.palette.HexOrchid, truncateForActivity(prompt)))
@@ -2414,6 +2569,9 @@ func (a *App) submit() {
 		a.mu.Unlock()
 		return
 	}
+
+	// Record in global input history (non-blocking best-effort).
+	a.recordInputHistory(prompt)
 
 	// Handle slash commands
 	if strings.HasPrefix(prompt, "/") {
@@ -2689,7 +2847,7 @@ var timestampLineRe = regexp.MustCompile(`\d{1,2}:\d{2}`)
 // cognition pane, the activity log, and the per-turn transcript labels
 // all share this helper so the format stays consistent across panels.
 func formatTimestamp(t time.Time) string {
-	return t.Format("3:04:05 PM")
+	return t.Format("3:04 PM")
 }
 
 func (a *App) highlightTranscriptText(text string) string {
@@ -2741,12 +2899,16 @@ func truncateForActivity(s string) string {
 
 // appendUserMessage renders the user's prompt as a filled ergo-a.palette.Purple
 // rectangular bubble in the conversation panel, using the same padding
-// standard as the rest of the TUI.
+// standard as the rest of the TUI. A timestamp line is rendered above
+// the bubble so both user and assistant messages carry a consistent
+// attribution header.
 func (a *App) appendUserMessage(prompt string) {
 	if a.transcript == nil {
 		return
 	}
 	a.clearStartupSplash()
+	// Timestamp above the user attribution, matching the assistant label style.
+	fmt.Fprintf(a.transcript, "[%s]%s[-]\n", a.palette.HexDim, formatTimestamp(time.Now()))
 	fmt.Fprint(a.transcript, a.renderUserMessage(prompt))
 }
 
