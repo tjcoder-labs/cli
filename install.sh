@@ -46,6 +46,14 @@ detect_platform() {
   echo "${os}-${arch}"
 }
 
+# Detect if running in Termux
+is_termux() {
+  if [[ -n "${TERMUX_VERSION:-}" ]]; then
+    return 0
+  fi
+  return 1
+}
+
 # --- locate a source checkout (for fallback build) ------------------------
 find_source_dir() {
   # If invoked from inside the repo, reuse it.
@@ -63,9 +71,14 @@ download_release() {
   local platform="$1" tmpdir="$2"
   if [[ -z "$VERSION" ]]; then
     log "resolving latest release for $REPO..."
-    VERSION=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" \
-              | sed -n 's/.*"tag_name": *"v\?\([^"]*\)".*/\1/p' | head -n1)
-    [[ -n "$VERSION" ]] || die "could not determine latest release (set VERSION explicitly)"
+    # Use -f to fail on 404, but we handle it via the return code of the subshell
+    local latest_json
+    if ! latest_json=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" 2>/dev/null); then
+      warn "could not resolve latest release from GitHub API (it may not exist yet)"
+      return 1
+    fi
+    VERSION=$(echo "$latest_json" | sed -n 's/.*"tag_name": *"v\?\([^"]*\)".*/\1/p' | head -n1)
+    [[ -n "$VERSION" ]] || return 1
     log "latest version: $VERSION"
   fi
   local asset="coder-${platform}.tar.gz"
@@ -75,10 +88,11 @@ download_release() {
   local url="https://github.com/${REPO}/releases/download/${VERSION}/${asset}"
   log "downloading $url"
   if ! curl -fsSL -o "$tmpdir/$asset" "$url"; then
+    warn "prebuilt binary $asset not found at $url"
     return 1
   fi
   tar -xzf "$tmpdir/$asset" -C "$tmpdir"
-  [[ -x "$tmpdir/coder" ]] || die "downloaded archive did not contain a 'coder' binary"
+  [[ -x "$tmpdir/coder" ]] || return 1
   echo "$tmpdir/coder"
 }
 
@@ -111,7 +125,6 @@ build_from_source() {
   local srcdir="$1" tmpdir="$2"
   local version product author
   local pkg_version pkg_product pkg_author
-  need go
 
   version="${VERSION:-}"
   product="Coder CLI"
@@ -145,7 +158,7 @@ build_from_source() {
     cp "$srcdir/package.json" "$srcdir/cmd/coder/package.json"
   fi
   ( cd "$srcdir" && \
-    go build -trimpath \
+    CGO_ENABLED=0 go build -trimpath \
       -ldflags "-X 'main.version=$version' -X 'main.productName=$product' -X 'main.author=$author'" \
       -o "$tmpdir/coder" ./cmd/coder ) || die "build failed in $srcdir"
   [[ -x "$tmpdir/coder" ]] || die "build did not produce a 'coder' binary"
@@ -206,7 +219,11 @@ main() {
     srcdir=$(clone_source "$tmpdir")
     src=$(build_from_source "$srcdir" "$tmpdir")
   else
-    die "no prebuilt binary available for $platform, and cannot build from source (need 'go' and 'git' on PATH)"
+    local msg="no prebuilt binary available for $platform, and cannot build from source (need 'go' and 'git' on PATH)"
+    if is_termux; then
+      msg="$msg\n\nIn Termux, you can install these dependencies with:\n    pkg install go git"
+    fi
+    die "$msg"
   fi
 
   installed=$(install_binary "$src" "$PREFIX")
