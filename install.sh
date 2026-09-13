@@ -4,7 +4,7 @@
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/tjcoder-labs/cli/main/install.sh | bash
 #   ./install.sh                                 # local checkout, builds from source
-#   PREFIX=/usr/local ./install.sh               # custom install prefix
+#   INSTALL_DIR=/usr/local/bin ./install.sh      # custom install directory
 #   VERSION=0.9.71 ./install.sh                  # specific release tag (with or without leading `v`)
 #   REPO=tjcoder-labs/cli ./install.sh           # override repo
 #
@@ -14,13 +14,34 @@
 #      release tag, downloads it.
 #   3. Otherwise builds from source: reuses a local checkout when run from
 #      inside the repo, or clones the repo (requires `go` and `git`).
-#   4. Installs to $PREFIX (default: ~/.local/bin) and prints PATH hints.
+#   4. Installs to $INSTALL_DIR (default: ~/.local/bin, or $PREFIX/bin on
+#      Termux) and prints PATH hints.
 set -euo pipefail
 
 REPO="${REPO:-tjcoder-labs/cli}"
 VERSION="${VERSION:-}"
-PREFIX="${PREFIX:-$HOME/.local/bin}"
 BIN_NAME="coder"
+
+# --- install directory resolution ----------------------------------------
+# Note: do NOT use a variable named PREFIX as our knob — on Termux, PREFIX
+# is a *standard environment variable* pointing at the Termux filesystem
+# root (/data/data/com.termux/files/usr), which previously caused the
+# binary to land directly in $PREFIX instead of $PREFIX/bin.
+# We accept INSTALL_DIR as an override, and auto-pick a sensible default.
+is_termux_env() {
+  [[ -n "${TERMUX_VERSION:-}" ]] || [[ -n "${TERMUX_MAIN_PACKAGE_FORMAT:-}" ]] \
+    || [[ "${PREFIX:-}" == *"com.termux"* ]]
+}
+
+if [[ -n "${INSTALL_DIR:-}" ]]; then
+  INSTALL_DIR="$INSTALL_DIR"
+elif is_termux_env; then
+  # In Termux the canonical user bin dir is $PREFIX/bin, which is already
+  # on PATH for any pkg-installed tools.
+  INSTALL_DIR="${PREFIX:-/data/data/com.termux/files/usr}/bin"
+else
+  INSTALL_DIR="$HOME/.local/bin"
+fi
 
 # --- helpers --------------------------------------------------------------
 log()  { printf '\033[1;36m==>\033[0m %s\n' "$*" >&2; }
@@ -167,33 +188,33 @@ build_from_source() {
 
 # --- install --------------------------------------------------------------
 install_binary() {
-  local src="$1" prefix="$2"
-  if ! mkdir -p "$prefix" 2>/dev/null; then
-    die "cannot create $prefix — try PREFIX=\$HOME/.local/bin or run with sudo"
+  local src="$1" dir="$2"
+  if ! mkdir -p "$dir" 2>/dev/null; then
+    die "cannot create $dir — try INSTALL_DIR=\$HOME/.local/bin or run with sudo"
   fi
-  if [[ ! -w "$prefix" ]]; then
-    die "$prefix is not writable — try PREFIX=\$HOME/.local/bin or run with sudo"
+  if [[ ! -w "$dir" ]]; then
+    die "$dir is not writable — try INSTALL_DIR=\$HOME/.local/bin or run with sudo"
   fi
-  install -m 0755 "$src" "$prefix/$BIN_NAME"
-  echo "$prefix/$BIN_NAME"
+  install -m 0755 "$src" "$dir/$BIN_NAME"
+  echo "$dir/$BIN_NAME"
 }
 
 # --- PATH hint ------------------------------------------------------------
 path_hint() {
-  local prefix="$1"
+  local dir="$1"
   case ":$PATH:" in
-    *":$prefix:"*) return 0 ;;
+    *":$dir:"*) return 0 ;;
   esac
-  warn "$prefix is not on your PATH"
+  warn "$dir is not on your PATH"
   cat >&2 <<EOF
 
 Add this to your shell rc (~/.bashrc, ~/.zshrc, etc.):
 
-    export PATH="$prefix:\$PATH"
+    export PATH="$dir:\$PATH"
 
 Then restart your shell or:
 
-    export PATH="$prefix:\$PATH"
+    export PATH="$dir:\$PATH"
 
 EOF
 }
@@ -206,7 +227,7 @@ main() {
   trap 'rm -rf "${tmpdir:-}"' EXIT
 
   log "platform: $platform"
-  log "prefix:   $PREFIX"
+  log "install:  $INSTALL_DIR"
 
   # Try prebuilt release first, then a local checkout, then clone + build.
   if src=$(download_release "$platform" "$tmpdir" 2>/dev/null); then
@@ -219,17 +240,23 @@ main() {
     srcdir=$(clone_source "$tmpdir")
     src=$(build_from_source "$srcdir" "$tmpdir")
   else
-    local msg="no prebuilt binary available for $platform, and cannot build from source (need 'go' and 'git' on PATH)"
-    if is_termux; then
-      msg="$msg\n\nIn Termux, you can install these dependencies with:\n    pkg install go git"
+    # Missing build deps. On Termux we can self-heal: pkg is always present.
+    if is_termux_env && command -v pkg >/dev/null 2>&1; then
+      warn "missing 'go' and/or 'git'; installing via pkg"
+      pkg update -y >/dev/null 2>&1 || true
+      pkg install -y git golang || die "pkg install git golang failed — run it manually and re-run this script"
+      srcdir=$(clone_source "$tmpdir")
+      src=$(build_from_source "$srcdir" "$tmpdir")
+    else
+      local msg="no prebuilt binary available for $platform, and cannot build from source (need 'go' and 'git' on PATH)"
+      die "$msg"
     fi
-    die "$msg"
   fi
 
-  installed=$(install_binary "$src" "$PREFIX")
+  installed=$(install_binary "$src" "$INSTALL_DIR")
   log "installed $installed"
   "$installed" --version || true
-  path_hint "$PREFIX"
+  path_hint "$INSTALL_DIR"
 }
 
 main "$@"
