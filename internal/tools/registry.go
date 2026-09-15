@@ -82,6 +82,7 @@ func NewRegistry(provider client.Provider) *Registry {
 		// UI control
 		uiControlTool{},
 		invokeCliCommandTool{},
+		browserBridgeTool{},
 	} {
 		r.tools[tool.Definition().Function.Name] = tool
 	}

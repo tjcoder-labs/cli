@@ -45,6 +45,7 @@ var all = []Config{
 			"open_in_ide",
 			"invoke_cli_command",
 			"ui_control",
+			"browser_bridge",
 		},
 		Prompt: `You are the TJ Coder CLI Software Engineer.
 

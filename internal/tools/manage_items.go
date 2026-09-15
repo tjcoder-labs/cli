@@ -48,16 +48,23 @@ func (m *ManageItems) Schema() map[string]interface{} {
 		"properties": map[string]interface{}{
 			"action": map[string]interface{}{
 				"type":        "string",
-				"description": "Operation: create, list, get, update, or delete",
-				"enum":        []string{"create", "list", "get", "update", "delete"},
+				"description": "Operation: create, list, get, find, update, or delete",
+				"enum":        []string{"create", "list", "get", "find", "update", "delete"},
 			},
 			"type": map[string]interface{}{
 				"type":        "string",
 				"description": "Object type: task, article, reminder, etc.",
 			},
 			"id": map[string]interface{}{
+				"description": "Object ID (for get, update, delete). Optional if title is given.",
+			},
+			"title": map[string]interface{}{
 				"type":        "string",
-				"description": "Object ID (for get, update, delete)",
+				"description": "Title (or substring) to locate an object by, in place of id (find/get/update/delete)",
+			},
+			"query": map[string]interface{}{
+				"type":        "string",
+				"description": "Alias for title when searching",
 			},
 			"data": map[string]interface{}{
 				"type":        "object",
@@ -87,6 +94,8 @@ func (m *ManageItems) Call(args map[string]interface{}) (string, error) {
 		return m.handleCreate(tracker, args)
 	case "list":
 		return m.handleList(tracker)
+	case "find":
+		return m.handleFind(tracker, args)
 	case "get":
 		return m.handleGet(tracker, args)
 	case "update":
@@ -94,8 +103,73 @@ func (m *ManageItems) Call(args map[string]interface{}) (string, error) {
 	case "delete":
 		return m.handleDelete(tracker, args)
 	default:
-		return "", fmt.Errorf("unknown action %q (valid: create, list, get, update, delete)", action)
+		return "", fmt.Errorf("unknown action %q (valid: create, list, get, find, update, delete)", action)
 	}
+}
+
+// resolveID returns the given id, or when id is empty/absent resolves `title`
+// (or `query`) to a unique item by case-insensitive substring match on the
+// formatted title. Returns the canonical ID. The TUI truncates/pads task IDs
+// for display, so agents frequently know the title but not the exact ULID.
+func (m *ManageItems) resolveID(tracker tracking.Tracker, args map[string]interface{}) (string, error) {
+	id, _ := args["id"].(string)
+	if strings.TrimSpace(id) != "" {
+		return id, nil
+	}
+	title, _ := args["title"].(string)
+	if title == "" {
+		title, _ = args["query"].(string)
+	}
+	title = strings.TrimSpace(title)
+	if title == "" {
+		return "", fmt.Errorf("id (or title) is required")
+	}
+	needle := strings.ToLower(title)
+	var matches []string
+	for _, item := range tracker.List(*m.sessionState) {
+		formatted := tracker.Format(item)
+		// Format is "[status] Title (ID)"; extract the ID in the tail.
+		if strings.Contains(strings.ToLower(formatted), needle) {
+			if idx := strings.LastIndex(formatted, "("); idx >= 0 {
+				if tail := formatted[idx+1:]; strings.HasSuffix(tail, ")") {
+					matches = append(matches, strings.TrimSuffix(tail, ")"))
+				}
+			}
+		}
+	}
+	switch len(matches) {
+	case 0:
+		return "", fmt.Errorf("no %s matches title %q", tracker.Type(), title)
+	case 1:
+		return matches[0], nil
+	default:
+		return "", fmt.Errorf("title %q matches %d %ss; be more specific or use exact id", title, len(matches), tracker.Type())
+	}
+}
+
+// handleFind lists items whose title contains the query (substring, case-insensitive).
+func (m *ManageItems) handleFind(tracker tracking.Tracker, args map[string]interface{}) (string, error) {
+	query, _ := args["title"].(string)
+	if query == "" {
+		query, _ = args["query"].(string)
+	}
+	query = strings.ToLower(strings.TrimSpace(query))
+	if query == "" {
+		return "", fmt.Errorf("title (or query) is required for find")
+	}
+	var b strings.Builder
+	n := 0
+	for _, item := range tracker.List(*m.sessionState) {
+		formatted := tracker.Format(item)
+		if strings.Contains(strings.ToLower(formatted), query) {
+			b.WriteString("  - " + formatted + "\n")
+			n++
+		}
+	}
+	if n == 0 {
+		return fmt.Sprintf("No %ss match %q", tracker.Type(), query), nil
+	}
+	return fmt.Sprintf("Found %d %ss matching %q:\n%s", n, tracker.Type(), query, b.String()), nil
 }
 
 func (m *ManageItems) handleCreate(tracker tracking.Tracker, args map[string]interface{}) (string, error) {
@@ -135,9 +209,9 @@ func (m *ManageItems) handleList(tracker tracking.Tracker) (string, error) {
 }
 
 func (m *ManageItems) handleGet(tracker tracking.Tracker, args map[string]interface{}) (string, error) {
-	id, _ := args["id"].(string)
-	if id == "" {
-		return "", fmt.Errorf("id is required for get")
+	id, err := m.resolveID(tracker, args)
+	if err != nil {
+		return "", err
 	}
 
 	obj := tracker.Get(*m.sessionState, id)
@@ -149,9 +223,9 @@ func (m *ManageItems) handleGet(tracker tracking.Tracker, args map[string]interf
 }
 
 func (m *ManageItems) handleUpdate(tracker tracking.Tracker, args map[string]interface{}) (string, error) {
-	id, _ := args["id"].(string)
-	if id == "" {
-		return "", fmt.Errorf("id is required for update")
+	id, err := m.resolveID(tracker, args)
+	if err != nil {
+		return "", err
 	}
 
 	var data map[string]interface{}
@@ -176,9 +250,9 @@ func (m *ManageItems) handleUpdate(tracker tracking.Tracker, args map[string]int
 }
 
 func (m *ManageItems) handleDelete(tracker tracking.Tracker, args map[string]interface{}) (string, error) {
-	id, _ := args["id"].(string)
-	if id == "" {
-		return "", fmt.Errorf("id is required for delete")
+	id, err := m.resolveID(tracker, args)
+	if err != nil {
+		return "", err
 	}
 
 	newState, ok, err := tracker.Delete(*m.sessionState, id)
