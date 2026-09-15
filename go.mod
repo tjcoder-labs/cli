@@ -7,6 +7,8 @@ require (
 	github.com/rivo/tview v0.42.0
 )
 
+require github.com/gorilla/websocket v1.5.3 // indirect
+
 require (
 	github.com/alecthomas/chroma/v2 v2.27.0
 	github.com/creack/pty v1.1.24

@@ -56,12 +56,12 @@ const ulidAlphabet = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 
 func encodeULID(b []byte) string {
 	out := make([]byte, 26)
-	for i := 0; i < 13; i++ {
-		src := i * 5
-		// Consume 5-bit groups, big-endian, across the 16-byte input.
+	// A ULID is 26 Crockford base32 characters (26*5 = 130 bits) encoding the
+	// 128-bit value big-endian. Walk left-to-right consuming 5 bits at a time.
+	for i := 0; i < 26; i++ {
 		var val uint32
 		var bits uint
-		bitCursor := uint(src * 8)
+		bitCursor := uint(i * 5)
 		for bits < 5 {
 			byteIdx := bitCursor / 8
 			bitOffset := bitCursor % 8
