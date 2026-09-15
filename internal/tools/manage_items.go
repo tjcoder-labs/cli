@@ -113,6 +113,7 @@ func (m *ManageItems) Call(args map[string]interface{}) (string, error) {
 // for display, so agents frequently know the title but not the exact ULID.
 func (m *ManageItems) resolveID(tracker tracking.Tracker, args map[string]interface{}) (string, error) {
 	id, _ := args["id"].(string)
+	id = strings.TrimRight(id, "\x00")
 	if strings.TrimSpace(id) != "" {
 		return id, nil
 	}
