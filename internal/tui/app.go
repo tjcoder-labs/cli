@@ -2854,6 +2854,8 @@ func (a *App) highlightTranscriptText(text string) string {
 	if text == "" {
 		return ""
 	}
+	// Expand markdown tables into box-drawn tables before line-level highlighting.
+	text = a.renderMarkdownTables(text)
 	lines := strings.Split(text, "\n")
 	for i, line := range lines {
 		trimmed := strings.TrimSpace(line)
@@ -2876,6 +2878,233 @@ func (a *App) highlightTranscriptText(text string) string {
 		}
 	}
 	return strings.Join(lines, "\n")
+}
+
+// renderMarkdownTables finds GFM-style pipe tables in the input and
+// re-renders them as box-drawn tables with tview color markup. A table
+// block is:
+//
+//   | col1 | col2 |       <- header row (required)
+//   | ---- | :--- |  ...  <- separator row (required)
+//   | a    | b    |       <- zero or more body rows
+//
+// Header row is bold-tinted with HexPurple; separator and borders use
+// HexFaint box-drawing runes. Column widths are derived from the widest
+// visible cell in each column (color tags stripped). Empty cells are
+// padded to width. The original lines are replaced in-place.
+func (a *App) renderMarkdownTables(text string) string {
+	lines := strings.Split(text, "\n")
+	out := make([]string, 0, len(lines)+8)
+	i := 0
+	for i < len(lines) {
+		// Look for a header row: starts and ends with '|', has at least one inner '|'.
+		if !isTableRow(lines[i]) || i+1 >= len(lines) || !isTableSeparator(lines[i+1]) {
+			out = append(out, lines[i])
+			i++
+			continue
+		}
+		// Collect rows: header at i, separator at i+1, then consecutive table rows.
+		header := parseTableRow(lines[i])
+		sepCells := parseTableRow(lines[i+1])
+		// Sanity: column counts should match (or be tolerant).
+		if len(header) == 0 {
+			out = append(out, lines[i])
+			i++
+			continue
+		}
+		ncols := len(header)
+		if len(sepCells) > ncols {
+			ncols = len(sepCells)
+		}
+		bodyRows := [][]string{}
+		j := i + 2
+		for j < len(lines) && isTableRow(lines[j]) {
+			cells := parseTableRow(lines[j])
+			// Pad/truncate to ncols so rendering is uniform.
+			if len(cells) < ncols {
+				padded := make([]string, ncols)
+				copy(padded, cells)
+				cells = padded
+			} else if len(cells) > ncols {
+				// Merge overflow into the last column with ' | ' — preserves content.
+				merged := append([]string{}, cells[:ncols-1]...)
+				merged = append(merged, strings.Join(cells[ncols-1:], " | "))
+				cells = merged
+			}
+			bodyRows = append(bodyRows, cells)
+			j++
+		}
+		// Header may also be short — normalize.
+		if len(header) < ncols {
+			padded := make([]string, ncols)
+			copy(padded, header)
+			header = padded
+		}
+		// Compute column widths from visible rune lengths.
+		widths := make([]int, ncols)
+		measure := func(cells []string) {
+			for k, c := range cells {
+				w := runeDisplayWidth(stripTviewTags(c))
+				if w > widths[k] {
+					widths[k] = w
+				}
+			}
+		}
+		measure(header)
+		for _, r := range bodyRows {
+			measure(r)
+		}
+		// Minimum column width 3 so borders don't collapse.
+		for k := range widths {
+			if widths[k] < 3 {
+				widths[k] = 3
+			}
+		}
+		// Render rows.
+		faint := a.palette.HexFaint
+		prim := a.palette.HexPurple
+		renderRow := func(cells []string, bold bool) string {
+			var b strings.Builder
+			b.WriteString(fmt.Sprintf("[%s]│[-]", faint))
+			for k := 0; k < ncols; k++ {
+				cell := ""
+				if k < len(cells) {
+					cell = cells[k]
+				}
+				pad := widths[k] - runeDisplayWidth(stripTviewTags(cell))
+				if pad < 0 {
+					pad = 0
+				}
+				padding := strings.Repeat(" ", pad)
+				content := cell
+				if bold {
+					content = fmt.Sprintf("[%s::b]%s%s[-:-:-]", prim, cell, padding)
+				} else {
+					content = cell + padding
+				}
+				b.WriteString(" " + content + " ")
+				b.WriteString(fmt.Sprintf("[%s]│[-]", faint))
+			}
+			return b.String()
+		}
+		renderBorder := func(left, mid, right string) string {
+			var b strings.Builder
+			b.WriteString(fmt.Sprintf("[%s]%s[-]", faint, left))
+			for k := 0; k < ncols; k++ {
+				b.WriteString(fmt.Sprintf("[%s]%s[-]", faint, strings.Repeat("─", widths[k]+2)))
+				if k < ncols-1 {
+					b.WriteString(fmt.Sprintf("[%s]%s[-]", faint, mid))
+				} else {
+					b.WriteString(fmt.Sprintf("[%s]%s[-]", faint, right))
+				}
+			}
+			return b.String()
+		}
+		out = append(out, renderBorder("┌", "┬", "┐"))
+		out = append(out, renderRow(header, true))
+		out = append(out, renderBorder("├", "┼", "┤"))
+		for _, r := range bodyRows {
+			out = append(out, renderRow(r, false))
+		}
+		out = append(out, renderBorder("└", "┴", "┘"))
+		i = j
+	}
+	return strings.Join(out, "\n")
+}
+
+// isTableRow reports whether a line looks like a markdown pipe-table row:
+// starts with '|', has at least one more '|', and isn't the separator line.
+func isTableRow(line string) bool {
+	trimmed := strings.TrimSpace(line)
+	if !strings.HasPrefix(trimmed, "|") {
+		return false
+	}
+	if strings.Count(trimmed, "|") < 2 {
+		return false
+	}
+	return !isTableSeparator(trimmed)
+}
+
+// isTableSeparator matches the |---|---|:---:| divider line under the header.
+func isTableSeparator(line string) bool {
+	trimmed := strings.TrimSpace(line)
+	if !strings.HasPrefix(trimmed, "|") {
+		return false
+	}
+	inner := strings.Trim(trimmed, "|")
+	if inner == "" {
+		return false
+	}
+	for _, cell := range strings.Split(inner, "|") {
+		c := strings.TrimSpace(cell)
+		if c == "" {
+			continue
+		}
+		// Allow ":" and "-" only.
+		for _, r := range c {
+			if r != '-' && r != ':' {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// parseTableRow splits a pipe row into cells, trimming spaces and dropping
+// an empty leading/trailing cell from the outer pipes.
+func parseTableRow(line string) []string {
+	trimmed := strings.TrimSpace(line)
+	if trimmed == "" {
+		return nil
+	}
+	// Strip outer pipes if present.
+	if strings.HasPrefix(trimmed, "|") {
+		trimmed = trimmed[1:]
+	}
+	if strings.HasSuffix(trimmed, "|") {
+		trimmed = trimmed[:len(trimmed)-1]
+	}
+	parts := strings.Split(trimmed, "|")
+	out := make([]string, len(parts))
+	for i, p := range parts {
+		out[i] = strings.TrimSpace(p)
+	}
+	return out
+}
+
+// runeDisplayWidth counts runes (not bytes) — sufficient for monospace
+// table alignment since tview cell widths are rune-based for non-wide
+// CJK. Wide CJK chars are treated as width 2; combining runes as 0.
+func runeDisplayWidth(s string) int {
+	w := 0
+	for _, r := range s {
+		if r == '\u0300' || r == '\u0301' || r == '\u0302' || r == '\u0303' ||
+			r == '\u0304' || r == '\u0336' || r == '\u200B' {
+			continue
+		}
+		if r >= 0x1100 && (r <= 0x115F || r == 0x2329 || r == 0x232A ||
+			(r >= 0x2E80 && r <= 0xA4CF) || (r >= 0xAC00 && r <= 0xD7A3) ||
+			(r >= 0xF900 && r <= 0xFAFF) || (r >= 0xFE30 && r <= 0xFE4F) ||
+			(r >= 0xFF00 && r <= 0xFF60) || (r >= 0xFFE0 && r <= 0xFFE6)) {
+			w += 2
+			continue
+		}
+		w++
+	}
+	return w
+}
+
+// stripTviewTags removes tview color/region tags so widths measure visible
+// characters only. Tags look like [#A77CF8], [-], [-:-:-], [-:bg:b],
+// [region-id]. The regex requires the opening bracket be followed by '#',
+// '-', or an alphanumeric region-id — and crucially does NOT span across
+// a ']' to reach another '[', which would let it swallow text content
+// between two adjacent tags (the original "any chars in brackets" pattern
+// ate the literal string "Name" between "[#A77CF8::b]" and "[-:-:-]").
+var tviewTagRe = regexp.MustCompile(`\[(?:#[0-9a-fA-F]{3,8}|-(?::[^\[\]-]*){0,3}|[A-Za-z_][A-Za-z0-9_]*)\]`)
+
+func stripTviewTags(s string) string {
+	return tviewTagRe.ReplaceAllString(s, "")
 }
 
 func (a *App) appendActivity(line string) {
