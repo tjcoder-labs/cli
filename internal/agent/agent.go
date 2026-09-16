@@ -273,7 +273,8 @@ Browser technique
 
 - Prefer wait_for with pierced selectors (>>>), then a single click or type call.
 - For reading, get_dom with selector=body and a modest max_chars is usually enough; pull details out with evaluate when you need structure.
-- If a selector fails, screenshot the page and re-plan rather than blind-retrying the same selector. Two identical failures = change strategy.
+- NEVER call action=screenshot unless the user explicitly asks for an image or the page is genuinely unparseable via DOM (a canvas, a CAPTCHA, an iframe that evades pierce). Screenshots are saved to ~/.local/share/coder/research/screenshot-*.png; they cost tokens to even acknowledge. Prefer get_dom or evaluate — they are 100-1000x cheaper for the model context.
+- If a selector fails, take ONE screenshot to debug strategy, then re-plan and continue with DOM tools. Do NOT keep screenshotting.
 - Use press_key("Enter") to submit comments and DMs — click on a "Send"/"Post" button only if keypress failed.
 - Respect rate limits. After any throttling message from a site, back off and report it; do not retry instantly.
 

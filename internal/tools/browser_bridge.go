@@ -2,10 +2,14 @@ package tools
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/tjcoder-labs/cli/internal/browser"
 	"github.com/tjcoder-labs/cli/internal/client"
@@ -356,8 +360,26 @@ func (browserBridgeTool) Execute(ctx context.Context, raw json.RawMessage, env E
 		if err != nil {
 			return Result{}, err
 		}
-		// Return base64 payload; cap preview so transcript stays readable.
-		return Result{Content: "data:image/png;base64," + data, Preview: fmt.Sprintf("screenshot (%d bytes b64)", len(data))}, nil
+		// Write the PNG to the research dir rather than emitting base64
+		// inline: a 1920x1080 PNG is ~600-900kB of base64, which (a)
+		// floods the model context window (~200-300k tokens per shot)
+		// and (b) permanently inflates session history. The agent can
+		// read_or_open the file via read_file/research_note if it needs
+		// to inspect the pixels, or just report the path to the user.
+		dir := DefaultResearchDir()
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			return Result{}, fmt.Errorf("mkdir screenshots: %w", err)
+		}
+		fname := filepath.Join(dir, fmt.Sprintf("screenshot-%d.png", time.Now().UnixNano()))
+		raw, err := base64.StdEncoding.DecodeString(data)
+		if err != nil {
+			return Result{}, fmt.Errorf("decode screenshot: %w", err)
+		}
+		if err := os.WriteFile(fname, raw, 0o600); err != nil {
+			return Result{}, fmt.Errorf("write screenshot: %w", err)
+		}
+		summary := fmt.Sprintf("screenshot saved to %s (%d bytes PNG; base64 length %d)", fname, len(raw), len(data))
+		return Result{Content: summary, Preview: summary}, nil
 
 	case "get_cookies":
 		cks, err := browser.GetCookies(ctx, b.Client, a.URL)
