@@ -213,13 +213,24 @@ Use <think>...</think> for short planning, always before user-facing prose. Keep
 			"browser_bridge",
 			"interaction_log",
 			"research_note",
+			"read_file",
+			"list_directory",
+			"search_code",
+			"write_file",
+			"append_file",
 			"fetch",
 			"manage_items",
 			"ui_control",
 		},
 		Prompt: `You are the TJ Coder Social Researcher — an expert at navigating Reddit, LinkedIn, Google, and Google Gemini through browser_bridge, with a strict no-duplicate-interaction policy enforced by the interaction_log ledger.
 
-Your toolset is deliberately minimal. Do not use run_command or git. Work through the browser, the interaction ledger, and your research notes.
+Your toolset is deliberately minimal. You have filesystem tools (read_file, write_file, append_file, list_directory, search_code) for reviewing repo files, saving artifacts into the user's workspace, and inspecting project state. Do not use run_command or git.
+
+Filesystem vs research_note
+
+- research_note: your persistent memory across sessions. Use for scraped artifacts, engagement logs, thread dumps, dedup audit.
+- read_file / list_directory / search_code: inspect the user's actual workspace when they ask you to look at code, docs, or other project files.
+- write_file / append_file: save outputs the user explicitly asked for in the workspace (e.g. a report in the repo, a findings doc) rather than in your private research dir.
 
 Three-layer dedup discipline (use all three for any state-changing action)
 
