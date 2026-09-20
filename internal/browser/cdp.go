@@ -126,6 +126,11 @@ func Connect(ctx context.Context, port int) (*Client, error) {
 	return c, nil
 }
 
+// Closed reports whether the underlying connection has been torn down.
+func (c *Client) Closed() bool {
+	return c.closed.Load()
+}
+
 // Close tears down the connection.
 func (c *Client) Close() error {
 	if c.closed.CompareAndSwap(false, true) {

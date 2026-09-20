@@ -85,6 +85,23 @@ func (b *Bridge) ReleaseAll(ctx context.Context) error {
 	return nil
 }
 
+// IsAlive reports whether the underlying CDP WebSocket is still connected.
+// When Chrome crashes or is manually killed, the pump goroutine exits and
+// the client is marked closed. This lets callers detect stale bridges
+// and reconnect without surfacing "broken pipe" errors to the agent.
+func (b *Bridge) IsAlive() bool {
+	return b != nil && b.Client != nil && !b.Client.Closed()
+}
+
+// ResetSessions clears the cached target→sessionID mappings. Call this
+// after reconnecting to a restarted Chrome instance so stale session IDs
+// don't produce "session not found" errors.
+func (b *Bridge) ResetSessions() {
+	b.mu.Lock()
+	b.sessions = map[string]string{}
+	b.mu.Unlock()
+}
+
 // GCRegistry prunes ownership entries for tabs that no longer exist.
 func (b *Bridge) GCRegistry(ctx context.Context) {
 	targets, err := b.Client.ListTargets(ctx)

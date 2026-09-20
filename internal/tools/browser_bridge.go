@@ -25,6 +25,10 @@ var (
 // getBridge dials (once per port) and returns the process-wide bridge for
 // that CDP port. Different ports = different Chrome profiles = different
 // bridges, with ownership records keyed by "port:targetID".
+//
+// If the cached bridge's WebSocket is dead (Chrome crashed or was killed),
+// it is dropped and a fresh connection is attempted so the agent sees an
+// auto-reconnect instead of "broken pipe" errors on every call.
 func getBridge(ctx context.Context, port int, agent string) (*browser.Bridge, error) {
 	if port <= 0 {
 		port = 9222
@@ -32,7 +36,12 @@ func getBridge(ctx context.Context, port int, agent string) (*browser.Bridge, er
 	bridgeMu.Lock()
 	defer bridgeMu.Unlock()
 	if b, ok := bridgeInsts[port]; ok && b != nil {
-		return b, nil
+		if b.IsAlive() {
+			return b, nil
+		}
+		// Stale bridge: Chrome crashed or was killed. Drop it and reconnect.
+		_ = b.Close()
+		delete(bridgeInsts, port)
 	}
 	b, err := browser.DialBridge(ctx, port, agent)
 	if err != nil {
@@ -60,7 +69,7 @@ type browserBridgeTool struct{}
 
 func (browserBridgeTool) Definition() client.ToolDefinition {
 	props := map[string]any{
-		"action":        stringProp("Operation to perform. One of: list_tabs, new_tab, close_tab, claim_tab, release_tab, release_all, navigate, reload, back, forward, evaluate, click, type, press_key, wait_for, get_dom, screenshot, get_cookies, set_cookie, delete_cookie, clear_site_data, storage_get, storage_set, storage_keys, emulate, intercept_enable, intercept_disable, start_chrome, stop_chrome, chrome_status."),
+		"action":        stringProp("Operation to perform. One of: list_tabs, new_tab, close_tab, claim_tab, release_tab, release_all, navigate, reload, back, forward, evaluate, click, type, press_key, wait_for, get_dom, screenshot, get_cookies, set_cookie, delete_cookie, clear_site_data, storage_get, storage_set, storage_keys, emulate, intercept_enable, intercept_disable, start_chrome, stop_chrome, chrome_status, reconnect."),
 		"tab_id":        stringProp("Target tab ID. Required for most actions except list_tabs/new_tab/start_chrome/stop_chrome/chrome_status. Use list_tabs to find IDs. Tabs you create via new_tab are auto-owned."),
 		"url":           stringProp("URL for new_tab / navigate. Also used as the start page for start_chrome if provided."),
 		"selector":      stringProp("CSS selector, supports shadow piercing with '>>>' e.g. 'my-app >>> #inner'. Used by click/type/wait_for/get_dom."),
@@ -224,6 +233,22 @@ func (browserBridgeTool) Execute(ctx context.Context, raw json.RawMessage, env E
 			Content: fmt.Sprintf("port %d: up; %d page tabs, %d total targets", port, nPages, len(targets)),
 			Preview: "up",
 		}, nil
+
+	case "reconnect":
+		port := a.Port
+		if port <= 0 {
+			port = 9222
+		}
+		// Drop any stale cached bridge and re-dial. If Chrome isn't
+		// running, report that clearly so the agent can start_chrome.
+		dropBridge(port)
+		b, err := getBridge(ctx, port, agent)
+		if err != nil {
+			return Result{}, fmt.Errorf("reconnect to port %d failed (is Chrome running?): %w", port, err)
+		}
+		b.ResetSessions()
+		msg := fmt.Sprintf("reconnected to port %d (sessions reset)", port)
+		return Result{Content: msg, Preview: msg}, nil
 	}
 
 	b, err := getBridge(ctx, a.Port, agent)
