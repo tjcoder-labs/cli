@@ -201,7 +201,12 @@ func (browserBridgeTool) Execute(ctx context.Context, raw json.RawMessage, env E
 		if port <= 0 {
 			port = 9222
 		}
+		// Always drop the cached bridge, even if StopChrome fails — a
+		// dead Chrome can't acknowledge Browser.close, but the bridge
+		// is still stale and must be evicted so the next call dials
+		// fresh (or the agent can start_chrome cleanly).
 		if err := browser.StopChrome(ctx, port); err != nil {
+			dropBridge(port)
 			return Result{}, err
 		}
 		dropBridge(port)
