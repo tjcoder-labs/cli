@@ -135,6 +135,15 @@ func StartChrome(ctx context.Context, opts ChromeLaunch) (int, string, error) {
 		"--disable-renderer-backgrounding",
 		"--disable-backgrounding-occluded-windows",
 	}
+	// Detect Wayland and match the display server the user's desktop
+	// is actually running. Without this Chrome may detect Wayland,
+	// fail to create an X11 window, and silently exit — which is the
+	// exact "Chrome keeps closing" symptom from the ace session.
+	if os.Getenv("WAYLAND_DISPLAY") != "" {
+		args = append(args, "--ozone-platform=wayland")
+	} else if os.Getenv("DISPLAY") != "" {
+		args = append(args, "--ozone-platform=x11")
+	}
 	if opts.Headless {
 		args = append(args, "--headless=new", "--disable-gpu")
 	} else {
