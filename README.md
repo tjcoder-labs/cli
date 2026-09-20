@@ -21,7 +21,10 @@ A fast, keyboard-driven TUI that pairs a conversational agent with real develope
 - **Conversational coding agent** — understands your repo, edits files, runs commands, and iterates toward a working solution.
 - **Adaptive TUI** — Conversation, Cognition (live reasoning), and Activity panes, with in-pane editors and a fullscreen mode for the transcript.
 - **Interactive *and* headless** — drive it as a full TUI, or script it non-interactively with `coder -p "…"` (great for pipelines and CI).
-- **Specialized agents** — swap between purpose-built agents (software engineer, terminal specialist, code reviewer, Android assistant).
+- **Specialized agents** — swap between purpose-built agents (software engineer, terminal specialist, code reviewer, Android assistant, cloud expert, social researcher, storyteller).
+- **Browser bridge** — drive real Chrome over CDP: navigate, click, type, screenshot, manage cookies and tabs across multiple isolated profiles. Lifecycle tools (`start_chrome` / `stop_chrome` / `chrome_status`) let agents spin up and clean up per-port browser sessions.
+- **Social research mode** — the `social-researcher` agent combines `browser_bridge` with a persistent interaction ledger and scoped note store to research Reddit/LinkedIn/Gemini without ever repeating an upvote, like, comment, or DM.
+- **Markdown table rendering** — GFM pipe tables in model output are rendered as box-drawn tables in the transcript, cognition, and recap panes.
 - **Editable context injection** — a `{{token}}` environment template lets you control exactly what runtime context the model sees.
 - **Robust tool invocation** — native tool-calls plus a fenced-JSON fallback parser, so even smaller local models can use tools reliably.
 - **Session persistence** — conversation history, tasks, and project context survive across runs, per workspace.
@@ -135,8 +138,42 @@ Useful headless flags:
 | `terminal-specialist` | Shell, scripts, and environment administration |
 | `code-reviewer` | High-signal review and investigation |
 | `android-assistant` | Android system internals and device administration |
+| `cloud-expert` | Google Cloud / gcloud CLI: firewalls, IAM audit, VM management, scaling |
+| `social-researcher` | Browser-driven research & engagement on Reddit, LinkedIn, Google, Gemini — with automatic interaction dedup so nothing is ever liked/upvoted/PM'd twice |
+| `storyteller` | Interactive multi-turn narrative engine; branching stories the user steers |
 
 Select an agent in the TUI with `/agent`, or in headless mode with `--agent <name>`.
+
+## Browser Bridge
+
+`browser_bridge` gives an agent full control of a real Chrome instance over the Chrome DevTools Protocol (CDP). It's what powers the `social-researcher` agent, but any agent with the tool can use it.
+
+**Lifecycle**
+
+- `start_chrome` — launch Chrome with a dedicated profile. Defaults: port `9222` → `~/.chrome-debug`; any other port N → `~/.chrome-debug-N`. Supports `--headless`, custom `--user-data-dir`, and extra args.
+- `stop_chrome` — graceful shutdown via `Browser.close`.
+- `chrome_status` — probe a port; report pages/targets.
+
+**Tab discipline**
+
+- Every tab tracked in `~/.local/share/coder/browser-tabs.json` keyed by `port:targetID`, so two agents (or two Chrome instances) never touch each other's tabs.
+- `new_tab` auto-claims; `claim_tab` takes over an existing tab; `release_tab` / `release_all` hand them back. Other sessions' tabs are rejected unless you pass `force`.
+
+**Per-tab actions**
+
+`navigate`, `reload`, `back`, `forward`, `evaluate`, `click`, `type`, `press_key`, `wait_for` (polls with shadow-DOM piercing using `>>>` selectors), `get_dom`, `screenshot`, `get/set/delete_cookie`, `clear_site_data`, `storage_get/set`, `emulate` (viewport/mobile/UA/locale/timezone).
+
+**Supporting stores**
+
+- `interaction_log` — persistent ledger at `~/.local/share/coder/interactions.json` for dedup of social actions (upvote / like / comment / DM). `check` before, `record` after — enforced by the `social-researcher` prompt.
+- `research_note` — scoped file store at `~/.local/share/coder/research/` for scraped threads, transcripts, engagement reports. Path traversal protection; atomic writes.
+
+**Headless example**
+
+```bash
+coder -p 'Use browser_bridge to start_chrome on port 9223, then new_tab to example.com' \
+  --agent social-researcher --all-tools
+```
 
 ## Configuration
 
@@ -185,6 +222,7 @@ cli/
 ├── cmd/coder/            # CLI entry point (interactive + headless)
 ├── internal/
 │   ├── agent/            # Agent definitions and orchestration
+│   ├── browser/          # CDP client, tab registry, Chrome launcher, interaction ledger
 │   ├── client/           # LLM provider clients (ollama, gemini)
 │   ├── context/          # Runtime context + environment templating
 │   ├── highlight/        # Syntax/markdown highlighting
@@ -192,9 +230,9 @@ cli/
 │   ├── session/          # Session + preference persistence
 │   ├── tasks/            # Task tracking
 │   ├── tooling/          # Runner, tool parser, and registry
-│   ├── tools/            # Tool implementations (fs, shell, git, …)
+│   ├── tools/            # Tool implementations (fs, shell, git, browser_bridge, …)
 │   ├── tracking/         # Item/activity tracking
-│   └── tui/              # Terminal UI
+│   └── tui/              # Terminal UI (markdown tables, cognition pane, scheduler)
 ├── npm/                  # npm distribution wrapper (@tj/coder-cli)
 ├── test/                 # Test fixtures and cases
 ├── install.sh            # Cross-platform installer
