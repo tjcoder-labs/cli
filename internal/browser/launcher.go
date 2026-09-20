@@ -154,7 +154,17 @@ func StartChrome(ctx context.Context, opts ChromeLaunch) (int, string, error) {
 	}
 	args = append(args, opts.ExtraArgs...)
 
-	cmd := exec.CommandContext(ctx, bin, args...)
+	// Use exec.Command (not exec.CommandContext) so Chrome's lifetime is
+	// NOT tied to the tool call's context. The context passed to
+	// StartChrome is the agent turn context (15-minute timeout from
+	// app.go), and exec.CommandContext would kill Chrome with SIGKILL
+	// when that context is cancelled — even though Setsid detaches Chrome
+	// into its own process group. This was the root cause of Chrome
+	// "randomly" closing after a few tool calls: the turn context would
+	// expire or be cancelled, and Go's runtime would kill the Chrome
+	// process it was tracking. Using exec.Command breaks that link so
+	// Chrome persists independently of agent turn lifecycle.
+	cmd := exec.Command(bin, args...)
 	// Ensure DISPLAY / Wayland envs are inherited. Setsid alone doesn't drop
 	// environment, but an explicit env merge keeps behavior predictable.
 	cmd.Env = os.Environ()
