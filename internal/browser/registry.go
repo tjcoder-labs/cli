@@ -26,17 +26,41 @@ const (
 type registryRecord struct {
 	SessionID string    `json:"session_id"`
 	Agent     string    `json:"agent,omitempty"`
-	Claimed   bool      `json:"claimed,omitempty"` // true=claimed, false=created
+	Claimed   bool      `json:"claimed,omitempty"`   // true=claimed, false=created
+	Port      int       `json:"port,omitempty"`      // CDP port of the Chrome that owns this tab
 	CreatedAt time.Time `json:"created_at"`
 }
 
 // Registry is a persistent tab ownership table so multiple concurrent agents
-// sharing one Chrome instance never operate on each other's tabs.
+// sharing one or more Chrome instances never operate on each other's tabs.
+// Records are keyed by "port:targetID" so two Chromes on different CDP ports
+// cannot collide.
 type Registry struct {
 	mu   sync.Mutex
 	path string
 	self string // this session's identity
 	seen map[string]registryRecord
+}
+
+// registryKey joins a CDP port and a targetID. Port 0 means "default"
+// (treated as 9222 for backward compat with pre-port-aware entries).
+func registryKey(port int, targetID string) string {
+	if port == 0 {
+		port = 9222
+	}
+	return fmt.Sprintf("%d:%s", port, targetID)
+}
+
+// parseLegacyKey returns the targetID from a stored key. Keys written before
+// the port field was introduced are bare targetIDs.
+func parseLegacyKey(key string) (int, string) {
+	var port int
+	var id string
+	n, _ := fmt.Sscanf(key, "%d:%s", &port, &id)
+	if n == 2 && port > 0 && port < 65536 {
+		return port, id
+	}
+	return 0, key
 }
 
 // registryFile is the on-disk schema.
@@ -107,29 +131,30 @@ func (r *Registry) saveLocked() error {
 
 // Register marks targetID owned by this session. claimed=false means the tab
 // was created by us; claimed=true means we took over an existing tab.
-func (r *Registry) Register(targetID, agent string, claimed bool) error {
+func (r *Registry) Register(port int, targetID, agent string, claimed bool) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.seen[targetID] = registryRecord{SessionID: r.self, Agent: agent, Claimed: claimed, CreatedAt: time.Now()}
+	r.seen[registryKey(port, targetID)] = registryRecord{SessionID: r.self, Agent: agent, Claimed: claimed, Port: port, CreatedAt: time.Now()}
 	return r.saveLocked()
 }
 
 // Release drops ownership of targetID if this session owns it.
-func (r *Registry) Release(targetID string) error {
+func (r *Registry) Release(port int, targetID string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if rec, ok := r.seen[targetID]; ok && rec.SessionID == r.self {
-		delete(r.seen, targetID)
+	k := registryKey(port, targetID)
+	if rec, ok := r.seen[k]; ok && rec.SessionID == r.self {
+		delete(r.seen, k)
 		return r.saveLocked()
 	}
 	return nil
 }
 
 // OwnershipOf classifies a target relative to this session.
-func (r *Registry) OwnershipOf(targetID string) Ownership {
+func (r *Registry) OwnershipOf(port int, targetID string) Ownership {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	rec, ok := r.seen[targetID]
+	rec, ok := r.seen[registryKey(port, targetID)]
 	if !ok {
 		return OwnUnclaimed
 	}
@@ -144,36 +169,41 @@ func (r *Registry) OwnershipOf(targetID string) Ownership {
 var ErrNotOwned = errors.New("tab is not owned by this session (claim it first)")
 
 // RequireOwned returns ErrNotOwned unless targetID belongs to this session.
-func (r *Registry) RequireOwned(targetID string) error {
-	if r.OwnershipOf(targetID) != OwnMine {
-		return fmt.Errorf("%w: %s", ErrNotOwned, targetID)
+func (r *Registry) RequireOwned(port int, targetID string) error {
+	if r.OwnershipOf(port, targetID) != OwnMine {
+		return fmt.Errorf("%w: %s (port %d)", ErrNotOwned, targetID, port)
 	}
 	return nil
 }
 
 // Claim transfers an unclaimed (or own) target to this session. It refuses to
 // claim a tab owned by another session unless force is set.
-func (r *Registry) Claim(targetID, agent string, force bool) error {
+func (r *Registry) Claim(port int, targetID, agent string, force bool) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if rec, ok := r.seen[targetID]; ok && rec.SessionID != r.self && rec.SessionID != "" {
+	k := registryKey(port, targetID)
+	if rec, ok := r.seen[k]; ok && rec.SessionID != r.self && rec.SessionID != "" {
 		if !force {
-			return fmt.Errorf("tab %s already claimed by another session (%s)", targetID, rec.SessionID)
+			return fmt.Errorf("tab %s on port %d already claimed by another session (%s)", targetID, port, rec.SessionID)
 		}
 	}
-	r.seen[targetID] = registryRecord{SessionID: r.self, Agent: agent, Claimed: true, CreatedAt: time.Now()}
+	r.seen[k] = registryRecord{SessionID: r.self, Agent: agent, Claimed: true, Port: port, CreatedAt: time.Now()}
 	return r.saveLocked()
 }
 
-// GC removes records for targetIDs that no longer exist, and entries from
-// dead sessions. live is the set of current targetIDs.
-func (r *Registry) GC(live map[string]bool) {
+// GC removes records for targetIDs that no longer exist on the given port,
+// and entries from dead sessions. live is the set of current targetIDs.
+func (r *Registry) GC(port int, live map[string]bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	changed := false
-	for id := range r.seen {
+	for key := range r.seen {
+		p, id := parseLegacyKey(key)
+		if p != 0 && p != port {
+			continue // scoped to another port; leave alone
+		}
 		if !live[id] {
-			delete(r.seen, id)
+			delete(r.seen, key)
 			changed = true
 		}
 	}

@@ -406,6 +406,26 @@ func (r *Runner) Run(ctx context.Context, history []client.Message, prompt strin
 					ToolName: call.Function.Name,
 					Text:     result.Preview,
 				})
+				// Send an estimated context signal after each tool
+				// execution. The authoritative update happens when the
+				// next assistant turn returns its PromptEvalCount, but
+				// large tool payloads (e.g. old screenshot base64, big
+				// search results) can grow history by hundreds of KB in
+				// a single round. The user should see that spike
+				// immediately rather than after the next model call.
+				if contextWindow > 0 {
+					est := estimateContextChars(history)
+					estTok := est / 4 // chars-to-tokens approximation
+					if estTok > contextWindow {
+						estTok = contextWindow
+					}
+					remaining := contextWindow - estTok
+					pctUsed := float64(estTok) / float64(contextWindow) * 100.0
+					onEvent(Event{
+						Type: EventContext,
+						Text: fmt.Sprintf("ctx: ~%d / %d used (%.1f%%, est), remaining=%d", estTok, contextWindow, pctUsed, remaining),
+					})
+				}
 			}
 		}
 	}
@@ -614,6 +634,21 @@ func loadCoderPrompt(workspaceRoot string) string {
 		text = text[:12000] + "\n...[truncated]"
 	}
 	return text
+}
+
+// estimateContextChars approximates history size in characters (for use
+// with chars/4 = approximate tokens). We measure role + content + the
+// encoded tool_calls JSON so the estimate grows in step with what's
+// actually sent to the model on the next turn.
+func estimateContextChars(history []client.Message) int {
+	total := 0
+	for _, m := range history {
+		total += len(m.Content) + len(m.Role) + len(m.ToolName)
+		for _, tc := range m.ToolCalls {
+			total += len(tc.Function.Name) + len(tc.Function.Arguments)
+		}
+	}
+	return total
 }
 
 func formatContextUsage(msg client.Message, contextWindow int) string {

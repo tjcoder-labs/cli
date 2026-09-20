@@ -10,12 +10,15 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/tjcoder-labs/cli/internal/agent"
+	"github.com/tjcoder-labs/cli/internal/browser"
 	"github.com/tjcoder-labs/cli/internal/client"
 	ctxpkg "github.com/tjcoder-labs/cli/internal/context"
+	"github.com/tjcoder-labs/cli/internal/reminders"
 	"github.com/tjcoder-labs/cli/internal/session"
 	"github.com/tjcoder-labs/cli/internal/tooling"
 	"github.com/tjcoder-labs/cli/internal/tools"
@@ -28,6 +31,12 @@ const (
 	defaultGeminiModel = "gemini-2.5-flash"
 	defaultProvider    = "ollama"
 )
+
+// likeRe matches the "Like N" or "Like M-N posts" instruction at the
+// start of a schedule prompt so cmdSchedule can re-emit it scaled to
+// the remaining daily budget. Case-insensitive; tolerates optional
+// "posts" and trailing punctuation.
+var likeRe = regexp.MustCompile(`(?i)^\s*like\s+\d+(?:\s*[-–]\s*\d+)?\s*(?:posts?)?`)
 
 // packageJSON is the package.json shipped with the binary, embedded at
 // compile time. It backs the fallback values for version/productName/author
@@ -100,7 +109,7 @@ func main() {
 	askAgent := flag.String("agent", "software-engineer", "agent name to use in headless ask mode")
 	askNoTools := flag.Bool("no-tools", false, "headless ask mode: disable all tools (plain chat)")
 	askAllTools := flag.Bool("all-tools", false, "headless ask mode: enable every tool in the registry (ignores agent default)")
-	askShowReasoning := flag.Bool("show-reasoning", false, "headless ask mode: also print <think>...</think> blocks to stderr")
+	askShowReasoning := flag.Bool("show-reasoning", false, "headless ask mode: also print  thinking... response blocks to stderr")
 	askQuiet := flag.Bool("quiet", false, "headless ask mode: suppress tool activity on stderr")
 	askSystem := flag.String("system", "", "headless ask mode: extra text prepended to the system prompt")
 	askSession := flag.Bool("session", true, "headless ask mode: load and save session history from/to the workspace session file")
@@ -141,6 +150,9 @@ func main() {
 			return
 		case "agent":
 			cmdAgent(flag.Args()[1:], *workspaceRoot)
+			return
+		case "schedule":
+			cmdSchedule(flag.Args()[1:], *workspaceRoot, *providerName, *host, *geminiKey, *timeout)
 			return
 		case "ask":
 			// `coder ask [text...]` — text after "ask" is the prompt.
@@ -238,6 +250,141 @@ func main() {
 	if err := app.Run(); err != nil {
 		fatal("%v", err)
 	}
+}
+
+// cmdSchedule runs a previously-scheduled self-reinvoking schedule entry.
+//
+//	Usage: coder schedule run <id> [flags]
+//
+// The entry is looked up in the workspace reminders file by ID. If the
+// entry carries a daily_cap and platform, the interaction ledger is
+// checked and the run is skipped (exit 0, logged) once the cap for the
+// current calendar day is reached. Otherwise cmdAsk is invoked headlessly
+// with the entry's prompt and agent.
+func cmdSchedule(args []string, workspaceRoot, providerName, host, geminiKey string, timeout time.Duration) {
+	if len(args) == 0 {
+		fmt.Fprintf(os.Stderr, "usage: coder schedule run <id>\n")
+		os.Exit(2)
+	}
+	sub := args[0]
+	if sub != "run" {
+		fmt.Fprintf(os.Stderr, "usage: coder schedule run <id>\n")
+		os.Exit(2)
+	}
+	if len(args) != 2 {
+		fmt.Fprintf(os.Stderr, "usage: coder schedule run <id>\n")
+		os.Exit(2)
+	}
+	id := strings.TrimSpace(args[1])
+	if id == "" {
+		fatal("schedule run: id is required")
+	}
+
+	store := reminders.NewStore()
+	list, err := store.Load(workspaceRoot)
+	if err != nil {
+		fatal("schedule run: load reminders: %v", err)
+	}
+	entry, ok := list.Get(id)
+	if !ok {
+		fatal("schedule run: reminder %q not found", id)
+	}
+	if entry.Prompt == "" {
+		fatal("schedule run: reminder %q is a passive reminder, not a schedule", id)
+	}
+
+	now := time.Now()
+
+	// Guardrail 0: tick dedup. The in-session TUI scheduler and this
+	// headless entrypoint can both be alive for the same workspace;
+	// LastRun marks a tick as consumed. A fire within the same UTC
+	// minute means another runner already claimed this tick.
+	if entry.LastRun != "" {
+		if last, err := time.Parse(time.RFC3339, entry.LastRun); err == nil {
+			if last.UTC().Truncate(time.Minute).Equal(now.UTC().Truncate(time.Minute)) {
+				fmt.Printf("schedule %s: tick already claimed (last run %s), skipping\n", id, entry.LastRun)
+				return
+			}
+		}
+	}
+
+	// Normalize to UTC before computing the calendar-day boundary. The
+	// in-session scheduler evaluates against UTC (loop() feeds
+	// time.Now().UTC()); using local time here would make the two
+	// runners disagree on what "today" means and diverge on the cap
+	// count. UTC everywhere keeps the day boundary consistent no
+	// matter which runner fires.
+	now = now.UTC()
+
+	// Guardrail 1: per-day like cap. Check the interaction ledger for
+	// today's like count on the schedule's platform; skip when capped.
+	prompt := entry.Prompt
+	if entry.DailyCap > 0 {
+		log, err := browser.LoadInteractionLog(browser.DefaultInteractionLogPath())
+		if err != nil {
+			fatal("schedule run: load interaction log: %v", err)
+		}
+		startOfDay := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+		done := log.CountSince(entry.Platform, browser.InteractionLike, startOfDay)
+		if done >= entry.DailyCap {
+			fmt.Printf("schedule %s: daily like cap reached (%d/%d), skipping\n", id, done, entry.DailyCap)
+			return
+		}
+		fmt.Printf("schedule %s: %d/%d %s likes today, running\n", id, done, entry.DailyCap, entry.Platform)
+		remaining := entry.DailyCap - done
+
+		// Guardrail 2: budget-aware prompt. Scale the per-run floor to
+		// the remaining headroom so a run can't exceed the cap even
+		// when the model counts differently than the ledger.
+		effCap := 4
+		if remaining < effCap {
+			effCap = remaining
+		}
+		if effCap < 1 {
+			effCap = 1
+		}
+		// Parse "like N" / "like M-N" from the stored prompt so we can
+		// re-emit the instruction with the effective target, keeping
+		// the rest of the prompt (targeting rules, filters) verbatim.
+		if likeRe.MatchString(prompt) {
+			segment := fmt.Sprintf("Like %d-%d posts if you can find that many suitable candidates today (remaining daily budget: %d)", 1, effCap, remaining)
+			if effCap == 1 {
+				segment = fmt.Sprintf("Like 1 post if you can find a suitable candidate today (remaining daily budget: %d)", remaining)
+			}
+			prompt = likeRe.ReplaceAllString(prompt, segment)
+		}
+		prompt += fmt.Sprintf("\n\n[schedule: %d/%d %s likes used today; hard cap %d. Respect the remaining budget exactly.]",
+			done, entry.DailyCap, entry.Platform, entry.DailyCap)
+	}
+
+	// Claim this tick before invoking the agent so a concurrent TUI
+	// scheduler or a second cron tick observes the consumption. Best
+	// effort: failure to persist only risks a rare double-fire.
+	if err := store.MarkRun(workspaceRoot, id, now); err != nil {
+		fmt.Fprintf(os.Stderr, "schedule %s: warning: could not persist last-run marker: %v\n", id, err)
+	}
+
+	cmdAsk(askOptions{
+		Host:          host,
+		Provider:      providerName,
+		GeminiKey:     geminiKey,
+		WorkspaceRoot: workspaceRoot,
+		Model:         "",
+		Timeout:       timeout,
+		Agent:         entry.Agent,
+		NoTools:       false,
+		AllTools:      false,
+		ShowReasoning: false,
+		Quiet:         false,
+		System:        "",
+		Prompt:        prompt,
+		Session:       true,
+		ToolMax:       nil,
+		Format:        "text",
+		ExplicitAgent: true,
+		ExplicitModel: false,
+		ExplicitTools: false,
+	})
 }
 
 func cmdModels(args []string, providerName, host, geminiKey string, timeout time.Duration) {
@@ -410,7 +557,7 @@ func isReasoningRelated(text string) bool {
 	lower := strings.ToLower(text)
 	return strings.Contains(lower, "think") ||
 		strings.Contains(lower, "reasoning") ||
-		strings.Contains(lower, "<think>") ||
+		strings.Contains(lower, " thinking") ||
 		strings.Contains(lower, "model note")
 }
 

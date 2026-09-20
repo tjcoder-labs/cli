@@ -4,6 +4,12 @@
 // sessions in the same workspace. The Tracker adapter lets the
 // manage_items tool list/delete them uniformly with tasks and
 // memories.
+//
+// A reminder can optionally carry a Prompt and Agent, which turns it
+// into a *schedule*: on each cron tick the binary re-invokes itself
+// headlessly (coder schedule run <id>) rather than simply echoing a
+// message into a log file. Platform and DailyCap, when set, enforce a
+// per-day cap on like actions before the schedule is allowed to run.
 package reminders
 
 import (
@@ -34,6 +40,26 @@ type Entry struct {
 	// user's crontab. We persist it so the UI can show an
 	// "installed" badge and so the agent can avoid double-installing.
 	Installed bool `json:"installed,omitempty"`
+	// Prompt, Agent, Platform, and DailyCap turn a passive reminder
+	// into an active schedule. When Prompt is non-empty, each cron
+	// tick re-invokes the binary headlessly (coder schedule run <id>)
+	// with Prompt instead of appending Message to a log file.
+	//
+	// Agent names the agent config used for the re-invocation.
+	// Platform names the social platform whose "like" actions the cap
+	// counts (e.g. "linkedin"). DailyCap, when > 0, caps the number
+	// of that platform's like actions per calendar day; the schedule
+	// runner checks the interaction ledger before each run and skips
+	// (exit 0, logged) once the cap is reached.
+	Prompt   string `json:"prompt,omitempty"`
+	Agent    string `json:"agent,omitempty"`
+	Platform string `json:"platform,omitempty"`
+	DailyCap int    `json:"daily_cap,omitempty"`
+	// LastRun is the RFC3339 UTC timestamp of the last cron tick at
+	// which the schedule fired. Written by whichever runner fired it
+	// (the in-session TUI scheduler or the headless `coder schedule
+	// run` entrypoint) so the other never re-fires the same tick.
+	LastRun string `json:"last_run,omitempty"`
 }
 
 // Store is the mutation surface for reminders. The on-disk file is
@@ -91,12 +117,17 @@ func (s *Store) Save(workspaceRoot string, list *List) error {
 	return os.WriteFile(s.path(workspaceRoot), data, 0o600)
 }
 
-// CreateInput captures the parameters for a new reminder. Both
-// fields are required.
+// CreateInput captures the parameters for a new reminder. CronExpr is
+// required. For a passive reminder, Message is required. For a
+// schedule (self re-invocation), Prompt is required instead.
 type CreateInput struct {
 	CronExpr    string
 	Message     string
 	InstallCron bool
+	Prompt      string
+	Agent       string
+	Platform    string
+	DailyCap    int
 }
 
 // Create appends a new entry to the file and returns the updated
@@ -105,8 +136,12 @@ type CreateInput struct {
 func (s *Store) Create(workspaceRoot string, in CreateInput) (*List, Entry, error) {
 	cron := strings.TrimSpace(in.CronExpr)
 	msg := strings.TrimSpace(in.Message)
-	if cron == "" || msg == "" {
-		return nil, Entry{}, fmt.Errorf("cron_expr and message are required")
+	prompt := strings.TrimSpace(in.Prompt)
+	if cron == "" {
+		return nil, Entry{}, fmt.Errorf("cron_expr is required")
+	}
+	if msg == "" && prompt == "" {
+		return nil, Entry{}, fmt.Errorf("message or prompt is required")
 	}
 	now := s.clock().UTC().Format(time.RFC3339)
 	entry := Entry{
@@ -115,6 +150,10 @@ func (s *Store) Create(workspaceRoot string, in CreateInput) (*List, Entry, erro
 		Message:   msg,
 		CreatedAt: now,
 		Installed: in.InstallCron,
+		Prompt:    prompt,
+		Agent:     strings.TrimSpace(in.Agent),
+		Platform:  strings.ToLower(strings.TrimSpace(in.Platform)),
+		DailyCap:  in.DailyCap,
 	}
 	list, err := s.Load(workspaceRoot)
 	if err != nil {
@@ -151,6 +190,36 @@ func (s *Store) Delete(workspaceRoot, id string) (*List, bool, error) {
 		return nil, false, err
 	}
 	return list, true, nil
+}
+
+// FilePath returns the canonical reminders.json path for a
+// workspace. Exported so the in-session scheduler can stat the file
+// directly (cheap change detection between polls).
+func FilePath(workspaceRoot string) string {
+	return filepath.Join(workspaceRoot, ".ergo-cli-go", FileName)
+}
+
+// MarkRun stamps entry id's LastRun with the given time, persisting
+// the update. Used by schedule runners to record that a tick has
+// been consumed; on a missing entry it is a no-op.
+func (s *Store) MarkRun(workspaceRoot, id string, at time.Time) error {
+	list, err := s.Load(workspaceRoot)
+	if err != nil {
+		return err
+	}
+	for i := range list.items {
+		if list.items[i].ID == id {
+			list.items[i].LastRun = at.UTC().Format(time.RFC3339)
+			return s.Save(workspaceRoot, list)
+		}
+	}
+	return nil
+}
+
+// MarkRun is the package-level convenience used by the in-session
+// scheduler (which does not otherwise retain a Store).
+func MarkRun(workspaceRoot, id string, at time.Time) error {
+	return NewStore().MarkRun(workspaceRoot, id, at)
 }
 
 // List is an in-memory view of the reminders file. Sorted newest-first.

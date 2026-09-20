@@ -149,3 +149,26 @@ func (l *InteractionLog) RecentList() []*Interaction {
 	copy(out, l.Recent)
 	return out
 }
+
+// CountSince returns the number of recorded interactions matching
+// platform and kind whose At time is on or after since. Used by the
+// schedule runner to enforce a per-day cap before re-invoking.
+func (l *InteractionLog) CountSince(platform string, kind InteractionKind, since time.Time) int {
+	if l == nil {
+		return 0
+	}
+	n := 0
+	for _, i := range l.Recent {
+		if i.At.Before(since) {
+			continue
+		}
+		if platform != "" && !strings.EqualFold(i.Platform, platform) {
+			continue
+		}
+		if kind != "" && i.Kind != kind {
+			continue
+		}
+		n++
+	}
+	return n
+}

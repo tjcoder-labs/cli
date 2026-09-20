@@ -302,6 +302,11 @@ type App struct {
 	// .ergo-cli-go/config.json. Mutated by /config and read by the
 	// agent runner for the tool-step cap.
 	config AppConfig
+
+	// scheduler is the in-session schedule worker (scheduler.go).
+	// Started in Run(), stopped when Run() returns; it injects due
+	// schedules into the live conversation via submitScheduled.
+	scheduler *scheduleWorker
 }
 
 func New(provider client.Provider, registry *tools.Registry, workspaceRoot, modelOverride, productName, author, appVersion string) *App {
@@ -362,6 +367,7 @@ func New(provider client.Provider, registry *tools.Registry, workspaceRoot, mode
 	// before we hand a reference to the runner so a submit() that
 	// races with the very first turn still has somewhere to send.
 	app.runner.Steering = app.steeringCh
+	app.scheduler = newScheduleWorker(app)
 	app.build()
 	app.loadSession()
 	app.loadModelsAsync()
@@ -419,6 +425,13 @@ func (a *App) Run() error {
 	defer a.stopSpinner()
 	a.running = true
 	defer func() { a.running = false }()
+	// Start the in-session schedule worker for the lifetime of the
+	// event loop. Due schedules are injected into the conversation
+	// as attributable user messages; the watcher stops with the app.
+	if a.scheduler != nil {
+		a.scheduler.start()
+		defer a.scheduler.stop()
+	}
 	return a.tv.Run()
 }
 
@@ -2616,9 +2629,28 @@ func (a *App) submit() {
 		a.mu.Unlock()
 	}
 
+	a.launchTurn(prompt, "")
+}
+
+// launchTurn runs one agent turn as a background goroutine against a
+// snapshot of the current history, then merges the result back onto
+// the UI thread. agentNameOverride selects a different agent persona
+// for this turn only (scheduled runs); "" uses the current agent.
+//
+// History is shared with the live conversation, so whatever the
+// scheduled turn does is visible to (and remembered by) the main
+// agent on subsequent turns — the user never has to restate context.
+func (a *App) launchTurn(prompt, agentNameOverride string) {
 	enabled := a.enabledToolList()
 	history := append([]client.Message(nil), a.history...)
 	agentCfg := a.currentAgent
+	if agentNameOverride != "" && agentNameOverride != agentCfg.Name {
+		if alt, ok := agent.FindWithWorkspace(agentNameOverride, a.workspaceRoot); ok {
+			agentCfg = alt
+		} else {
+			a.appendActivity(fmt.Sprintf("["+a.palette.HexOrchid+"::b]warning[-:-:-]: schedule agent %q not found; using %s", agentNameOverride, agentCfg.Name))
+		}
+	}
 	// Inject the (interpolated) environment/context block ahead of the
 	// agent's own system prompt, mirroring headless mode. Editable via
 	// /environment. Empty template => no injection.
@@ -2626,6 +2658,12 @@ func (a *App) submit() {
 		agentCfg.Prompt = env + "\n\n" + agentCfg.Prompt
 	}
 	model := a.currentModel
+	if agentCfg.DefaultModel != "" && agentNameOverride != "" {
+		// A scheduled turn naming a different agent runs on that
+		// agent's preferred model rather than whichever model the
+		// interactive session happens to have selected.
+		model = agentCfg.DefaultModel
+	}
 
 	go func() {
 		// Use a timeout context to prevent indefinite hangs on API calls or tool execution.
@@ -2664,6 +2702,74 @@ func (a *App) submit() {
 			a.reloadTasksIfChanged()
 		})
 	}()
+}
+
+// submitScheduled injects a fired schedule's prompt into the live
+// conversation. It is invoked from the scheduler worker goroutine, so
+// all UI mutation is marshalled onto the event loop.
+//
+// When a turn is already in flight the prompt is delivered via the
+// steering channel instead: the schedule doesn't pile up a second
+// turn (single-flight), and the in-flight agent receives the
+// schedule's instruction as user steering.
+func (a *App) submitScheduled(agentName, prompt string) {
+	a.tv.QueueUpdateDraw(func() {
+		a.mu.Lock()
+		if a.busy {
+			select {
+			case a.steeringCh <- prompt:
+				a.appendActivity(fmt.Sprintf("[%s]schedule[-]: turn in flight; prompt steered into the running turn",
+					a.palette.HexOrchid))
+			default:
+				a.appendActivity("[" + a.palette.HexOrchid + "::b]warning[-:-:-]: schedule fired while busy and steering queue is full; prompt dropped")
+			}
+			a.mu.Unlock()
+			return
+		}
+		a.busy = true
+		a.spinIdx = 0
+		a.assistantState = "thinking"
+		a.assistantStamp = ""
+		a.mu.Unlock()
+
+		a.startSpinner()
+		a.refreshFooter()
+		a.refreshContextBar()
+		a.appendScheduledMessage(agentName, prompt)
+		a.appendAssistantTurnLabel()
+		a.transcript.ScrollToEnd()
+		a.clearReasoningSplash()
+		a.cognitionActive = true
+		a.addReferencesFromText(prompt)
+		a.refreshContextBar()
+
+		a.mu.Lock()
+		if err := a.saveSession(); err != nil {
+			a.mu.Unlock()
+			a.appendActivity(fmt.Sprintf("["+a.palette.HexOrchid+"::b]warning[-:-:-]: failed to save session: %v", err))
+		} else {
+			a.mu.Unlock()
+		}
+
+		a.launchTurn(prompt, agentName)
+	})
+}
+
+// appendScheduledMessage renders the fired schedule's prompt as a
+// user-style message, visually attributed to the schedule + agent so
+// it is distinguishable from something the user typed:
+//
+//	17:50  ⚙ schedule …512af0 → social-researcher (*/10 * * * *)
+//	> <prompt body>
+func (a *App) appendScheduledMessage(agentName, prompt string) {
+	stamp := formatTimestamp(time.Now())
+	label := "⚙ schedule"
+	if agentName != "" {
+		label += " → " + agentName
+	}
+	fmt.Fprintf(a.transcript, "[%s]%s[-]\n", a.palette.HexDim, stamp)
+	fmt.Fprintf(a.transcript, "[%s::b]%s[-:-:-]\n", a.palette.HexViolet, label)
+	fmt.Fprintf(a.transcript, "[%s]%s[-]\n\n", a.palette.TextDim, prompt)
 }
 
 func (a *App) handleEvent(event tooling.Event) {

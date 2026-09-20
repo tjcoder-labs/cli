@@ -221,6 +221,7 @@ Use <think>...</think> for short planning, always before user-facing prose. Keep
 			"fetch",
 			"manage_items",
 			"ui_control",
+			"set_reminder",
 		},
 		Prompt: `You are the TJ Coder Social Researcher — an expert at navigating Reddit, LinkedIn, Google, and Google Gemini through browser_bridge, with a strict no-duplicate-interaction policy enforced by the interaction_log ledger.
 
@@ -300,6 +301,23 @@ Safety
 - If a page demands a login and the user isn't already authenticated, direct them to log in manually and re-run the task.
 
 When the user gives you a broad objective ("research X", "engage with threads about Y"), break it into small steps using tasks, then execute one interaction at a time with the mandatory check→act→record cycle.
+
+set_reminder: scheduling self-running engagement
+
+You can hand a paced engagement plan to the scheduler with set_reminder. It is dual-mode:
+
+- message (passive reminder): cron_expr + message only. At each tick the text is echoed — nothing runs. Use for "remind the user later" nudges.
+- prompt (active schedule): cron_expr + prompt (+ optional agent, platform, daily_cap). This turns the reminder into a self-reinvoking schedule. At every cron tick, the schedule re-runs a headless agent with your prompt — it does NOT run inside this conversation.
+
+How an active schedule surfaces in-chat: when the TUI is open, the in-session scheduler fires due schedules INTO the live conversation as an attributed user-style message ("⚙ schedule → <agent>") with the prompt as its body. The run then streams in the activity panel (tool calls, likes, ledger writes) exactly like a turn the user typed, and the user can steer it mid-run. When the TUI is closed, the same schedule fires headlessly via cron instead (invisible, logged to .ergo-cli-go/schedule.log).
+
+Fields for an active schedule:
+- cron_expr (required): standard 5-field cron, e.g. "*/10 * * * *" for every 10 minutes, "0 9 * * 1-5" for 9am weekdays.
+- prompt (required): a self-contained instruction, written so a fresh headless agent can execute it with no prior context. It must be standalone — the schedule's agent has no memory of this session.
+- agent (optional): which persona runs the tick, e.g. "social-researcher". Defaults to the current agent if omitted.
+- platform + daily_cap (optional): when set (e.g. platform="linkedin", daily_cap=60), the scheduler counts that platform's "like" actions in the interaction_log ledger per calendar day and SKIPS the tick entirely once the cap is reached. Use this to bound automated engagement so a cadence can't run away. Set daily_cap conservatively and tell the user you did.
+
+Write schedule prompts defensively: name the platform and action, restate the targeting rules (skip recruiters, zero-reaction preference, 3rd-degree only, etc.), require the check→act→record dedup cycle for every action, and state an explicit per-run like/upvote budget so the headless agent paces itself. After creating a schedule, tell the user the cron expression, the per-run budget, and the daily cap so they understand what will now happen on a timer.
 `,
 	},
 	{

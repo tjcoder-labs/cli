@@ -58,8 +58,18 @@ func (t *ReminderTracker) Create(state session.State, input map[string]interface
 	cron, _ := input["cron_expr"].(string)
 	msg, _ := input["message"].(string)
 	install, _ := input["install_cron"].(bool)
+	prompt, _ := input["prompt"].(string)
+	agentName, _ := input["agent"].(string)
+	platform, _ := input["platform"].(string)
+	dailyCap, _ := input["daily_cap"].(float64)
 	_, entry, err := t.store.Create(t.workspaceRoot, reminders.CreateInput{
-		CronExpr: cron, Message: msg, InstallCron: install,
+		CronExpr:    cron,
+		Message:     msg,
+		InstallCron: install,
+		Prompt:      prompt,
+		Agent:       agentName,
+		Platform:    platform,
+		DailyCap:    int(dailyCap),
 	})
 	if err != nil {
 		return state, nil, err
@@ -70,6 +80,9 @@ func (t *ReminderTracker) Create(state session.State, input map[string]interface
 func (t *ReminderTracker) Update(state session.State, id string, input map[string]interface{}) (session.State, interface{}, error) {
 	// Reminders don't have a partial update shape today; treat
 	// update as a delete + recreate to keep the contract simple.
+	// Schedule fields (Prompt/Agent/Platform/DailyCap) are preserved
+	// from the existing entry unless explicitly overridden, so a
+	// schedule does not silently degrade into a passive reminder.
 	list, err := t.store.Load(t.workspaceRoot)
 	if err != nil {
 		return state, nil, err
@@ -86,11 +99,33 @@ func (t *ReminderTracker) Update(state session.State, id string, input map[strin
 	if msg == "" {
 		msg = existing.Message
 	}
+	prompt, _ := input["prompt"].(string)
+	if prompt == "" {
+		prompt = existing.Prompt
+	}
+	agentName, _ := input["agent"].(string)
+	if agentName == "" {
+		agentName = existing.Agent
+	}
+	platform, _ := input["platform"].(string)
+	if platform == "" {
+		platform = existing.Platform
+	}
+	dailyCap, _ := input["daily_cap"].(float64)
+	if dailyCap == 0 {
+		dailyCap = float64(existing.DailyCap)
+	}
 	if _, _, err := t.store.Delete(t.workspaceRoot, id); err != nil {
 		return state, nil, err
 	}
 	_, updated, err := t.store.Create(t.workspaceRoot, reminders.CreateInput{
-		CronExpr: cron, Message: msg, InstallCron: existing.Installed,
+		CronExpr:    cron,
+		Message:     msg,
+		InstallCron: existing.Installed,
+		Prompt:      prompt,
+		Agent:       agentName,
+		Platform:    platform,
+		DailyCap:    int(dailyCap),
 	})
 	if err != nil {
 		return state, nil, err
@@ -109,7 +144,17 @@ func (t *ReminderTracker) Format(obj interface{}) string {
 		if e.Installed {
 			installed = " (installed)"
 		}
+		if e.Prompt != "" {
+			return fmt.Sprintf("[%s] schedule %s%s (%s)", e.CronExpr, truncSchedulePrompt(e.Prompt), installed, e.ID)
+		}
 		return fmt.Sprintf("[%s] %s%s (%s)", e.CronExpr, e.Message, installed, e.ID)
 	}
 	return fmt.Sprintf("%v", obj)
+}
+
+func truncSchedulePrompt(s string) string {
+	if len(s) <= 48 {
+		return s
+	}
+	return s[:47] + "…"
 }

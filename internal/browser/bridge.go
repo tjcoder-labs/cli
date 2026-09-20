@@ -15,6 +15,10 @@ type Bridge struct {
 	// ID identifies this agent session in the ownership registry.
 	ID    string
 	Agent string
+	// Port is the CDP port this Bridge is connected to. Stored so every
+	// ownership call can be scoped to the correct Chrome instance when
+	// multiple instances run on different ports.
+	Port int
 
 	mu       sync.Mutex
 	sessions map[string]string // targetID -> sessionID cache
@@ -23,6 +27,9 @@ type Bridge struct {
 // DialBridge connects to Chrome on port, loads the shared registry, and
 // returns a ready bridge. agent names the owning agent for bookkeeping.
 func DialBridge(ctx context.Context, port int, agent string) (*Bridge, error) {
+	if port <= 0 {
+		port = 9222
+	}
 	cli, err := Connect(ctx, port)
 	if err != nil {
 		return nil, err
@@ -33,7 +40,7 @@ func DialBridge(ctx context.Context, port int, agent string) (*Bridge, error) {
 		cli.Close()
 		return nil, err
 	}
-	b := &Bridge{Client: cli, Registry: reg, ID: id, Agent: agent, sessions: map[string]string{}}
+	b := &Bridge{Client: cli, Registry: reg, ID: id, Agent: agent, Port: port, sessions: map[string]string{}}
 	return b, nil
 }
 
@@ -71,8 +78,8 @@ func (b *Bridge) ReleaseAll(ctx context.Context) error {
 		return err
 	}
 	for _, t := range targets {
-		if b.Registry.OwnershipOf(t.ID) == OwnMine {
-			_ = b.Registry.Release(t.ID)
+		if b.Registry.OwnershipOf(b.Port, t.ID) == OwnMine {
+			_ = b.Registry.Release(b.Port, t.ID)
 		}
 	}
 	return nil
@@ -88,5 +95,5 @@ func (b *Bridge) GCRegistry(ctx context.Context) {
 	for _, t := range targets {
 		live[t.ID] = true
 	}
-	b.Registry.GC(live)
+	b.Registry.GC(b.Port, live)
 }

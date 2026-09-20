@@ -15,26 +15,44 @@ import (
 	"github.com/tjcoder-labs/cli/internal/client"
 )
 
-// browserBridgeState caches the bridge across tool calls for this process.
+// browserBridgeState caches bridges per port so multi-profile workflows
+// don't force-reconnect every call. Key is the CDP port number.
 var (
-	bridgeMu   sync.Mutex
-	bridgeInst *browser.Bridge
+	bridgeMu    sync.Mutex
+	bridgeInsts = map[int]*browser.Bridge{}
 )
 
-// getBridge dials (once) and returns the process-wide bridge. agent names the
-// owning agent for tab registry bookkeeping.
+// getBridge dials (once per port) and returns the process-wide bridge for
+// that CDP port. Different ports = different Chrome profiles = different
+// bridges, with ownership records keyed by "port:targetID".
 func getBridge(ctx context.Context, port int, agent string) (*browser.Bridge, error) {
+	if port <= 0 {
+		port = 9222
+	}
 	bridgeMu.Lock()
 	defer bridgeMu.Unlock()
-	if bridgeInst != nil {
-		return bridgeInst, nil
+	if b, ok := bridgeInsts[port]; ok && b != nil {
+		return b, nil
 	}
 	b, err := browser.DialBridge(ctx, port, agent)
 	if err != nil {
 		return nil, err
 	}
-	bridgeInst = b
+	bridgeInsts[port] = b
 	return b, nil
+}
+
+// dropBridge evicts the cached bridge for a port (e.g. after stop_chrome).
+func dropBridge(port int) {
+	if port <= 0 {
+		port = 9222
+	}
+	bridgeMu.Lock()
+	defer bridgeMu.Unlock()
+	if b, ok := bridgeInsts[port]; ok && b != nil {
+		_ = b.Close()
+		delete(bridgeInsts, port)
+	}
 }
 
 // browserBridgeTool exposes full Chrome control over CDP.
@@ -42,9 +60,9 @@ type browserBridgeTool struct{}
 
 func (browserBridgeTool) Definition() client.ToolDefinition {
 	props := map[string]any{
-		"action":        stringProp("Operation to perform. One of: list_tabs, new_tab, close_tab, claim_tab, release_tab, release_all, navigate, reload, back, forward, evaluate, click, type, press_key, wait_for, get_dom, screenshot, get_cookies, set_cookie, delete_cookie, clear_site_data, storage_get, storage_set, storage_keys, emulate, intercept_enable, intercept_disable."),
-		"tab_id":        stringProp("Target tab ID. Required for most actions except list_tabs/new_tab. Use list_tabs to find IDs. Tabs you create via new_tab are auto-owned."),
-		"url":           stringProp("URL for new_tab / navigate."),
+		"action":        stringProp("Operation to perform. One of: list_tabs, new_tab, close_tab, claim_tab, release_tab, release_all, navigate, reload, back, forward, evaluate, click, type, press_key, wait_for, get_dom, screenshot, get_cookies, set_cookie, delete_cookie, clear_site_data, storage_get, storage_set, storage_keys, emulate, intercept_enable, intercept_disable, start_chrome, stop_chrome, chrome_status."),
+		"tab_id":        stringProp("Target tab ID. Required for most actions except list_tabs/new_tab/start_chrome/stop_chrome/chrome_status. Use list_tabs to find IDs. Tabs you create via new_tab are auto-owned."),
+		"url":           stringProp("URL for new_tab / navigate. Also used as the start page for start_chrome if provided."),
 		"selector":      stringProp("CSS selector, supports shadow piercing with '>>>' e.g. 'my-app >>> #inner'. Used by click/type/wait_for/get_dom."),
 		"text":          stringProp("Text for 'type', expression for 'evaluate', key for 'press_key' (e.g. 'Enter', 'ctrl+a')."),
 		"expression":    stringProp("JavaScript to evaluate (action=evaluate). Alias of text."),
@@ -72,6 +90,11 @@ func (browserBridgeTool) Definition() client.ToolDefinition {
 		// Control
 		"port":  numberProp("CDP debug port (default 9222)."),
 		"force": boolProp("claim_tab: take a tab owned by another session."),
+		// Chrome lifecycle
+		"user_data_dir": stringProp("start_chrome: profile directory. Defaults to ~/.chrome-debug for port 9222, ~/.chrome-debug-<port> otherwise."),
+		"chrome_bin":    stringProp("start_chrome: explicit chrome binary path; auto-detects google-chrome/chromium if omitted."),
+		"headless":      boolProp("start_chrome: pass --headless=new."),
+		"extra_args":    stringProp("start_chrome: additional chrome CLI args, space-separated."),
 	}
 	return client.ToolDefinition{
 		Type: "function",
@@ -112,6 +135,10 @@ func (browserBridgeTool) Execute(ctx context.Context, raw json.RawMessage, env E
 		Timezone     string `json:"timezone"`
 		Port         int    `json:"port"`
 		Force        bool   `json:"force"`
+		UserDataDir  string `json:"user_data_dir"`
+		ChromeBin    string `json:"chrome_bin"`
+		Headless     bool   `json:"headless"`
+		ExtraArgs    string `json:"extra_args"`
 	}
 	if err := json.Unmarshal(raw, &a); err != nil {
 		return Result{}, err
@@ -125,6 +152,80 @@ func (browserBridgeTool) Execute(ctx context.Context, raw json.RawMessage, env E
 	if env.SessionState != nil && env.SessionState.CurrentAgent != "" {
 		agent = env.SessionState.CurrentAgent
 	}
+
+	// Lifecycle actions run without an existing connection: they CREATE the
+	// connection by starting Chrome, or tear one down.
+	switch a.Action {
+	case "start_chrome":
+		opts := browser.ChromeLaunch{
+			Port:        a.Port,
+			UserDataDir: a.UserDataDir,
+			ChromeBin:   a.ChromeBin,
+			Headless:    a.Headless,
+		}
+		if a.ExtraArgs != "" {
+			opts.ExtraArgs = strings.Fields(a.ExtraArgs)
+		}
+		if a.URL != "" {
+			opts.ExtraArgs = append(opts.ExtraArgs, a.URL)
+		}
+		if opts.Port <= 0 {
+			opts.Port = 9222
+		}
+		pid, dataDir, err := browser.StartChrome(ctx, opts)
+		if err != nil {
+			return Result{}, err
+		}
+		if err := browser.WaitForChrome(ctx, opts.Port, 15*time.Second); err != nil {
+			return Result{}, fmt.Errorf("chrome started (pid %d, profile %s) but CDP not ready: %w", pid, dataDir, err)
+		}
+		msg := fmt.Sprintf("chrome started: port=%d pid=%d profile=%s", opts.Port, pid, dataDir)
+		return Result{Content: msg, Preview: msg}, nil
+
+	case "stop_chrome":
+		port := a.Port
+		if port <= 0 {
+			port = 9222
+		}
+		if err := browser.StopChrome(ctx, port); err != nil {
+			return Result{}, err
+		}
+		dropBridge(port)
+		msg := fmt.Sprintf("chrome on port %d shut down", port)
+		return Result{Content: msg, Preview: msg}, nil
+
+	case "chrome_status":
+		port := a.Port
+		if port <= 0 {
+			port = 9222
+		}
+		listening := browser.IsPortListening(port)
+		if !listening {
+			return Result{Content: fmt.Sprintf("port %d: nothing listening", port), Preview: "down"}, nil
+		}
+		ctx2, cancel := context.WithTimeout(ctx, 2*time.Second)
+		defer cancel()
+		c, err := browser.Connect(ctx2, port)
+		if err != nil {
+			return Result{Content: fmt.Sprintf("port %d: listening, but CDP failed: %v", port, err), Preview: "unreachable"}, nil
+		}
+		defer c.Close()
+		targets, err := c.ListTargets(ctx2)
+		if err != nil {
+			return Result{Content: fmt.Sprintf("port %d: CDP up, list failed: %v", port, err), Preview: "partial"}, nil
+		}
+		nPages := 0
+		for _, t := range targets {
+			if t.Type == "page" {
+				nPages++
+			}
+		}
+		return Result{
+			Content: fmt.Sprintf("port %d: up; %d page tabs, %d total targets", port, nPages, len(targets)),
+			Preview: "up",
+		}, nil
+	}
+
 	b, err := getBridge(ctx, a.Port, agent)
 	if err != nil {
 		return Result{}, err
@@ -134,7 +235,7 @@ func (browserBridgeTool) Execute(ctx context.Context, raw json.RawMessage, env E
 
 	// Helper to resolve a session for an owned tab.
 	sessionFor := func(tabID string) (string, error) {
-		if err := b.Registry.RequireOwned(tabID); err != nil {
+		if err := b.Registry.RequireOwned(b.Port, tabID); err != nil {
 			return "", err
 		}
 		return b.SessionFor(ctx, tabID)
@@ -151,7 +252,7 @@ func (browserBridgeTool) Execute(ctx context.Context, raw json.RawMessage, env E
 			if t.Type != "page" {
 				continue // skip iframes/service workers in the listing
 			}
-			owner := b.Registry.OwnershipOf(t.ID)
+			owner := b.Registry.OwnershipOf(b.Port, t.ID)
 			fmt.Fprintf(&sb, "%s\t[%s]\t%s\t%s\n", t.ID, owner, t.Title, t.URL)
 		}
 		out := sb.String()
@@ -165,7 +266,7 @@ func (browserBridgeTool) Execute(ctx context.Context, raw json.RawMessage, env E
 		if err != nil {
 			return Result{}, err
 		}
-		_ = b.Registry.Register(id, agent, false)
+		_ = b.Registry.Register(b.Port, id, agent, false)
 		msg := fmt.Sprintf("created tab %s (owned by this session)", id)
 		return Result{Content: msg, Preview: msg}, nil
 
@@ -173,7 +274,7 @@ func (browserBridgeTool) Execute(ctx context.Context, raw json.RawMessage, env E
 		if a.TabID == "" {
 			return Result{}, fmt.Errorf("tab_id required")
 		}
-		if err := b.Registry.Claim(a.TabID, agent, a.Force); err != nil {
+		if err := b.Registry.Claim(b.Port, a.TabID, agent, a.Force); err != nil {
 			return Result{}, err
 		}
 		msg := fmt.Sprintf("claimed tab %s", a.TabID)
@@ -183,7 +284,7 @@ func (browserBridgeTool) Execute(ctx context.Context, raw json.RawMessage, env E
 		if a.TabID == "" {
 			return Result{}, fmt.Errorf("tab_id required")
 		}
-		if err := b.Registry.Release(a.TabID); err != nil {
+		if err := b.Registry.Release(b.Port, a.TabID); err != nil {
 			return Result{}, err
 		}
 		return Result{Content: "released " + a.TabID, Preview: "released"}, nil
@@ -198,13 +299,13 @@ func (browserBridgeTool) Execute(ctx context.Context, raw json.RawMessage, env E
 		if a.TabID == "" {
 			return Result{}, fmt.Errorf("tab_id required")
 		}
-		if err := b.Registry.RequireOwned(a.TabID); err != nil {
+		if err := b.Registry.RequireOwned(b.Port, a.TabID); err != nil {
 			return Result{}, err
 		}
 		if err := b.Client.CloseTab(ctx, a.TabID); err != nil {
 			return Result{}, err
 		}
-		_ = b.Registry.Release(a.TabID)
+		_ = b.Registry.Release(b.Port, a.TabID)
 		return Result{Content: "closed " + a.TabID, Preview: "closed"}, nil
 
 	case "navigate":

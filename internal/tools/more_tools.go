@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/tjcoder-labs/cli/internal/client"
+	"github.com/tjcoder-labs/cli/internal/reminders"
 )
 
 // validateFetchURL rejects URLs that resolve to loopback, private,
@@ -293,6 +294,9 @@ func validateCronExpr(expr string) error {
 }
 
 // reminderTool stores a reminder and optionally installs a cron entry.
+// When a prompt is supplied, the reminder becomes a *schedule*: each
+// cron tick re-invokes the binary headlessly via `coder schedule run
+// <id>` instead of echoing a message to a log file.
 type reminderTool struct{}
 
 func (reminderTool) Definition() client.ToolDefinition {
@@ -300,11 +304,15 @@ func (reminderTool) Definition() client.ToolDefinition {
 		Type: "function",
 		Function: client.FunctionDefinition{
 			Name:        "set_reminder",
-			Description: "Schedule a reminder. Provide a cron expression in 'cron_expr' (standard crontab) and a message. Optionally install into the user's crontab by setting install_cron=true.",
-			Parameters: objectSchema([]string{"cron_expr", "message"}, map[string]any{
+			Description: "Schedule a reminder or a self-reinvoking schedule. Provide a cron expression in 'cron_expr' (standard 5-field crontab). For a simple reminder, provide 'message'. For a schedule that re-runs the agent headlessly each tick, provide 'prompt' (and optionally 'agent'). 'platform' + 'daily_cap' optionally cap like actions per day. Set install_cron=true to append a crontab entry. When the TUI is open, a due schedule's prompt is injected into the live conversation as an attributed message and runs in-chat; when closed, it runs headlessly via cron.",
+			Parameters: objectSchema([]string{"cron_expr"}, map[string]any{
 				"cron_expr":    stringProp("Cron expression (5 fields) describing when to run."),
-				"message":      stringProp("Reminder message text."),
-				"install_cron": boolProp("If true, attempt to append a crontab entry for this reminder."),
+				"message":      stringProp("Reminder message text (for a passive reminder)."),
+				"prompt":       stringProp("Prompt to run the agent with each tick (turns this into a schedule)."),
+				"agent":        stringProp("Agent to use when re-invoking for a schedule (default: social-researcher)."),
+				"platform":     stringProp("Social platform whose like actions the cap counts (e.g. linkedin)."),
+				"daily_cap":    numberProp("Max like actions per day for this schedule before it skips (0 = unlimited)."),
+				"install_cron": boolProp("If true, attempt to append a crontab entry for this reminder/schedule."),
 			}),
 		},
 	}
@@ -314,58 +322,105 @@ func (reminderTool) Execute(_ context.Context, raw json.RawMessage, env ExecEnv)
 	var args struct {
 		CronExpr    string `json:"cron_expr"`
 		Message     string `json:"message"`
+		Prompt      string `json:"prompt"`
+		Agent       string `json:"agent"`
+		Platform    string `json:"platform"`
+		DailyCap    int    `json:"daily_cap"`
 		InstallCron bool   `json:"install_cron"`
 	}
 	if err := json.Unmarshal(raw, &args); err != nil {
 		return Result{}, err
 	}
-	if args.CronExpr == "" || args.Message == "" {
-		return Result{}, fmt.Errorf("cron_expr and message are required")
+	if args.CronExpr == "" {
+		return Result{}, fmt.Errorf("cron_expr is required")
+	}
+	if args.Message == "" && args.Prompt == "" {
+		return Result{}, fmt.Errorf("message or prompt is required")
 	}
 	if err := validateCronExpr(args.CronExpr); err != nil {
 		return Result{}, err
 	}
-	// Persist to workspace reminders file
-	dir := filepath.Join(env.WorkspaceRoot, ".ergo-cli-go")
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return Result{}, err
+	if args.Prompt != "" && strings.ContainsAny(args.Prompt, "\n\r") {
+		return Result{}, fmt.Errorf("prompt must not contain newlines when used in a schedule")
 	}
-	path := filepath.Join(dir, "reminders.json")
-	var list []map[string]any
-	if data, err := os.ReadFile(path); err == nil {
-		_ = json.Unmarshal(data, &list)
+	if args.Agent == "" {
+		args.Agent = "social-researcher"
 	}
-	entry := map[string]any{
-		"cron_expr":  args.CronExpr,
-		"message":    args.Message,
-		"created_at": time.Now().Format(time.RFC3339),
-	}
-	list = append(list, entry)
-	out, _ := json.MarshalIndent(list, "", "  ")
-	if err := os.WriteFile(path, out, 0o600); err != nil {
+
+	store := reminders.NewStore()
+	_, entry, err := store.Create(env.WorkspaceRoot, reminders.CreateInput{
+		CronExpr:    args.CronExpr,
+		Message:     args.Message,
+		InstallCron: args.InstallCron,
+		Prompt:      args.Prompt,
+		Agent:       args.Agent,
+		Platform:    args.Platform,
+		DailyCap:    args.DailyCap,
+	})
+	if err != nil {
 		return Result{}, err
 	}
 
 	if args.InstallCron {
-		if strings.ContainsAny(args.Message, "\n\r") {
-			return Result{}, fmt.Errorf("reminder message must not contain newlines when installing cron")
-		}
-		// Attempt to append a crontab line that writes the message to reminders.log
-		cronLine := fmt.Sprintf("%s echo '%s' >> %s/reminders.log", args.CronExpr, strings.ReplaceAll(args.Message, "'", "'\\''"), dir)
-		// read existing crontab
-		cmd := exec.Command("crontab", "-l")
-		existing, err := cmd.Output()
-		if err != nil {
-			existing = []byte{}
-		}
-		newCrontab := string(existing) + "\n" + cronLine + "\n"
-		set := exec.Command("crontab", "-")
-		set.Stdin = strings.NewReader(newCrontab)
-		if err := set.Run(); err != nil {
-			return Result{}, fmt.Errorf("failed to install crontab: %v", err)
+		if err := installCron(env, entry); err != nil {
+			return Result{}, err
 		}
 	}
 
-	msg := fmt.Sprintf("scheduled reminder and saved to %s", path)
+	path := filepath.Join(env.WorkspaceRoot, ".ergo-cli-go", "reminders.json")
+	kind := "reminder"
+	if entry.Prompt != "" {
+		kind = "schedule"
+	}
+	msg := fmt.Sprintf("scheduled %s %s (cron=%s) and saved to %s", kind, entry.ID, entry.CronExpr, path)
+	if entry.Prompt != "" {
+		msg += fmt.Sprintf("; each tick runs: coder schedule run %s", entry.ID)
+	}
+	if entry.DailyCap > 0 {
+		msg += fmt.Sprintf("; daily like cap: %d", entry.DailyCap)
+	}
 	return Result{Content: msg, Preview: msg}, nil
+}
+
+// installCron appends a crontab line for the given reminder/schedule.
+// For a passive reminder it echoes the message into reminders.log (the
+// legacy behavior). For a schedule it re-invokes the binary headlessly
+// via `coder schedule run <id>`. The binary path is resolved from the
+// running process so the cron line is correct regardless of how the
+// program was launched.
+func installCron(env ExecEnv, entry reminders.Entry) error {
+	dir := filepath.Join(env.WorkspaceRoot, ".ergo-cli-go")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+
+	var cronLine string
+	if entry.Prompt != "" {
+		bin, err := os.Executable()
+		if err != nil {
+			return fmt.Errorf("resolve executable path: %w", err)
+		}
+		// Quote the workspace root for safe shell interpolation.
+		ws := strings.ReplaceAll(env.WorkspaceRoot, "'", "'\\''")
+		cronLine = fmt.Sprintf("%s cd '%s' && '%s' schedule run %s >> '%s/schedule.log' 2>&1",
+			entry.CronExpr, ws, bin, entry.ID, dir)
+	} else {
+		if strings.ContainsAny(entry.Message, "\n\r") {
+			return fmt.Errorf("reminder message must not contain newlines when installing cron")
+		}
+		cronLine = fmt.Sprintf("%s echo '%s' >> %s/reminders.log", entry.CronExpr, strings.ReplaceAll(entry.Message, "'", "'\\''"), dir)
+	}
+
+	cmd := exec.Command("crontab", "-l")
+	existing, err := cmd.Output()
+	if err != nil {
+		existing = []byte{}
+	}
+	newCrontab := string(existing) + "\n" + cronLine + "\n"
+	set := exec.Command("crontab", "-")
+	set.Stdin = strings.NewReader(newCrontab)
+	if err := set.Run(); err != nil {
+		return fmt.Errorf("failed to install crontab: %v", err)
+	}
+	return nil
 }
