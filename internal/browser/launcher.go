@@ -113,10 +113,18 @@ func StartChrome(ctx context.Context, opts ChromeLaunch) (int, string, error) {
 	}
 	if opts.Headless {
 		args = append(args, "--headless=new", "--disable-gpu")
+	} else {
+		// Open an actual window. Without this Chrome may launch fully
+		// headless (no browser window) even though --headless wasn't passed,
+		// particularly when the parent isn't attached to a display session.
+		args = append(args, "--new-window")
 	}
 	args = append(args, opts.ExtraArgs...)
 
 	cmd := exec.CommandContext(ctx, bin, args...)
+	// Ensure DISPLAY / Wayland envs are inherited. Setsid alone doesn't drop
+	// environment, but an explicit env merge keeps behavior predictable.
+	cmd.Env = os.Environ()
 	// Detach so the agent process can exit without killing Chrome.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	cmd.Stdout = nil
