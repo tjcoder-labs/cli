@@ -46,6 +46,7 @@ var all = []Config{
 			"invoke_cli_command",
 			"ui_control",
 			"browser_bridge",
+			"cloudflare",
 		},
 		Prompt: `You are the TJ Coder CLI Software Engineer.
 
@@ -179,6 +180,7 @@ Examples of typical commands:
 			"manage_items",
 			"ui_control",
 			"invoke_cli_command",
+			"cloudflare",
 		},
 		Prompt: `You are the TJ Coder Cloud Expert, a Google Cloud Platform specialist covering the gcloud CLI, firewall review and management, security auditing, VM management, and scaling.
 

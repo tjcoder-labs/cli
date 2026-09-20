@@ -33,6 +33,11 @@ type AppConfig struct {
 	// Agent is the default agent to select on launch. An empty
 	// string means "use the first agent".
 	Agent string `json:"agent,omitempty"`
+	// CompactModel is the model used for /compact (transcript
+	// summarization). When empty, the current model is used. This
+	// lets the user pick a cheaper / faster model for compaction
+	// while keeping a more capable model for the main conversation.
+	CompactModel string `json:"compactModel,omitempty"`
 	// MCPServers is the persisted set of Model Context Protocol
 	// integrations. Each entry maps a stable name (used by /mcp
 	// add|list|remove and by the mcp_{server}_{tool} tool

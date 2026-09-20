@@ -85,6 +85,7 @@ func NewRegistry(provider client.Provider) *Registry {
 		browserBridgeTool{},
 		interactionLogTool{},
 		researchNoteTool{},
+		cloudflareTool{},
 	} {
 		r.tools[tool.Definition().Function.Name] = tool
 	}

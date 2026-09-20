@@ -161,11 +161,13 @@ var chromaToHex = map[chroma.TokenType]string{
 	chroma.LiteralStringBacktick: "#A6E3A1",
 	chroma.LiteralStringChar:    "#A6E3A1",
 	chroma.LiteralStringDoc:     "#968CB2",
+	chroma.LiteralStringDouble:  "#A6E3A1",
 	chroma.LiteralStringEscape:  "#C73CDC",
 	chroma.LiteralStringHeredoc:  "#A6E3A1",
 	chroma.LiteralStringInterpol: "#C4A5FF",
 	chroma.LiteralStringOther:   "#A6E3A1",
 	chroma.LiteralStringRegex:   "#C73CDC",
+	chroma.LiteralStringSingle:  "#A6E3A1",
 	chroma.LiteralStringSymbol:  "#A6E3A1",
 	// Operators / punctuation
 	chroma.Operator:   "#968CB2",

@@ -187,6 +187,7 @@ type App struct {
 	agents                 []agent.Config
 	currentAgent           agent.Config
 	currentModel           string
+	previousAgentDefaultModel string // tracks the last agent's default model so switching agents can swap models
 	models                 []client.ModelInfo
 	enabledTools           map[string]bool
 	history                []client.Message
@@ -1145,6 +1146,16 @@ func (a *App) refreshStatusIndicator() {
 	if agentName == "" {
 		agentName = "coder"
 	}
+	modelName := a.currentModel
+	if modelName == "" {
+		modelName = "—"
+	}
+	// Shorten the model name for the status bar so it doesn't eat
+	// horizontal space. Keep the last meaningful segment after any
+	// "/" prefix.
+	if idx := strings.LastIndex(modelName, "/"); idx >= 0 && idx < len(modelName)-1 {
+		modelName = modelName[idx+1:]
+	}
 	state := a.agentStateLabel()
 	stateColor := a.palette.HexLavender
 	stateBold := false
@@ -1164,8 +1175,9 @@ func (a *App) refreshStatusIndicator() {
 	}
 	a.statusBar.SetTextAlign(tview.AlignLeft)
 	a.statusBar.SetText(fmt.Sprintf(
-		"[%s]agent:[-] [%s::b]%s[-:-:-] · %s   [%s][Ctl+A][-] switch agent",
+		"[%s]agent:[-] [%s::b]%s[-:-:-] [%s]·[-] [%s]model:[-] [%s::b]%s[-:-:-] · %s   [%s][Ctl+A][-] switch agent",
 		a.palette.HexDim, a.palette.HexLavender, agentName,
+		a.palette.HexDim, a.palette.HexDim, a.palette.HexLavender, modelName,
 		stateTag, a.palette.HexLavender,
 	))
 }
@@ -1353,22 +1365,18 @@ func (a *App) renderMetaBar() string {
 	// progress bar in the primary tint color and replace the numeric portion
 	// with the bar to keep the context line compact and live-updating.
 	if contextText != "unavailable" {
-		re := regexp.MustCompile(`(\d+)\s*/\s*(\d+)`)
+		// Match numbers with optional K/M suffixes, e.g. "12K / 127K" or "3% / 2M"
+		re := regexp.MustCompile(`([\d.]+)\s*([KM]?)\s*/\s*([\d.]+)\s*([KM]?)`)
 		if m := re.FindStringSubmatchIndex(contextText); m != nil {
-			// m[0], m[1] are the matched span; m[2], m[3] are group 1 span; m[4], m[5] group 2
 			usedStr := contextText[m[2]:m[3]]
-			totalStr := contextText[m[4]:m[5]]
-			used := 0
-			total := 0
-			fmt.Sscanf(usedStr, "%d", &used)
-			fmt.Sscanf(totalStr, "%d", &total)
+			usedSuffix := contextText[m[4]:m[5]]
+			totalStr := contextText[m[6]:m[7]]
+			totalSuffix := contextText[m[8]:m[9]]
+			used := parseTokenCount(usedStr, usedSuffix)
+			total := parseTokenCount(totalStr, totalSuffix)
 			if total > 0 {
 				bar := a.renderProgressBar(used, total, 28)
-				// Do not include any other context/token data after the tokens phrase.
-				// The progress bar already renders the percent and "of <total> tokens." phrase.
 				contextText = bar
-			} else {
-				// leave as-is on parse failure
 			}
 		}
 	}
@@ -1459,8 +1467,7 @@ func (a *App) renderProgressBar(used, total, _width int) string {
 	b.WriteString("]")
 
 	percent := int(pct * 100)
-	// Format total with comma separators for human readability
-	formattedTotal := formatWithCommas(total)
+	formattedTotal := formatTokensCompactTUI(total)
 	return fmt.Sprintf("%s %d%% of %s tokens.", b.String(), percent, formattedTotal)
 }
 
@@ -1483,6 +1490,42 @@ func formatWithCommas(n int) string {
 		parts = append([]string{s}, parts...)
 	}
 	return strings.Join(parts, ",")
+}
+
+// parseTokenCount parses a numeric string with an optional K/M suffix
+// into an integer token count. Used by renderMetaBar to extract
+// used/total from context strings like "~12K / 127K used".
+func parseTokenCount(num, suffix string) int {
+	f := 0.0
+	fmt.Sscanf(num, "%f", &f)
+	switch strings.ToUpper(suffix) {
+	case "K":
+		f *= 1000
+	case "M":
+		f *= 1_000_000
+	}
+	return int(f)
+}
+
+// formatTokensCompactTUI renders a token count using K/M suffixes.
+// Mirrors tooling.formatTokensCompact but lives in the tui package
+// to avoid a cross-package dependency.
+func formatTokensCompactTUI(n int) string {
+	if n < 1000 {
+		return fmt.Sprintf("%d", n)
+	}
+	if n < 1_000_000 {
+		v := float64(n) / 1000
+		if v == float64(int(v)) {
+			return fmt.Sprintf("%dK", int(v))
+		}
+		return fmt.Sprintf("%.1fK", v)
+	}
+	v := float64(n) / 1_000_000
+	if v == float64(int(v)) {
+		return fmt.Sprintf("%dM", int(v))
+	}
+	return fmt.Sprintf("%.1fM", v)
 }
 
 func (a *App) progressGlyph() string {
@@ -1757,12 +1800,53 @@ func (a *App) openMemoryModal() {
 }
 
 // openConfigModal shows a small JSON editor preloaded with the
-// current AppConfig. The user can edit values in place and hit
-// "Save" to persist; "Cancel" discards changes. Validation errors
-// are surfaced in the activity log rather than as a popup so the
-// editor stays focused for quick corrections.
+// current AppConfig, plus a read-only defaults panel showing the
+// live runtime settings (agent, model, provider, host, etc.).
+// The user can edit values in place and hit "Save" to persist;
+// "Cancel" discards changes. Validation errors are surfaced in the
+// activity log rather than as a popup so the editor stays focused
+// for quick corrections.
 func (a *App) openConfigModal() {
 	bg := a.palette.BgInput
+
+	// Build a read-only info panel showing live runtime defaults.
+	infoView := tview.NewTextView().SetDynamicColors(true)
+	infoView.SetBackgroundColor(bg)
+	infoView.SetTextColor(a.palette.TextDim)
+	infoView.SetBorder(true)
+	infoView.SetTitle(" Current Defaults ")
+	infoView.SetBorderColor(a.palette.TextDim)
+
+	agentName := a.currentAgent.Name
+	if agentName == "" {
+		agentName = "coder"
+	}
+	modelName := a.currentModel
+	if modelName == "" {
+		modelName = "(agent default)"
+	}
+	compactModel := a.config.CompactModel
+	if compactModel == "" {
+		compactModel = "(uses current model)"
+	}
+	providerURL := a.provider.BaseURL()
+
+	infoText := fmt.Sprintf(
+		" [%s]agent[-]   [%s::b]%s[-:-:-]\n"+
+			" [%s]model[-]   [%s::b]%s[-:-:-]\n"+
+			" [%s]compact[-] [%s::b]%s[-:-:-]\n"+
+			" [%s]provider[-] [%s::b]%s[-:-:-]\n"+
+			" [%s]toolMax[-] [%s::b]%d[-:-:-]\n"+
+			" [%s]path[-]   [%s]%s[-]",
+		a.palette.HexDim, a.palette.HexLavender, agentName,
+		a.palette.HexDim, a.palette.HexLavender, modelName,
+		a.palette.HexDim, a.palette.HexLavender, compactModel,
+		a.palette.HexDim, a.palette.HexLavender, providerURL,
+		a.palette.HexDim, a.palette.HexLavender, a.config.ToolMax,
+		a.palette.HexDim, a.palette.HexDim, a.configPath(),
+	)
+	infoView.SetText(infoText)
+
 	editor := tview.NewTextArea()
 	editor.SetBackgroundColor(bg)
 	editor.SetText(formatConfigJSON(a.config), true)
@@ -1770,8 +1854,8 @@ func (a *App) openConfigModal() {
 	help := tview.NewTextView().SetDynamicColors(true)
 	help.SetBackgroundColor(bg)
 	help.SetTextColor(a.palette.TextDim)
-	help.SetText(fmt.Sprintf(" [%s]%s[-]   [%s]ctrl+s[-] save · [%s]esc[-] cancel · toolMax caps tool steps/turn",
-		a.palette.HexFaint, a.configPath(), a.palette.HexLavender, a.palette.HexLavender))
+	help.SetText(fmt.Sprintf(" [%s]ctrl+s[-] save · [%s]esc[-] cancel · [%s]compactModel[-] overrides /compact model · [%s]toolMax[-] caps tool steps/turn",
+		a.palette.HexLavender, a.palette.HexLavender, a.palette.HexLavender, a.palette.HexLavender))
 
 	// capture by value so Cancel always closes over the editor it
 	// opened, even after a future Save replaces a.config.
@@ -1790,14 +1874,16 @@ func (a *App) openConfigModal() {
 		}
 		a.config = parsed
 		a.runner.MaxSteps = parsed.ToolMax
-		a.appendActivity(fmt.Sprintf("Saved config to %s (toolMax=%d)", a.configPath(), parsed.ToolMax))
+		a.appendActivity(fmt.Sprintf("Saved config to %s (toolMax=%d, compactModel=%s)", a.configPath(), parsed.ToolMax, parsed.CompactModel))
 		closeModal()
 	}
 
 	body := tview.NewFlex().SetDirection(tview.FlexRow).
-		AddItem(help, 1, 0, false).
+		AddItem(infoView, 7, 0, false).
 		AddItem(spacerBox(bg), 1, 0, false).
-		AddItem(editor, 0, 1, true)
+		AddItem(editor, 0, 1, true).
+		AddItem(spacerBox(bg), 1, 0, false).
+		AddItem(help, 1, 0, false)
 	body.SetBackgroundColor(bg)
 
 	// Ctrl+S saves, Esc cancels. We wire these on the TextArea's
@@ -2378,6 +2464,12 @@ func (a *App) compactHistory(parts []string) {
 	}
 
 	model := a.currentModel
+	// Honor the CompactModel config override if set — lets the user
+	// use a cheaper / faster model for summarization while keeping
+	// a more capable model for the main conversation.
+	if a.config.CompactModel != "" {
+		model = a.config.CompactModel
+	}
 	if len(parts) > 1 {
 		model = parts[1]
 	}
@@ -3702,10 +3794,14 @@ func (a *App) openAgentModal() {
 		list.AddItem(agentCfg.Name, agentCfg.Title, 0, func() {
 			a.currentAgent = agentCfg
 			a.resetEnabledTools(agentCfg.ToolNames)
-			if a.currentModel == "" {
+			// If no explicit model was chosen by the user, adopt the
+			// agent's DefaultModel so switching agents also switches
+			// to the right model family.
+			if agentCfg.DefaultModel != "" && (a.currentModel == "" || a.currentModel == a.previousAgentDefaultModel) {
 				a.currentModel = agentCfg.DefaultModel
 			}
-			a.refreshHeader()
+			a.previousAgentDefaultModel = agentCfg.DefaultModel
+			a.refreshFooter()
 			a.appendActivity("Selected agent: " + agentCfg.Name)
 			a.appendActivity("Enabled tools: " + strings.Join(a.enabledToolList(), ", "))
 			a.saveSession()
@@ -3732,7 +3828,7 @@ func (a *App) openModelModal() {
 		}
 		list.AddItem(label, item.Family, 0, func() {
 			a.currentModel = item.Name
-			a.refreshHeader()
+			a.refreshFooter()
 			a.appendActivity("Selected model: " + item.Name)
 			// Remember the pick as the shared cross-mode model so it
 			// persists across program sessions and workspaces (and is

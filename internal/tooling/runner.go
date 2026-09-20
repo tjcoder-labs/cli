@@ -423,7 +423,7 @@ func (r *Runner) Run(ctx context.Context, history []client.Message, prompt strin
 					pctUsed := float64(estTok) / float64(contextWindow) * 100.0
 					onEvent(Event{
 						Type: EventContext,
-						Text: fmt.Sprintf("ctx: ~%d / %d used (%.1f%%, est), remaining=%d", estTok, contextWindow, pctUsed, remaining),
+						Text: fmt.Sprintf("ctx: ~%s / %s used (%.1f%%, est), remaining=%s", formatTokensCompact(estTok), formatTokensCompact(contextWindow), pctUsed, formatTokensCompact(remaining)),
 					})
 				}
 			}
@@ -636,6 +636,28 @@ func loadCoderPrompt(workspaceRoot string) string {
 	return text
 }
 
+// formatTokensCompact renders a token count using K/M suffixes to
+// conserve horizontal space in the context bar. Values under 1000
+// are shown as-is; thousands use "nK" (one decimal if not whole);
+// millions use "nM".
+func formatTokensCompact(n int) string {
+	if n < 1000 {
+		return fmt.Sprintf("%d", n)
+	}
+	if n < 1_000_000 {
+		v := float64(n) / 1000
+		if v == float64(int(v)) {
+			return fmt.Sprintf("%dK", int(v))
+		}
+		return fmt.Sprintf("%.1fK", v)
+	}
+	v := float64(n) / 1_000_000
+	if v == float64(int(v)) {
+		return fmt.Sprintf("%dM", int(v))
+	}
+	return fmt.Sprintf("%.1fM", v)
+}
+
 // estimateContextChars approximates history size in characters (for use
 // with chars/4 = approximate tokens). We measure role + content + the
 // encoded tool_calls JSON so the estimate grows in step with what's
@@ -654,12 +676,12 @@ func estimateContextChars(history []client.Message) int {
 func formatContextUsage(msg client.Message, contextWindow int) string {
 	if msg.PromptEvalCount <= 0 && msg.EvalCount <= 0 {
 		if contextWindow > 0 {
-			return fmt.Sprintf("ctx: ? / %d (usage unavailable)", contextWindow)
+			return fmt.Sprintf("ctx: ? / %s (usage unavailable)", formatTokensCompact(contextWindow))
 		}
 		return "ctx: unavailable"
 	}
 	if contextWindow <= 0 {
-		return fmt.Sprintf("ctx: used≈%d tok, output=%d tok (window unknown)", msg.PromptEvalCount, msg.EvalCount)
+		return fmt.Sprintf("ctx: used≈%s tok, output=%s tok (window unknown)", formatTokensCompact(msg.PromptEvalCount), formatTokensCompact(msg.EvalCount))
 	}
 	used := msg.PromptEvalCount
 	remaining := contextWindow - used
@@ -669,5 +691,7 @@ func formatContextUsage(msg client.Message, contextWindow int) string {
 	pctUsed := float64(used) / float64(contextWindow) * 100.0
 	// Provide a compact human-readable context string. The UI expects the
 	// leading numeric "used / total" pair so it can render a progress bar.
-	return fmt.Sprintf("ctx: %d / %d used (%.1f%%), remaining=%d, output=%d", used, contextWindow, pctUsed, remaining, msg.EvalCount)
+	return fmt.Sprintf("ctx: %s / %s used (%.1f%%), remaining=%s, output=%s",
+		formatTokensCompact(used), formatTokensCompact(contextWindow),
+		pctUsed, formatTokensCompact(remaining), formatTokensCompact(msg.EvalCount))
 }
