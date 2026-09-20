@@ -3806,6 +3806,10 @@ func (a *App) openAgentModal() {
 			a.appendActivity("Enabled tools: " + strings.Join(a.enabledToolList(), ", "))
 			a.saveSession()
 			a.closeModal()
+			// Agent switch may have implicitly switched the model
+			// (to the agent's default). Recompute the token bar so
+			// the user sees the new model's context window at once.
+			a.refreshContextForModel(a.currentModel)
 		})
 	}
 	list.SetDoneFunc(func() {
@@ -3836,12 +3840,61 @@ func (a *App) openModelModal() {
 			_ = session.SetLastModel(true, item.Name)
 			a.saveSession()
 			a.closeModal()
+			// Different model → different context window. Recompute
+			// the token indicator immediately so the user sees the
+			// bar move to the new model's total, not the old one.
+			a.refreshContextForModel(item.Name)
 		})
 	}
 	list.SetDoneFunc(func() {
 		a.closeModal()
 	})
 	a.showModal("Select Model", list)
+}
+
+// refreshContextForModel re-estimates the token consumption indicator
+// against the context window of `model` and re-renders the context bar
+// right away. Use this immediately after switching agent or model so
+// the bar reflects the new model's window without waiting for the
+// next model response. Each model family has a different context
+// window (e.g. 8K for some Gemini variants vs. 128K+ for others), so
+// the "X% of Y tokens" total genuinely changes on a switch. If the
+// provider can't resolve a window or there's no history yet, the bar
+// falls back to "ctx: unavailable" so the user sees a clear state.
+func (a *App) refreshContextForModel(model string) {
+	if a.provider == nil || model == "" {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	window, err := a.provider.ContextWindow(ctx, model)
+	if err != nil || window <= 0 {
+		// Unknown window — keep the previous bar but mark it so the
+		// user at least sees the model name is in effect. We
+		// intentionally don't blank the indicator; the next model
+		// response will refresh it with authoritative counts.
+		a.appendActivity(fmt.Sprintf("[%s]token indicator[-]: context window unknown for %s", a.palette.HexDim, model))
+		return
+	}
+	estChars := 0
+	for _, m := range a.history {
+		estChars += len(m.Role) + len(m.Content) + len(m.Thinking) + len(m.ToolName)
+		for _, tc := range m.ToolCalls {
+			estChars += len(tc.Function.Name) + len(tc.Function.Arguments)
+		}
+	}
+	estTok := estChars / 4
+	if estTok > window {
+		estTok = window
+	}
+	remaining := window - estTok
+	if remaining < 0 {
+		remaining = 0
+	}
+	pctUsed := float64(estTok) / float64(window) * 100.0
+	a.contextInfo = fmt.Sprintf("ctx: ~%s / %s used (%.1f%%, est), remaining=%s",
+		formatTokensCompactTUI(estTok), formatTokensCompactTUI(window), pctUsed, formatTokensCompactTUI(remaining))
+	a.refreshContextBar()
 }
 
 func (a *App) openToolModal() {

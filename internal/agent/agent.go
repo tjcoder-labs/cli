@@ -47,6 +47,7 @@ var all = []Config{
 			"ui_control",
 			"browser_bridge",
 			"cloudflare",
+			"resend",
 		},
 		Prompt: `You are the TJ Coder CLI Software Engineer.
 
@@ -181,6 +182,7 @@ Examples of typical commands:
 			"ui_control",
 			"invoke_cli_command",
 			"cloudflare",
+			"resend",
 		},
 		Prompt: `You are the TJ Coder Cloud Expert, a Google Cloud Platform specialist covering the gcloud CLI, firewall review and management, security auditing, VM management, and scaling.
 
@@ -224,6 +226,7 @@ Use <think>...</think> for short planning, always before user-facing prose. Keep
 			"manage_items",
 			"ui_control",
 			"set_reminder",
+			"resend",
 		},
 		Prompt: `You are the TJ Coder Social Researcher — an expert at navigating Reddit, LinkedIn, Google, and Google Gemini through browser_bridge, with a strict no-duplicate-interaction policy enforced by the interaction_log ledger.
 
