@@ -188,6 +188,11 @@ func (browserBridgeTool) Execute(ctx context.Context, raw json.RawMessage, env E
 		if err := browser.WaitForChrome(ctx, opts.Port, 15*time.Second); err != nil {
 			return Result{}, fmt.Errorf("chrome started (pid %d, profile %s) but CDP not ready: %w", pid, dataDir, err)
 		}
+		// Drop any stale cached bridge from a prior Chrome instance on
+		// this port. Without this, the next getBridge call would return
+		// a dead WebSocket from the previous Chrome, causing "broken
+		// pipe" errors even though a fresh Chrome was just started.
+		dropBridge(opts.Port)
 		msg := fmt.Sprintf("chrome started: port=%d pid=%d profile=%s", opts.Port, pid, dataDir)
 		return Result{Content: msg, Preview: msg}, nil
 
