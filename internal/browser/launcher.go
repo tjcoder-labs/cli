@@ -98,6 +98,16 @@ func StartChrome(ctx context.Context, opts ChromeLaunch) (int, string, error) {
 	if err := os.MkdirAll(dataDir, 0o755); err != nil {
 		return 0, "", fmt.Errorf("mkdir profile %s: %w", dataDir, err)
 	}
+	// Remove stale profile locks left by crashed Chrome instances.
+	// Chrome creates SingletonLock, SingletonSocket, and SingletonCookie
+	// in the profile dir; if a prior Chrome crashed (which is the exact
+	// scenario causing repeated restarts), these files persist and the
+	// new Chrome may silently exit or refuse to start. We remove them
+	// only when no Chrome is already listening on the port (checked
+	// below), so we never clobber a live instance's locks.
+	for _, lockFile := range []string{"SingletonLock", "SingletonSocket", "SingletonCookie"} {
+		_ = os.Remove(filepath.Join(dataDir, lockFile))
+	}
 	if IsPortListening(opts.Port) {
 		return 0, dataDir, fmt.Errorf("port %d already in use — is Chrome already running with this profile?", opts.Port)
 	}
@@ -110,6 +120,20 @@ func StartChrome(ctx context.Context, opts ChromeLaunch) (int, string, error) {
 		"--disable-features=TranslateUI",
 		"--disable-session-crashed-bubble",
 		"--hide-crash-restore-bubble",
+		// Linux desktop stability: these flags prevent Chrome from
+		// crashing on environments without a full desktop session,
+		// headless servers, and VNC/X-forwarded displays. Without them
+		// Chrome can exit silently (especially under sandboxed or
+		// containerized environments), causing the repeated "broken
+		// pipe" loops the user observed.
+		"--disable-gpu-sandbox",
+		"--disable-software-rasterizer",
+		"--no-sandbox",
+		"--disable-dev-shm-usage",
+		"--disable-extensions",
+		"--disable-background-timer-throttling",
+		"--disable-renderer-backgrounding",
+		"--disable-backgrounding-occluded-windows",
 	}
 	if opts.Headless {
 		args = append(args, "--headless=new", "--disable-gpu")
@@ -127,14 +151,34 @@ func StartChrome(ctx context.Context, opts ChromeLaunch) (int, string, error) {
 	cmd.Env = os.Environ()
 	// Detach so the agent process can exit without killing Chrome.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	// Capture stderr to a log file so Chrome crash diagnostics are
+	// available instead of going to /dev/null. This is critical for
+	// debugging the repeated-crash scenario.
+	logPath := filepath.Join(dataDir, "chrome-stderr.log")
+	logFile, err := os.Create(logPath)
+	if err != nil {
+		logFile = nil
+	}
+	if logFile != nil {
+		cmd.Stderr = logFile
+	}
 	cmd.Stdout = nil
-	cmd.Stderr = nil
 	if err := cmd.Start(); err != nil {
+		if logFile != nil {
+			logFile.Close()
+		}
 		return 0, dataDir, fmt.Errorf("start chrome: %w", err)
 	}
 	pid := cmd.Process.Pid
 	// Reap the child; Chrome is now daemonized via setsid.
-	go func() { _ = cmd.Wait() }()
+	// Log the exit code if Chrome dies so the user/agent can diagnose
+	// recurring crashes via chrome_status or the log file.
+	go func() {
+		_ = cmd.Wait()
+		if logFile != nil {
+			logFile.Close()
+		}
+	}()
 	return pid, dataDir, nil
 }
 

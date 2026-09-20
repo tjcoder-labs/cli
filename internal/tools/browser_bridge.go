@@ -210,7 +210,22 @@ func (browserBridgeTool) Execute(ctx context.Context, raw json.RawMessage, env E
 		}
 		listening := browser.IsPortListening(port)
 		if !listening {
-			return Result{Content: fmt.Sprintf("port %d: nothing listening", port), Preview: "down"}, nil
+			// Surface the stderr log tail so the agent can diagnose
+			// why Chrome keeps crashing.
+			dataDir := browser.DefaultChromeDataDir(port)
+			logPath := filepath.Join(dataDir, "chrome-stderr.log")
+			tail := ""
+			if data, err := os.ReadFile(logPath); err == nil {
+				s := string(data)
+				if len(s) > 500 {
+					s = "..." + s[len(s)-500:]
+				}
+				tail = "\nstderr (last 500 chars):\n" + s
+			}
+			return Result{
+				Content:  fmt.Sprintf("port %d: nothing listening%s", port, tail),
+				Preview:  "down",
+			}, nil
 		}
 		ctx2, cancel := context.WithTimeout(ctx, 2*time.Second)
 		defer cancel()
