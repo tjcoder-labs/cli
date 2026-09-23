@@ -74,34 +74,17 @@ func (a *App) loadSession() {
 	}
 
 	if len(state.Transcript) > 0 {
-		var b strings.Builder
-		for _, e := range state.Transcript {
-			role := strings.ToLower(e.Role)
-			switch role {
-			case "user", "you":
-				b.WriteString(a.renderUserMessage(e.Content))
-			case "assistant":
-				content := stripThinkBlocks(e.Content)
-				if content == "" {
-					continue
-				}
-				if e.Timestamp != "" {
-					fmt.Fprintf(&b, "[%s]%s[-]\n", a.palette.HexDim, e.Timestamp)
-				}
-				fmt.Fprintf(&b, "[%s::b]%s[-:-:-]\n", a.palette.HexPurple, a.assistantLabel())
-				b.WriteString(a.highlightTranscriptText(content))
-				b.WriteString("\n\n")
-			default:
-				// Skip tool/system messages: they are part of History
-				// (replayed to the model) but are not conversation turns
-				// the user should see rendered as assistant replies.
-			}
-		}
-		a.transcript.SetText(b.String())
+		// Defer the transcript render until after the first draw pass:
+		// user-message bubbles are sized from a.transcript.GetRect(),
+		// which is 0×0 until the layout has been drawn. Rendering here
+		// (before draw) forces every reloaded message into the
+		// fixed-width fallback. Instead we stash the entries and flush
+		// them via the after-draw callback in Run().
+		a.pendingTranscript = append([]session.TranscriptEntry(nil), state.Transcript...)
 	}
 	a.reasoning.SetText(state.Reasoning)
 	a.activity.SetText(state.Activity)
-	if a.transcript.GetText(true) == "" {
+	if a.transcript.GetText(true) == "" && len(a.pendingTranscript) == 0 {
 		a.setTranscriptSplash()
 	}
 	a.sessionState = state
@@ -117,11 +100,46 @@ func (a *App) loadSession() {
 	a.appendActivity("Loaded saved session from " + a.sessionPath())
 }
 
+// renderTranscriptFromEntries rebuilds the conversation transcript from
+// persisted entries. It is split out from loadSession so that it can be
+// deferred until after the first draw pass: user-message bubbles are
+// sized from a.transcript.GetRect(), which is 0×0 until the layout has
+// been laid out on screen. Rendering before that point forces every
+// reloaded message into the fixed-width fallback, so deferring ensures
+// previous-session bubbles track the real pane width exactly like
+// messages typed in the current session.
+func (a *App) renderTranscriptFromEntries(entries []session.TranscriptEntry) {
+	var b strings.Builder
+	for _, e := range entries {
+		role := strings.ToLower(e.Role)
+		switch role {
+		case "user", "you":
+			b.WriteString(a.renderUserMessage(e.Content))
+		case "assistant":
+			content := stripThinkBlocks(e.Content)
+			if content == "" {
+				continue
+			}
+			if e.Timestamp != "" {
+				fmt.Fprintf(&b, "[%s]%s[-]\n", a.palette.HexDim, e.Timestamp)
+			}
+			fmt.Fprintf(&b, "[%s::b]%s[-:-:-]\n", a.palette.HexPurple, a.assistantLabel())
+			b.WriteString(a.highlightTranscriptText(content))
+			b.WriteString("\n\n")
+		default:
+			// Skip tool/system messages: they are part of History
+			// (replayed to the model) but are not conversation turns
+			// the user should see rendered as assistant replies.
+		}
+	}
+	a.transcript.SetText(b.String())
+}
+
 func (a *App) saveSession() error {
 	if a.workspaceRoot == "" {
 		return nil
 	}
-	
+
 	// Build the transcript from real conversation turns only. Tool and
 	// system messages live in History (and are replayed to the model)
 	// but must not be rendered as assistant replies on reload.
@@ -153,15 +171,15 @@ func (a *App) saveSession() error {
 		Memories:       append([]session.Memory(nil), a.sessionState.Memories...),
 		BackgroundJobs: append([]session.BackgroundJob(nil), a.sessionState.BackgroundJobs...),
 	}
-	
+
 	// Safety check: prevent overwriting a valid session with empty data.
 	// If the new state has no history/tasks/reasoning AND a valid session file
 	// already exists on disk, skip this save to preserve existing data
 	// (this can happen on early app exit or crash before full load).
 	if len(newState.History) == 0 && len(newState.Tasks) == 0 && strings.TrimSpace(newState.Reasoning) == "" {
 		// Check if an existing session has content we'd be about to lose
-		if existing, exists, _ := session.Load(a.workspaceRoot); exists && 
-		   (len(existing.History) > 0 || len(existing.Tasks) > 0 || strings.TrimSpace(existing.Reasoning) != "") {
+		if existing, exists, _ := session.Load(a.workspaceRoot); exists &&
+			(len(existing.History) > 0 || len(existing.Tasks) > 0 || strings.TrimSpace(existing.Reasoning) != "") {
 			// Skip save to preserve existing session
 			return nil
 		}

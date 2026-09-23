@@ -2,7 +2,7 @@
 // coder.js - thin Node shim that exec()s the native `coder` binary.
 //
 // This file is registered as the `coder` bin in package.json so that
-// `npm install -g @tj/coder-cli` puts `coder` on the user's PATH.
+// `npm install -g @tjcoder/cli` puts `coder` on the user's PATH.
 // The actual implementation is a Go binary that is downloaded by
 // ./lib/fetch-binary.js during `postinstall`.
 
@@ -26,12 +26,12 @@ if (!fs.existsSync(binPath)) {
       `This usually means the postinstall hook was skipped (e.g. when`,
       `installing with --ignore-scripts). To fix:`,
       ``,
-      `  npm rebuild @tj/coder-cli`,
+      `  npm rebuild @tjcoder/cli`,
       `  # or`,
-      `  npm install -g @tj/coder-cli --foreground-scripts`,
+      `  npm install -g @tjcoder/cli --foreground-scripts`,
       ``,
       `If the problem persists, install via the Go-based installer instead:`,
-      `  curl -fsSL https://raw.githubusercontent.com/tcoder915/ergo-cli-go/main/install.sh | bash`,
+      `  curl -fsSL https://raw.githubusercontent.com/tjcoder-labs/cli/main/install.sh | bash`,
     ].join("\n"),
   );
   process.exit(1);

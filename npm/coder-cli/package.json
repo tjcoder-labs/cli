@@ -1,8 +1,8 @@
 {
-  "name": "@tj/coder-cli",
-  "version": "0.1.5",
-  "description": "Terminal-first coding CLI by TJ Coder / AI Labs",
-  "license": "UNLICENSED",
+  "name": "@tjcoder/cli",
+  "version": "0.9.163",
+  "description": "Terminal-first AI coding assistant by TJ Coder / AI Labs. A keyboard-driven TUI with a live cognition pane, 7 specialized agents, and 31 tools, running on local Ollama models by default.",
+  "license": "MIT",
   "private": false,
   "bin": {
     "coder": "bin/coder.js"
@@ -43,7 +43,10 @@
     "coding",
     "cli",
     "tui",
+    "terminal",
     "ollama",
-    "gemini"
+    "gemini",
+    "agent",
+    "assistant"
   ]
 }

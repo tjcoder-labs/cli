@@ -14,9 +14,9 @@ const { URL } = require("node:url");
 // --- configuration ---------------------------------------------------------
 
 const pkg = require("../package.json");
-const REPO = process.env.CODER_CLI_REPO || "tcoder915/ergo-cli-go";
-// Allow pinning a version (matches the @tj/coder-cli package version by
-// default so that `npm i @tj/coder-cli@0.1.4` installs coder v0.1.4).
+const REPO = process.env.CODER_CLI_REPO || "tjcoder-labs/cli";
+// Allow pinning a version (matches the @tjcoder/cli package version by
+// default so that `npm i @tjcoder/cli@0.9.163` installs coder v0.9.163).
 const VERSION = process.env.CODER_CLI_VERSION || `v${pkg.version}`;
 
 // --- platform detection ----------------------------------------------------

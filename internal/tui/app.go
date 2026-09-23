@@ -18,8 +18,8 @@ import (
 	"github.com/tjcoder-labs/cli/internal/agent"
 	"github.com/tjcoder-labs/cli/internal/client"
 	ctxpkg "github.com/tjcoder-labs/cli/internal/context"
-	"github.com/tjcoder-labs/cli/internal/memories"
 	"github.com/tjcoder-labs/cli/internal/mcp"
+	"github.com/tjcoder-labs/cli/internal/memories"
 	"github.com/tjcoder-labs/cli/internal/session"
 	"github.com/tjcoder-labs/cli/internal/tasks"
 	"github.com/tjcoder-labs/cli/internal/tooling"
@@ -167,9 +167,9 @@ type App struct {
 	// only mutations happen in Run() under the caller's stack.
 	running bool
 
-	provider     client.Provider
-	registry     *tools.Registry
-	runner       *tooling.Runner
+	provider client.Provider
+	registry *tools.Registry
+	runner   *tooling.Runner
 	// steeringCh carries mid-turn user steering messages from the
 	// TUI's submit() handler to Runner.Steering. It is buffered so
 	// a quick double-Enter doesn't drop; submit() does a non-blocking
@@ -180,27 +180,27 @@ type App struct {
 	sessionState session.State
 	palette      Palette
 
-	workspaceRoot          string
-	productName            string
-	author                 string
-	appVersion             string
-	agents                 []agent.Config
-	currentAgent           agent.Config
-	currentModel           string
+	workspaceRoot             string
+	productName               string
+	author                    string
+	appVersion                string
+	agents                    []agent.Config
+	currentAgent              agent.Config
+	currentModel              string
 	previousAgentDefaultModel string // tracks the last agent's default model so switching agents can swap models
-	models                 []client.ModelInfo
-	enabledTools           map[string]bool
-	history                []client.Message
-	busy                   bool
-	contextInfo            string
-	refSet                 map[string]struct{}
-	refOrder               []string
-	spinIdx                int
-	spinStop               chan struct{}
-	assistantState         string
-	assistantStamp         string
-	inputPlaceholder       string
-	inputPlaceholderActive bool
+	models                    []client.ModelInfo
+	enabledTools              map[string]bool
+	history                   []client.Message
+	busy                      bool
+	contextInfo               string
+	refSet                    map[string]struct{}
+	refOrder                  []string
+	spinIdx                   int
+	spinStop                  chan struct{}
+	assistantState            string
+	assistantStamp            string
+	inputPlaceholder          string
+	inputPlaceholderActive    bool
 
 	header          *tview.TextView
 	transcript      *tview.TextView
@@ -253,8 +253,8 @@ type App struct {
 	// persists across sessions and workspaces. The index tracks
 	// the current position when the user navigates with Up/Down;
 	// -1 means "at the bottom (new input)".
-	inputHistory     []string
-	inputHistoryIdx  int
+	inputHistory      []string
+	inputHistoryIdx   int
 	inputHistoryDraft string
 
 	startupSplashVisible   bool
@@ -308,6 +308,15 @@ type App struct {
 	// Started in Run(), stopped when Run() returns; it injects due
 	// schedules into the live conversation via submitScheduled.
 	scheduler *scheduleWorker
+
+	// pendingTranscript holds persisted transcript entries that have
+	// not yet been rendered into the transcript TextView. It is populated
+	// by loadSession() and flushed after the first draw pass (via the
+	// after-draw callback installed in Run()), because user-message
+	// bubbles are sized from a.transcript.GetRect(), which is 0×0 until
+	// the layout is actually drawn. Rendering them before that forces
+	// every reloaded message into the fixed-width fallback.
+	pendingTranscript []session.TranscriptEntry
 }
 
 func New(provider client.Provider, registry *tools.Registry, workspaceRoot, modelOverride, productName, author, appVersion string) *App {
@@ -432,6 +441,22 @@ func (a *App) Run() error {
 	if a.scheduler != nil {
 		a.scheduler.start()
 		defer a.scheduler.stop()
+	}
+	// Flush any persisted transcript entries deferred from loadSession()
+	// once the layout has actually been drawn. This runs on the very
+	// first draw pass, at which point a.transcript.GetRect() returns a
+	// real width, so user-message bubbles size to the pane instead of
+	// the fixed-width fallback. We install the callback lazily (on Run)
+	// rather than in New() so the app is always fully constructed first.
+	if len(a.pendingTranscript) > 0 {
+		pending := a.pendingTranscript
+		a.pendingTranscript = nil
+		a.tv.SetAfterDrawFunc(func(screen tcell.Screen) {
+			// Render once; then drop the callback so it doesn't
+			// re-run on every subsequent redraw.
+			a.tv.SetAfterDrawFunc(nil)
+			a.renderTranscriptFromEntries(pending)
+		})
 	}
 	return a.tv.Run()
 }
@@ -751,19 +776,27 @@ func (a *App) build() {
 
 // userMessageMaxWidth returns the widest line, in cells, that a
 // user message is allowed to occupy before it is word-wrapped to
-// fit. The cap scales gently with the current terminal width so
-// wider screens get visibly wider bubbles (up to a hard maximum),
-// and shorter screens still get a usable bubble. The minimum
-// guarantees the bubble is always at least 24 cells wide even on
-// extremely narrow terminals so it remains readable.
+// fit. The cap derives from the live conversation-pane width so
+// bubbles track the available space on any terminal size. The
+// minimum guarantees the bubble is always at least 24 cells wide
+// even on extremely narrow terminals so it remains readable.
 //
-// Numbers are tuned for the TUI's 5:3 conversation/right-column
-// split with marginX insets: on an 80-col terminal the
-// conversation body has ~41 cells of usable text, so a cap of
-// 38 leaves 3 cells of breathing room (1 left + 2 right padding).
+// A "wrapped" message (one whose text must break across lines) is
+// sized to fill the entire pane so every line shares one continuous
+// highlight edge, like a modern messaging bubble. Short messages stay
+// compact.
 const (
 	userMessageMinWidth = 24
+	// userMessageMaxWidth is the historical hard ceiling. It is no longer
+	// applied as a cap on the live pane width (bubbles now track the
+	// actual conversation-pane width). It is retained only as an upper
+	// bound for the explicit /config override so a bad value can't
+	// overflow the screen.
 	userMessageMaxWidth = 80
+	// userMessagePadding is the inner horizontal inset (left + right, in
+	// cells) applied to user-message bubbles so text sits comfortably
+	// inside the purple highlight instead of hugging its edge.
+	userMessagePadding = 2
 )
 
 func (a *App) userMessageMaxWidth() int {
@@ -798,9 +831,6 @@ func (a *App) userMessageMaxWidth() int {
 	body := cols - 5
 	if body < userMessageMinWidth {
 		return userMessageMinWidth
-	}
-	if body > userMessageMaxWidth {
-		return userMessageMaxWidth
 	}
 	return body
 }
@@ -863,9 +893,20 @@ func (a *App) renderUserMessage(prompt string) string {
 			maxLen = l
 		}
 	}
-	// One-line/column padding around the message text.
-	padding := 1
+	// Inner horizontal padding around the message text.
+	padding := userMessagePadding
 	width := maxLen + padding*2
+	// A "wrapped" message is one whose whitespace-normalized length exceeds
+	// a single line, i.e. the text had to break across lines. In that case
+	// the bubble takes the full conversation-pane width so that every line
+	// (long and short alike) shares one continuous highlight edge — like a
+	// modern messaging bubble that fills the available space when narrow.
+	// Hard newlines are deliberately collapsed here so a short multi-line
+	// message stays compact instead of stretching edge-to-edge.
+	normalized := utf8.RuneCountInString(strings.Join(strings.Fields(prompt), " "))
+	if normalized > maxWidth {
+		width = maxWidth
+	}
 	// Use non-breaking spaces so tview doesn't trim trailing spaces and the
 	// background color fills the entire bubble width.
 	nbsp := "\u00A0"
@@ -1847,58 +1888,138 @@ func (a *App) openConfigModal() {
 	)
 	infoView.SetText(infoText)
 
-	editor := tview.NewTextArea()
-	editor.SetBackgroundColor(bg)
-	editor.SetText(formatConfigJSON(a.config), true)
+	// A working copy of the config, mutated live by the form widgets
+	// below. This decouples the form from a.config so the user can
+	// cancel without touching the live values, and lets us save the
+	// whole struct at once without re-reading individual fields.
+	work := a.config
+
+	form := tview.NewForm()
+	a.styleModalForm(form)
+	form.SetItemPadding(1)
+
+	// --- Agent ---
+	agentNames := make([]string, 0, len(a.agents))
+	agentIdx := 0
+	for i, cfg := range a.agents {
+		agentNames = append(agentNames, cfg.Name)
+		if cfg.Name == work.Agent {
+			agentIdx = i
+		}
+	}
+	agentNames = append(agentNames, "(use first agent)")
+	form.AddDropDown("Agent (default)", agentNames, agentIdx, func(option string, _ int) {
+		if option == "(use first agent)" {
+			work.Agent = ""
+		} else {
+			work.Agent = option
+		}
+	})
+
+	// --- Model ---
+	modelNames := make([]string, 0, len(a.models)+1)
+	modelIdx := 0
+	modelNames = append(modelNames, "(agent default)")
+	for i, m := range a.models {
+		label := m.Name
+		if m.ParameterSize != "" {
+			label = fmt.Sprintf("%s (%s)", m.Name, m.ParameterSize)
+		}
+		modelNames = append(modelNames, label)
+		if m.Name == work.Model {
+			modelIdx = i + 1
+		}
+	}
+	form.AddDropDown("Model (default)", modelNames, modelIdx, func(option string, _ int) {
+		// The dropdown shows "name (size)" but the config stores the
+		// bare name. Strip any " (…)" suffix before persisting.
+		if option == "(agent default)" {
+			work.Model = ""
+			return
+		}
+		if idx := strings.Index(option, " ("); idx > 0 {
+			option = option[:idx]
+		}
+		work.Model = option
+	})
+
+	// --- Compact model ---
+	compactNames := make([]string, 0, len(a.models)+1)
+	compactIdx := 0
+	compactNames = append(compactNames, "(use current model)")
+	for i, m := range a.models {
+		compactNames = append(compactNames, m.Name)
+		if m.Name == work.CompactModel {
+			compactIdx = i + 1
+		}
+	}
+	form.AddDropDown("Compact model", compactNames, compactIdx, func(option string, _ int) {
+		if option == "(use current model)" {
+			work.CompactModel = ""
+		} else {
+			work.CompactModel = option
+		}
+	})
+
+	// --- Tool step cap ---
+	form.AddInputField("Tool steps per turn", strconv.Itoa(work.ToolMax), 6,
+		func(textToCheck string, _ rune) bool {
+			n, err := strconv.Atoi(textToCheck)
+			return err == nil && n > 0
+		},
+		func(text string) {
+			if n, err := strconv.Atoi(text); err == nil && n > 0 {
+				work.ToolMax = n
+			}
+		})
+
+	// --- User bubble width ---
+	form.AddInputField("User bubble width", strconv.Itoa(work.UserMessageMaxWidth), 6,
+		func(textToCheck string, _ rune) bool {
+			if textToCheck == "" {
+				return true
+			}
+			n, err := strconv.Atoi(textToCheck)
+			return err == nil && n >= 0
+		},
+		func(text string) {
+			if text == "" {
+				work.UserMessageMaxWidth = 0
+				return
+			}
+			if n, err := strconv.Atoi(text); err == nil && n >= 0 {
+				work.UserMessageMaxWidth = n
+			}
+		})
+
+	// --- Actions ---
+	save := func() {
+		if err := a.saveConfig(work); err != nil {
+			a.appendActivity(fmt.Sprintf("["+a.palette.HexOrchid+"::b]config save failed[-:-:-]: %v", err))
+			return
+		}
+		a.config = work
+		a.runner.MaxSteps = work.ToolMax
+		a.appendActivity(fmt.Sprintf("Saved config to %s (toolMax=%d, compactModel=%s)", a.configPath(), work.ToolMax, work.CompactModel))
+		a.closeModal()
+	}
+	form.AddButton("Save", save)
+	form.AddButton("Cancel", func() { a.closeModal() })
 
 	help := tview.NewTextView().SetDynamicColors(true)
 	help.SetBackgroundColor(bg)
 	help.SetTextColor(a.palette.TextDim)
-	help.SetText(fmt.Sprintf(" [%s]ctrl+s[-] save · [%s]esc[-] cancel · [%s]compactModel[-] overrides /compact model · [%s]toolMax[-] caps tool steps/turn",
-		a.palette.HexLavender, a.palette.HexLavender, a.palette.HexLavender, a.palette.HexLavender))
-
-	// capture by value so Cancel always closes over the editor it
-	// opened, even after a future Save replaces a.config.
-	closeModal := func() {
-		a.closeModal()
-	}
-	save := func() {
-		parsed, err := parseConfigJSON(editor.GetText())
-		if err != nil {
-			a.appendActivity(fmt.Sprintf("["+a.palette.HexOrchid+"::b]config invalid[-:-:-]: %v", err))
-			return
-		}
-		if err := a.saveConfig(parsed); err != nil {
-			a.appendActivity(fmt.Sprintf("["+a.palette.HexOrchid+"::b]config save failed[-:-:-]: %v", err))
-			return
-		}
-		a.config = parsed
-		a.runner.MaxSteps = parsed.ToolMax
-		a.appendActivity(fmt.Sprintf("Saved config to %s (toolMax=%d, compactModel=%s)", a.configPath(), parsed.ToolMax, parsed.CompactModel))
-		closeModal()
-	}
+	help.SetText(fmt.Sprintf(
+		" [%s]tab[-] next field · [%s]enter[-] edit dropdown · [%s]0 bubble width[-] = auto (pane width)",
+		a.palette.HexLavender, a.palette.HexLavender, a.palette.HexLavender))
 
 	body := tview.NewFlex().SetDirection(tview.FlexRow).
 		AddItem(infoView, 7, 0, false).
 		AddItem(spacerBox(bg), 1, 0, false).
-		AddItem(editor, 0, 1, true).
+		AddItem(form, 0, 1, true).
 		AddItem(spacerBox(bg), 1, 0, false).
 		AddItem(help, 1, 0, false)
 	body.SetBackgroundColor(bg)
-
-	// Ctrl+S saves, Esc cancels. We wire these on the TextArea's
-	// input capture so they work regardless of focus.
-	editor.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
-		switch event.Key() {
-		case tcell.KeyEsc:
-			closeModal()
-			return nil
-		case tcell.KeyCtrlS:
-			save()
-			return nil
-		}
-		return event
-	})
 
 	a.showModal("Config", body)
 }
@@ -3082,9 +3203,9 @@ func (a *App) highlightTranscriptText(text string) string {
 // re-renders them as box-drawn tables with tview color markup. A table
 // block is:
 //
-//   | col1 | col2 |       <- header row (required)
-//   | ---- | :--- |  ...  <- separator row (required)
-//   | a    | b    |       <- zero or more body rows
+//	| col1 | col2 |       <- header row (required)
+//	| ---- | :--- |  ...  <- separator row (required)
+//	| a    | b    |       <- zero or more body rows
 //
 // Header row is bold-tinted with HexPurple; separator and borders use
 // HexFaint box-drawing runes. Column widths are derived from the widest
