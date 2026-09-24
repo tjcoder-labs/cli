@@ -12,6 +12,7 @@ import (
 	"github.com/tjcoder-labs/cli/internal/client"
 	"github.com/tjcoder-labs/cli/internal/memories"
 	"github.com/tjcoder-labs/cli/internal/session"
+	"github.com/tjcoder-labs/cli/internal/tasks"
 	"github.com/tjcoder-labs/cli/internal/tools"
 )
 
@@ -258,6 +259,13 @@ func (r *Runner) Run(ctx context.Context, history []client.Message, prompt strin
 		memBlock := memories.FormatPromptBlock(memories.Load(*r.SessionState), 10)
 		if strings.TrimSpace(memBlock) != "" {
 			systemPrompt = memBlock + "\n\n" + systemPrompt
+		}
+
+		// Inject the open task list so the agent is aware of in-flight
+		// work and can reference, create, or close tasks across turns.
+		taskBlock := tasks.FormatPromptBlock(tasks.Load(*r.SessionState), 15)
+		if strings.TrimSpace(taskBlock) != "" {
+			systemPrompt = taskBlock + "\n\n" + systemPrompt
 		}
 	}
 

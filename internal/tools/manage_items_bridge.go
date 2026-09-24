@@ -14,11 +14,15 @@ type ManageItemsBridge struct {
 }
 
 func (m ManageItemsBridge) Definition() client.ToolDefinition {
+	desc := "Manage trackable objects (tasks, memories, articles, reminders, etc.)."
+	if m.Impl != nil {
+		desc = m.Impl.Description()
+	}
 	return client.ToolDefinition{
 		Type: "function",
 		Function: client.FunctionDefinition{
 			Name:        "manage_items",
-			Description: "Manage trackable objects (tasks, articles, reminders, etc.).",
+			Description: desc,
 			Parameters: map[string]any{
 				"type": "object",
 				"properties": map[string]any{

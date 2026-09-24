@@ -31,14 +31,25 @@ func (m *ManageItems) Name() string {
 
 // Description returns the tool description.
 func (m *ManageItems) Description() string {
-	return `Manage trackable objects (tasks, articles, reminders, etc.). Operations:
+	return `Manage trackable objects: tasks, memories, articles, reminders. Operations:
 - "create": Create a new item. Requires "type" and "data" (object with creation fields).
 - "list": List all items of a given type. Requires "type".
 - "get": Retrieve a single item by ID. Requires "type" and "id".
 - "update": Modify an existing item. Requires "type", "id", and "data" (partial object with fields to update).
 - "delete": Remove an item by ID. Requires "type" and "id".
 Example: {"action":"create","type":"task","data":{"title":"Fix bug #42"}}
-IMPORTANT: after creating, updating, completing, or deleting a task, immediately call ui_control (action=show, panel=tasks) in the same turn so the user sees the refreshed tasks pane.`
+
+When to use tasks:
+- Break multi-step requests into tasks BEFORE starting work; create one task per distinct deliverable.
+- Mark a task "doing" when you start it and "done" when you finish (action=update, data={"status":"done"}).
+- Reference the active [tasks] block in your system prompt; work the highest-priority open task unless the user redirects you.
+- Never leave work half-done without recording state in tasks.
+
+When to use memories:
+- Store durable facts the user wants you to remember across turns (preferences, credentials locations, decisions) as type=memory.
+- Update or delete a memory when it becomes stale rather than duplicating it.
+
+After ANY create/update/delete of a task or memory, immediately call ui_control (action=show, panel=tasks) — or panel=memories for memories — in the same turn so the user sees the refreshed pane.`
 }
 
 // Schema returns the JSON schema for tool arguments.

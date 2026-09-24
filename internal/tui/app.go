@@ -209,6 +209,7 @@ type App struct {
 	reasoning       *tview.TextView
 	reasoningTitle  *tview.TextView
 	tasksTitle      *tview.TextView
+	memoriesTitle   *tview.TextView
 	reasoningPanel  *tview.Flex
 	activity        *tview.TextView
 	activityTitle   *tview.TextView
@@ -219,6 +220,11 @@ type App struct {
 	// its previous open status.
 	tasksList  *tview.List
 	tasksPanel *tview.Flex
+	// memoriesList is the interactive tview.List shown in the right
+	// column when the user opens /memories. The user navigates with
+	// Up/Down and presses Delete to remove a memory.
+	memoriesList  *tview.List
+	memoriesPanel *tview.Flex
 	testView   *tview.TextView
 	testPanel  *tview.Flex
 	// right is the right-column Flex (Cognition stacked over the
@@ -539,6 +545,32 @@ func (a *App) build() {
 		AddItem(a.tasksTitle, 1, 0, false).
 		AddItem(a.tasksList, 0, 1, true)
 	a.tasksPanel.SetBackgroundColor(a.palette.BgReasoning)
+
+	a.memoriesList = tview.NewList().
+		ShowSecondaryText(true).
+		SetHighlightFullLine(true)
+	a.memoriesList.SetBackgroundColor(a.palette.BgReasoning)
+	a.memoriesList.SetMainTextColor(a.palette.TextMain)
+	a.memoriesList.SetSecondaryTextColor(a.palette.TextDim)
+	a.memoriesList.SetSelectedBackgroundColor(a.palette.BgSelect)
+	a.memoriesList.SetSelectedTextColor(a.palette.Lavender)
+	a.memoriesList.SetBorderPadding(1, 1, 3, 2)
+	a.memoriesList.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+		switch event.Key() {
+		case tcell.KeyDelete, tcell.KeyBackspace2:
+			a.deleteSelectedMemory()
+			return nil
+		}
+		return event
+	})
+	a.memoriesTitle = tview.NewTextView().SetDynamicColors(true)
+	a.memoriesTitle.SetBackgroundColor(a.palette.BgReasoning)
+	a.memoriesTitle.SetText(fmt.Sprintf(" [%s]MEMORIES[-] [%s]Delete removes · Enter clears hint[-]", a.palette.HexPurple, a.palette.HexFaint))
+	a.memoriesTitle.SetBorderPadding(0, 0, 2, 2)
+	a.memoriesPanel = tview.NewFlex().SetDirection(tview.FlexRow).
+		AddItem(a.memoriesTitle, 1, 0, false).
+		AddItem(a.memoriesList, 0, 1, true)
+	a.memoriesPanel.SetBackgroundColor(a.palette.BgReasoning)
 
 	a.testView = tview.NewTextView().
 		SetDynamicColors(true).
@@ -2243,6 +2275,12 @@ func (a *App) showPanel(name string) {
 		a.rebuildLayout()
 		a.focusInput()
 		return
+	case "memories":
+		a.refreshMemoriesList()
+		a.setActivePanel("memories")
+		a.rebuildLayout()
+		a.focusInput()
+		return
 	case "articles":
 		a.setActivePanel("articles")
 		a.setActivityTitle("ARTICLES", "")
@@ -2310,6 +2348,65 @@ func (a *App) refreshTasksList() {
 			a.toggleTask(task.ID)
 		})
 	}
+}
+
+// refreshMemoriesList rebuilds the interactive memories list from the
+// current session state. Each memory is rendered with its title as the
+// main line and body/tags as secondary text. The user navigates with
+// Up/Down and presses Delete to remove a memory.
+func (a *App) refreshMemoriesList() {
+	if a.memoriesList == nil {
+		return
+	}
+	a.memoriesList.Clear()
+	list := memories.Load(a.sessionState)
+	if list.Len() == 0 {
+		a.memoriesList.AddItem(
+			fmt.Sprintf("[%s]No memories yet.[-] [%s]Use /memory to add one.[-]",
+				a.palette.HexDim, a.palette.HexFaint),
+			"", 0, nil,
+		)
+		return
+	}
+	for _, m := range list.All() {
+		mem := m
+		secondary := ""
+		if mem.Body != "" {
+			secondary = mem.Body
+		}
+		if len(mem.Tags) > 0 {
+			if secondary != "" {
+				secondary += " · "
+			}
+			secondary += "tags: " + strings.Join(mem.Tags, ", ")
+		}
+		a.memoriesList.AddItem(mem.Title, secondary, 0, func() {
+			a.deleteSelectedMemory()
+		})
+	}
+}
+
+// deleteSelectedMemory removes the currently highlighted memory from
+// the session and refreshes the list in place.
+func (a *App) deleteSelectedMemory() {
+	if a.memoriesList == nil {
+		return
+	}
+	idx := a.memoriesList.GetCurrentItem()
+	list := memories.Load(a.sessionState)
+	items := list.All()
+	if idx < 0 || idx >= len(items) {
+		return
+	}
+	mem := items[idx]
+	newState, removed := memories.NewStore().Delete(a.sessionState, mem.ID)
+	if !removed {
+		return
+	}
+	a.sessionState = newState
+	a.saveSession()
+	a.appendActivity(fmt.Sprintf("Removed memory: %s", mem.Title))
+	a.refreshMemoriesList()
 }
 
 // formatTaskLine returns the single-line display string for a task,
@@ -3659,6 +3756,8 @@ func (a *App) buildRightColumn() *tview.Flex {
 	switch a.activePanel {
 	case "tasks":
 		bodyPrim = a.tasksPanel
+	case "memories":
+		bodyPrim = a.memoriesPanel
 	case "test":
 		bodyPrim = a.testPanel
 	case "articles", "code", "canvas", "reference":
