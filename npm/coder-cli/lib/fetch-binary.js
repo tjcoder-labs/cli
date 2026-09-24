@@ -16,7 +16,7 @@ const { URL } = require("node:url");
 const pkg = require("../package.json");
 const REPO = process.env.CODER_CLI_REPO || "tjcoder-labs/cli";
 // Allow pinning a version (matches the @tjcoder/cli package version by
-// default so that `npm i @tjcoder/cli@0.9.165` installs coder v0.9.165).
+// default so that `npm i @tjcoder/cli@0.9.166` installs coder v0.9.166).
 const VERSION = process.env.CODER_CLI_VERSION || `v${pkg.version}`;
 
 // --- platform detection ----------------------------------------------------
@@ -152,7 +152,20 @@ async function checksum(filePath) {
   }
 }
 
-// --- main ------------------------------------------------------------------
+// moveFile moves src to dest atomically where possible, and falls back to a
+// copy+unlink when the two paths live on different filesystems (rename()
+// returns EXDEV). This matters for system-wide installs where /tmp and the
+// npm prefix (e.g. /usr/lib) are separate mounts.
+function moveFile(src, dest) {
+  try {
+    fs.renameSync(src, dest);
+    return;
+  } catch (err) {
+    if (err.code !== "EXDEV") throw err;
+    fs.copyFileSync(src, dest);
+    fs.unlinkSync(src);
+  }
+}
 
 async function main() {
   const info = detect();
@@ -178,7 +191,10 @@ async function main() {
       fs.chmodSync(extracted, 0o755);
     }
     await checksum(extracted);
-    fs.renameSync(extracted, binPath);
+    moveFile(extracted, binPath);
+    if (info.os !== "windows") {
+      fs.chmodSync(binPath, 0o755);
+    }
     process.stdout.write(`coder: installed ${binPath}\n`);
   } catch (err) {
     process.stderr.write(
