@@ -16,7 +16,7 @@ const { URL } = require("node:url");
 const pkg = require("../package.json");
 const REPO = process.env.CODER_CLI_REPO || "tjcoder-labs/cli";
 // Allow pinning a version (matches the @tjcoder/cli package version by
-// default so that `npm i @tjcoder/cli@0.9.163` installs coder v0.9.163).
+// default so that `npm i @tjcoder/cli@0.9.164` installs coder v0.9.164).
 const VERSION = process.env.CODER_CLI_VERSION || `v${pkg.version}`;
 
 // --- platform detection ----------------------------------------------------
