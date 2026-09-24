@@ -14,6 +14,7 @@ type Config struct {
 	DefaultModel string
 	ToolNames    []string
 	Prompt       string
+	LitePrompt   string
 }
 
 var all = []Config{
