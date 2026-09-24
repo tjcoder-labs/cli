@@ -8,6 +8,7 @@
 
 # Node/npm
 node_modules/
+.npmrc
 
 # Logs
 *.log
