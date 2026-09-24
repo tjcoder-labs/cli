@@ -1,171 +1,55 @@
-# @TJ/coder Terminal Coding TUI
+# Coder CLI — Development Guide
 
-Please keep commentary to a minimum. Keep in mind the user is likely interfacing with you via terminal. You have many tools. Before making any changes, be sure to have received authorization from the user to act. Your objective is the continuous improvement of the enclosed AI-powered terminal coding CLI. Instead of relying on unit tests, use the `coder` CLI non-interactively to facilitate testing.
+This file guides agents and contributors working on the Coder CLI codebase.
 
-Your model may be running on limited hardware in the cloud. Please consider this in your responses to me as they will be temporally expensive for me. Your consideration is greatly appreciated.
+## Project Overview
 
+Coder CLI is an open-source, AI-powered terminal coding assistant. It pairs a conversational agent with real developer tools in a keyboard-driven TUI, with a live cognition pane for streaming model reasoning. It defaults to local Ollama models for privacy and optionally supports cloud providers (Google Gemini).
 
-Our top objective with this codebase is to finalize it for open source release as a new design and AI-oriented terminal coding assistant/buddy running on TJ Coder / AI Labs platform technology. The ai.tjcoder.com and / or coder.tjcoder.com model coding services are offered as a paid, proprietary provider integration into the TUI as a means of promoting the TJ Coder set of platform technologies, Sentinel Radar, Sentinel Protect and now the TJ Coder CLI, an open source coding terminal assistant for and from the future. But now.
+## Architecture
 
-This means:
+- **Context injection** — `internal/context/` composes runtime environment, repository instructions, and memories into the system prompt.
+- **Tool invocation** — `internal/tooling/` implements the runner, tool parser (native + fenced-JSON fallback), and registry. `internal/tools/` contains the 31+ tool implementations.
+- **Agent loop** — the runner iterates tool calls up to a budget, then produces a checkpoint response.
+- **Session management** — `internal/session/` persists conversation, tasks, and memories per workspace under `.ergo-cli-go/`.
+- **TUI** — `internal/tui/` implements the terminal UI: conversation transcript, cognition pane, activity log, slash commands, markdown table rendering, and scheduler.
+- **Browser bridge** — `internal/browser/` provides CDP client, tab registry, Chrome launcher, and interaction ledger.
 
--- Completing the tasks/articles integrations (done in the appropriate feature branch for this)
--- Integrate the custom model provider through ai.tjcoder.com which builds upon specific open source ollama-compatible models, fine tuned for coding, cybersecurity and administration, as the proprietary '@tjcoder/ergo` (or some derivation of such).
--- Release as open source (when ready) to github via tjcoder-labs
--- Promote on hacker news, reddit, and locally.
--- Release Sentinel set of products to the Google Play Store.
+## Key Directories
 
+| Path | Purpose |
+|---|---|
+| `cmd/coder/` | CLI entry point (interactive + headless) |
+| `internal/agent/` | Agent definitions and orchestration |
+| `internal/browser/` | CDP client, tab registry, Chrome launcher |
+| `internal/client/` | LLM provider clients (ollama, gemini) |
+| `internal/context/` | Runtime context + environment templating |
+| `internal/highlight/` | Syntax/markdown highlighting |
+| `internal/session/` | Session + preference persistence |
+| `internal/tooling/` | Runner, tool parser, and registry |
+| `internal/tools/` | Tool implementations |
+| `internal/tui/` | Terminal UI |
+| `npm/coder-cli/` | npm distribution wrapper |
 
-Please always directly invoke your tools. 
-Please keep attribution to the developer, TJ Coder(tj@tjcoder.com) via github.com/tjcoder-labs
-Please keep your commentary to under 3 paragraphs
+## Development
 
-
-## Active Development Tasks
-
-The following items are in flight. They are also tracked in the in-app
-task tracker (`manage_items` → task) so they show up in the TUI's
-/tasks pane, and persisted to `.ergo-cli-go/tasks.json` in the
-workspace. Re-read this list at the start of every session — another
-session on the same branch may have closed, retitled, or added tasks
-since you last loaded the file.
-
-The following tasks should be a reflection of those managed by the agent via the /task and /tasks commands, however because the feature is still unstable, you should always use the following task list as the source of truth, so be sure to add, update and mark as completed here in addition to using your tools. 
-
-- **T1 — Activity panel underline bug.** ~~Tool-error activity entries
-  in the right-hand `ACTIVITY` panel render with an underline.
-  Investigate the tview color tags in `internal/tui/app.go`
-  `appendActivity` and the `EventError` branch (around line 1822);
-  remove the offending `u` attribute from the tag string. Verify
-  with the headless CLI before declaring done.~~ ✅ COMPLETED
-- **T2 — Fullscreen toggle does not work.** Pressing the global
-  fullscreen shortcut (`Ctrl+F` / `F11`) toggles `a.fullscreen` and
-  emits the activity log entry but the right column does not
-  actually disappear. The bug is in `rebuildLayout` /
-  `toggleFullscreen` in `internal/tui/app.go` (around lines 1464
-  and 2118). Confirm whether the layout is being swapped on the
-  right `Pages` and whether the cached `a.right` reference is
-  being cleared and rebuilt on the next `showPanel` call.
-- **T3 — Asynchronous background command execution.** Add a way for
-  long-running `run_command` invocations to operate in the
-  background and stream their output back to the agent as it
-  becomes available, rather than blocking the whole conversation
-  turn. Decide whether this is a new `run_command_async` tool, a
-  flag on the existing `run_command`, or a session-level option;
-  the right answer is the smallest change that doesn't break
-  existing callers.
-- **T4 — Tool-call budget reached: model response is mangled.**
-  When the runner hits `r.MaxSteps` and falls into the
-  "checkpoint response" branch in `internal/tooling/runner.go`
-  (around lines 256–285), the next assistant message frequently
-  contains raw `‹tool_call›…‹/tool_call›` or `<tool_call>…</tool_call>`
-  blocks that were never scrubbed by `ExtractFallbackToolCall`
-  (that helper only runs in the main `Run` loop, not the
-  budget-reached fallback). Run the same scrubbing on the
-  checkpoint response before appending to history or returning
-  to the caller; also strip the wrappers from `msg.Content` so
-  the user does not see the leaked markup in the transcript.
-- **T5 — /tasks pane crash/hang.** Opening the interactive
-  `/tasks` panel (via `showPanel("tasks")` in
-  `internal/tui/app.go`) reportedly crashes or hangs the TUI.
-  Suspected areas: `refreshTasksList` (around line 1557) which
-  builds the `tview.List`, the `SetDoneFunc` closure that
-  captures `task` (line 1574), `toggleTask` (around line 1620)
-  which re-focuses the list at the same index, and the
-  interaction between `rebuildLayout` and the focused `List`.
-  Add a headless reproduction (e.g. an `app_test.go` case that
-  calls `showPanel("tasks")` after seeding session tasks),
-  identify the root cause, and fix. Also verify the activity
-  log entry recorded when the panel is opened.
-- **T6 - welcome screen which prompts the user to select a specific agent when they are working out of a directory without any previous transcript -- think software-engineer, android-assistant, etc. in large ergo primary colored block-buttons with the agent's name and description as well as perhaps a keyboard shortcut which jumps the user into a new session with the given agent. With the new welcome screen, the About screen with the ascii art needs to be something that is perhaps only shown for a brief moment on program initialization for a few seconds before the program jumps into the Welcome screen.
-- **T7 - account authentication via api.tjcoder.com cli auth in-TUI. I beleive there is already an existing branch for this in the /home/tj/ergo super repo.
-- ** Model passthrough for authenticated accounts. It might be nice if we could better integrate with ollama so that we may sign the user in and have the backend itself integrate with ollama onbehalf of the user so we're not spending money in advance on ollama. 
-- **T8 - Update the install.sh script to support ollama installation** the install.sh should check for and optionally both install ollama as well as automatically pull the minimax-m3:cloud model for use by the user.
-- **Make sure readme.md is up to date as well. 
-- **T9 - integrate the ergo-ai-server / api.tjcoder.com release channel framework for the cli modeled after that of sentinel's e.g. /home/tj/ergo/ergo-ai-server/src/routes/sentinel.ts and /home/tj/ergo/ergo-ai-server/src/routes/cli.ts
-- **T10 - slash command invocation tool** - allows the agent to invoke a slash command, like /config, on behalf of the user -- useful for many reasons but also useful for debugging issues with command crashes and hangups, I think. 
-- **T11 - conversation transcript messages do not display the timestamp above the attribution as required.**
-- **T12 - -- RECAP -- title should instead take formatting cue from the ACTIVITY, CONVERSATION and COGNITION label typography, in terms of size and style -- uppercase and in the primary color. Make sure there's always at least 1 line gap above the RECAP label. 
--- **T13 - timestamp formatting** - let's remove the seconds from the timestamps used throughout the app e.g. activity, conversation transcript and cognition (e.g. 11:15 AM) and let's make sure that the timestamp is listed above every message, both for user and assistant, right above the message's attribution. 
--- **T14 - issue with model returning commentary with escaped tool code seems to be related to max tool call error and the agent's response to being asked to provide a checkpoint**
-- **T15 — Update ASCII art.** Update the ASCII art from `<tj/>` to `<coder/>`.
-- **T16 — MongoDB Review.** Review the MongoDB ergo db, hotspots collection, and tenant records for the development staging system.
-- **T17 — Specialized Agents.** Implement a new Network and System Security agent, and a Cloud Infrastructure agent (specializing in Google Cloud, gcloud CLI installation, auth, and management). *(Cloud half DONE — `cloud-expert` agent added in a9f2711; Network & System Security agent still pending.)*
-- **T18 — Agent Steering.** Implement the ability to send messages in-TUI to the agent while it's still thinking to steer the model's output.
-- **T19 — Markdown Table Support.** Implement markdown table rendering support within the TUI (tasks pane and general conversation output).
-- **T20 — Auto Scroll on Load.** Ensure the TUI automatically scrolls to the bottom on initialization when a session with an existing transcript is loaded.
--- ** - 
-
-
-
-- **T21 — Web Search Tool.** Implement a web search tool to allow the agent to perform real-time web searches to retrieve up-to-date information.
-- **T22 — Fetch Tool Enhancement.** Ensure the `fetch` tool can work on any source (not just HTTP/HTTPS).
-- **T23 — Global Tracker Integration.** Augment the tasks, memories, and articles systems to support global stores, allowing data to be shared across different sessions/workspaces rather than being scoped only to the current workspace.
-- **T24 — TUI Reference Integration.** Implement `@` for referencing context (files, tasks, etc.) and `#` for tool invocation/guidance (e.g., `#run_command`) within the TUI input, utilizing a suggestion mechanism similar to the existing slash-command (`/`) completion.
-- **T25 — TUI Reference Truncation Bug.** The reference bar in the TUI is incorrectly truncating filenames (e.g., `AGENTS.md` appearing as `ENTS.md` and `MCP_SPEC.md` as `_SPEC.md`). Investigate the string slicing or rendering logic in `internal/tui/app.go` that handles the reference list display.
-- **T26 — Outreach & Marketing.**
-  - Touch base with David Addison.
-  - Reach out to Mitch Keenan.
-  - Finalize landing page for Hero.
-  - Draft LinkedIn post promoting TJ Coder AI Labs.
-  - Research Reddit API integration.
-
-
-### Ollama Usage 
-
-The following snippet can be run in the chrome dev tools when visiting the ollama.com/settings panel to immediately output ollama consumption breakdown, pressure and limits:
-
-```javascript
-(function() {
-  var allDivs = document.getElementsByTagName('div');
-  var sessionDec = 0;
-  var weeklyDec = 0;
-
-  for (var i = 0; i < allDivs.length; i++) {
-    var label = allDivs[i].getAttribute('aria-label');
-    if (label) {
-      // Check for Session Usage
-      if (label.indexOf('Session usage') !== -1) {
-        var children = allDivs[i].getElementsByTagName('div');
-        for (var j = 0; j < children.length; j++) {
-          var width = children[j].style.width;
-          if (width && width.indexOf('%') !== -1) {
-            sessionDec = parseFloat(width) / 100;
-            break;
-          }
-        }
-      }
-      // Check for Weekly Usage
-      if (label.indexOf('Weekly usage') !== -1) {
-        var childrenW = allDivs[i].getElementsByTagName('div');
-        for (var k = 0; k < childrenW.length; k++) {
-          var widthW = childrenW[k].style.width;
-          if (widthW && widthW.indexOf('%') !== -1) {
-            weeklyDec = parseFloat(widthW) / 100;
-            break;
-          }
-        }
-      }
-    }
-  }
-
-  var pressure = sessionDec > weeklyDec ? sessionDec : weeklyDec;
-  
-  var result = {
-    "usage_pressure": Number(pressure.toFixed(4)),
-    "status": pressure > 0.95 ? "CRITICAL" : (pressure > 0.8 ? "WARNING" : "HEALTHY"),
-    "breakdown": {
-      "session": sessionDec,
-      "weekly": weeklyDec
-    },
-    "limiting_factor": weeklyDec >= sessionDec ? "weekly" : "session",
-    "timestamp": new Date().toTimeString().split(' ')[0]
-  };
-
-  console.log("Report Generated:", result);
-  return result;
-})();
+```bash
+make build     # build ./bin/coder
+make run       # build and run the TUI
+make fmt       # gofmt the tree
+go test ./...  # run the unit test suite
+bash TESTS.sh  # end-to-end harness against a live provider
 ```
 
-This would be executed in the dev tools console and is intended for development purposes only.
-- **T27 — Ollama Limit Inference.** Develop a more reliable means of infering or determining Ollama session limits for cloud models, like breakdown and pressure. Use the existing snippet in this document (Ollama Usage section) along with page evaluation and programatic download to get around the terrible Ollama UX. It'll be a hack but will work for now.
+## Contributing
+
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/your-feature`)
+3. Commit with clear messages and `gofmt`-clean code
+4. Push and open a pull request against `main`
+
+See [CONTRIBUTING.md](./CONTRIBUTING.md) for details.
+
+## Agent Behavior Directives
+
+Agents running inside the TUI follow directives in [CODER.md](./CODER.md). These cover presentation control, task tracking, and interaction patterns.

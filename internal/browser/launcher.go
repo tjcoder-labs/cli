@@ -8,7 +8,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"time"
 )
 
@@ -169,7 +168,7 @@ func StartChrome(ctx context.Context, opts ChromeLaunch) (int, string, error) {
 	// environment, but an explicit env merge keeps behavior predictable.
 	cmd.Env = os.Environ()
 	// Detach so the agent process can exit without killing Chrome.
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	setSysProcAttr(cmd)
 	// Capture stderr to a log file so Chrome crash diagnostics are
 	// available instead of going to /dev/null. This is critical for
 	// debugging the repeated-crash scenario.

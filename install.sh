@@ -7,6 +7,9 @@
 #   INSTALL_DIR=/usr/local/bin ./install.sh      # custom install directory
 #   VERSION=0.9.71 ./install.sh                  # specific release tag (with or without leading `v`)
 #   REPO=tjcoder-labs/cli ./install.sh           # override repo
+#   INSTALL_OLLAMA=1 ./install.sh                 # also install Ollama and pull a default model
+#   SKIP_OLLAMA=1 ./install.sh                    # skip Ollama detection entirely
+#   OLLAMA_MODEL=minimax-m3:cloud ./install.sh    # pull a specific model with Ollama
 #
 # Behavior:
 #   1. Detects OS/arch.
@@ -219,6 +222,62 @@ Then restart your shell or:
 EOF
 }
 
+# --- optional Ollama setup ------------------------------------------------
+# Check for a running Ollama server. If not found, offer to install it
+# and pull a default coding model. Skip silently on Termux (Ollama
+# doesn't support Android/armv7) and when --skip-ollama is set.
+maybe_install_ollama() {
+  # Allow opting out entirely.
+  if [[ "${SKIP_OLLAMA:-}" == "1" || "${INSTALL_OLLAMA:-}" == "0" ]]; then
+    return 0
+  fi
+
+  # Ollama is not available on Termux / Android.
+  if is_termux_env; then
+    return 0
+  fi
+
+  # Is Ollama already installed and running?
+  if command -v ollama >/dev/null 2>&1; then
+    if curl -fsS --max-time 3 http://localhost:11434/api/tags >/dev/null 2>&1; then
+      log "Ollama is already running at http://localhost:11434"
+      # Offer to pull a model if none are present.
+      local model_count
+      model_count=$(curl -fsS http://localhost:11434/api/tags 2>/dev/null \
+        | grep -o '"name"' | wc -l || echo 0)
+      if [[ "$model_count" -eq 0 ]]; then
+        local default_model="${OLLAMA_MODEL:-gemma4:cloud}"
+        log "no models pulled yet; pulling $default_model (this may take a while)..."
+        ollama pull "$default_model" || warn "ollama pull failed — you can do this manually with: ollama pull $default_model"
+      fi
+      return 0
+    fi
+    warn "Ollama is installed but not running. Start it with: ollama serve"
+    return 0
+  fi
+
+  # Ollama not installed — offer to install it (non-interactive unless
+  # INSTALL_OLLAMA=1 is set to force).
+  local msg="Ollama is not installed. Coder CLI needs an Ollama server to run."
+  if [[ "${INSTALL_OLLAMA:-}" == "1" ]]; then
+    log "installing Ollama..."
+    if curl -fsSL https://ollama.com/install.sh | bash; then
+      log "Ollama installed. Starting server..."
+      ollama serve >/dev/null 2>&1 &
+      sleep 2
+      local default_model="${OLLAMA_MODEL:-gemma4:cloud}"
+      log "pulling default model $default_model..."
+      ollama pull "$default_model" || warn "ollama pull failed — you can do this manually with: ollama pull $default_model"
+    else
+      warn "Ollama installation failed. Install it manually: https://ollama.com"
+    fi
+  else
+    warn "$msg"
+    warn "Install it automatically with: INSTALL_OLLAMA=1 curl -fsSL https://raw.githubusercontent.com/tjcoder-labs/cli/main/install.sh | bash"
+    warn "Or install Ollama separately: https://ollama.com"
+  fi
+}
+
 # --- main -----------------------------------------------------------------
 main() {
   local platform tmpdir src installed
@@ -257,6 +316,9 @@ main() {
   log "installed $installed"
   "$installed" --version || true
   path_hint "$INSTALL_DIR"
+
+  # Optional: check for Ollama and offer to install + pull a default model.
+  maybe_install_ollama
 }
 
 main "$@"

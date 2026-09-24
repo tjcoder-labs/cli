@@ -8,6 +8,7 @@ A fast, keyboard-driven TUI that pairs a conversational agent with real develope
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-6E56CF.svg)](./LICENSE)
 [![Go](https://img.shields.io/badge/Go-1.25+-00ADD8.svg)](https://go.dev)
+[![npm](https://img.shields.io/npm/v/@tjcoder/cli.svg)](https://www.npmjs.com/package/@tjcoder/cli)
 [![Built by TJ Coder / AI Labs](https://img.shields.io/badge/by-TJ%20Coder%20%2F%20AI%20Labs-6E56CF.svg)](https://github.com/tjcoder-labs)
 
 ![Coder CLI in action](./cli.png)
@@ -24,6 +25,7 @@ A fast, keyboard-driven TUI that pairs a conversational agent with real develope
 - **Specialized agents** — swap between purpose-built agents (software engineer, terminal specialist, code reviewer, Android assistant, cloud expert, social researcher, storyteller).
 - **Browser bridge** — drive real Chrome over CDP: navigate, click, type, screenshot, manage cookies and tabs across multiple isolated profiles. Lifecycle tools (`start_chrome` / `stop_chrome` / `chrome_status`) let agents spin up and clean up per-port browser sessions.
 - **Social research mode** — the `social-researcher` agent combines `browser_bridge` with a persistent interaction ledger and scoped note store to research Reddit/LinkedIn/Gemini without ever repeating an upvote, like, comment, or DM.
+- **Multi-line paste** — paste entire code blocks or documents into the input field; they're kept as one message, not split at each newline.
 - **Markdown table rendering** — GFM pipe tables in model output are rendered as box-drawn tables in the transcript, cognition, and recap panes.
 - **Editable context injection** — a `{{token}}` environment template lets you control exactly what runtime context the model sees.
 - **Robust tool invocation** — native tool-calls plus a fenced-JSON fallback parser, so even smaller local models can use tools reliably.
@@ -32,13 +34,31 @@ A fast, keyboard-driven TUI that pairs a conversational agent with real develope
 
 ## Installation
 
-### One-line install (recommended)
+### npm (recommended for Node users)
+
+```bash
+npm install -g @tjcoder/cli
+```
+
+The `postinstall` hook downloads the right prebuilt binary for your platform — no Go toolchain required. After install, `coder` is on your `PATH`.
+
+### One-line install (recommended for everyone else)
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/tjcoder-labs/cli/main/install.sh | bash
 ```
 
-The installer detects your OS/arch, downloads a prebuilt binary when available (falling back to a source build if `go` is present), and installs `coder` to `~/.local/bin`. Override with `PREFIX=/usr/local`, pin a release with `VERSION=…`.
+The installer detects your OS/arch, downloads a prebuilt binary when available (falling back to a source build if `go` is present), and installs `coder` to `~/.local/bin`. It also checks for Ollama and offers to install it with a default model. Override with `INSTALL_DIR=/usr/local`, pin a release with `VERSION=…`, or auto-install Ollama with `INSTALL_OLLAMA=1`.
+
+### Install with Ollama
+
+```bash
+# Install Coder CLI + Ollama + pull a default model in one go
+INSTALL_OLLAMA=1 curl -fsSL https://raw.githubusercontent.com/tjcoder-labs/cli/main/install.sh | bash
+
+# Specify a different model
+OLLAMA_MODEL=minimax-m3:cloud INSTALL_OLLAMA=1 curl -fsSL https://raw.githubusercontent.com/tjcoder-labs/cli/main/install.sh | bash
+```
 
 ### From source
 
@@ -51,8 +71,8 @@ make install        # installs `coder` onto your PATH
 
 ### Requirements
 
-- **Go 1.25+** (only for building from source)
 - **An LLM provider** — a local or cloud [Ollama](https://ollama.com) endpoint, or a Google Gemini API key
+- **Go 1.25+** (only for building from source)
 
 ## Quick Start
 
@@ -80,7 +100,7 @@ ollama pull minimax-m3:cloud    # strong tool-use alternative
 
 ## Interactive Mode
 
-Type a message to chat, or use slash commands. Start typing `/` to see inline suggestions.
+Type a message to chat, or use slash commands. Start typing `/` to see inline suggestions. Paste multi-line blocks directly — they're kept as a single message and submitted with Enter.
 
 | Command | Description |
 | --- | --- |
@@ -89,7 +109,7 @@ Type a message to chat, or use slash commands. Start typing `/` to see inline su
 | `/model` | Switch the active model |
 | `/tools` | Toggle which tools are enabled |
 | `/environment` | Edit the injected context template (`{{token}}` interpolation) |
-| `/config` | Edit user config (e.g. `toolMax`) |
+| `/config` | Edit user config (e.g. `toolMax`, bubble width) |
 | `/task` · `/tasks` | Create a task · open the interactive task pane |
 | `/memory` | Manage persistent memories |
 | `/reminder` · `/trigger` | Create a reminder · trigger an event |
@@ -233,9 +253,8 @@ cli/
 │   ├── tools/            # Tool implementations (fs, shell, git, browser_bridge, …)
 │   ├── tracking/         # Item/activity tracking
 │   └── tui/              # Terminal UI (markdown tables, cognition pane, scheduler)
-├── npm/                  # npm distribution wrapper (@tj/coder-cli)
-├── test/                 # Test fixtures and cases
-├── install.sh            # Cross-platform installer
+├── npm/coder-cli/        # npm distribution wrapper (@tjcoder/cli)
+├── install.sh            # Cross-platform installer (with optional Ollama setup)
 ├── Makefile
 └── go.mod
 ```

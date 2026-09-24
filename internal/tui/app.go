@@ -248,6 +248,11 @@ type App struct {
 	hintMatches  []slashCommand
 	hintSelected int
 
+	// multiLineInput is true while the input field contains a newline
+	// (e.g. a pasted multi-line block). It suppresses the command /
+	// reference palette so the hint line can show a "multi-line" cue.
+	multiLineInput bool
+
 	// Global input history (decoupled from session.json). Stored
 	// in ~/.config/tjcoder/coder-cli/input_history.json so it
 	// persists across sessions and workspaces. The index tracks
@@ -458,6 +463,12 @@ func (a *App) Run() error {
 			a.renderTranscriptFromEntries(pending)
 		})
 	}
+	// Enable bracketed paste so terminals deliver a multi-line paste as
+	// a single unit to the focused primitive's PasteHandler instead of a
+	// stream of keystrokes. Without this, each newline in a pasted block
+	// arrives as KeyEnter and triggers submit(), splitting the paste at
+	// the first line break and dropping the remainder.
+	a.tv.EnablePaste(true)
 	return a.tv.Run()
 }
 
@@ -588,6 +599,11 @@ func (a *App) build() {
 		if a.aboutMode && text != "" {
 			a.setAboutMode(false)
 		}
+		// A pasted (or typed) block spanning multiple lines is kept as
+		// one message rather than being split at each newline; flag it
+		// so the hint line can show a "multi-line" cue instead of the
+		// command/reference palette.
+		a.multiLineInput = strings.Contains(text, "\n")
 		a.updateInputHint(text)
 		a.refreshContextBar()
 	})
@@ -1057,7 +1073,7 @@ func spacerBox(bg tcell.Color) *tview.Box {
 
 func (a *App) newInputSurface() *tview.Flex {
 	inner := tview.NewFlex().SetDirection(tview.FlexRow).
-		AddItem(a.input, 2, 0, true).
+		AddItem(a.input, 3, 0, true).
 		AddItem(a.contextBar, 3, 0, false)
 	inner.SetBackgroundColor(a.palette.BgInput)
 
@@ -1253,6 +1269,8 @@ func (a *App) refreshContextBar() string {
 		line = a.renderCommandPalette()
 	case "reference":
 		line = a.renderReferencePalette()
+	case "multiline":
+		line = a.renderMultiLineHint()
 	default:
 		line = a.renderMetaBar()
 	}
@@ -1269,6 +1287,12 @@ func (a *App) refreshContextBar() string {
 // else reverts the line to session meta.
 func (a *App) updateInputHint(text string) {
 	switch {
+	case a.multiLineInput:
+		// Multi-line input (pasted block): no palette. The meta bar
+		// renders a dedicated multi-line cue instead.
+		a.hintMode = "multiline"
+		a.hintMatches = nil
+		a.hintSelected = 0
 	case strings.HasPrefix(text, "/"):
 		q := strings.ToLower(strings.TrimPrefix(text, "/"))
 		// Match on the first token only so arguments don't disturb the
@@ -1390,6 +1414,20 @@ func (a *App) renderCommandPalette() string {
 // advertises the feature so the mode is discoverable.
 func (a *App) renderReferencePalette() string {
 	return fmt.Sprintf(" [%s]@ file references — coming soon[-] ", a.palette.HexFaint)
+}
+
+// renderMultiLineHint renders the hint line while the input field holds a
+// multi-line block (typically a paste). It reports the line count and
+// reminds the user that Enter submits the whole block as one message.
+func (a *App) renderMultiLineHint() string {
+	lines := 1
+	if a.input != nil {
+		if t := a.input.GetText(); t != "" {
+			lines = strings.Count(t, "\n") + 1
+		}
+	}
+	return fmt.Sprintf(" [%s]%d-line input[-] [%s]Enter to send as one message[-] ",
+		a.palette.HexPurple, lines, a.palette.HexDim)
 }
 
 func (a *App) renderMetaBar() string {
@@ -2799,8 +2837,11 @@ func (a *App) submit() {
 	// Record in global input history (non-blocking best-effort).
 	a.recordInputHistory(prompt)
 
-	// Handle slash commands
-	if strings.HasPrefix(prompt, "/") {
+	// Handle slash commands. A multi-line block is treated as a plain
+	// message even if it begins with "/" (a pasted snippet shouldn't be
+	// misinterpreted as a command), and an exact single-line "/cmd" is
+	// routed to the command dispatcher.
+	if strings.HasPrefix(prompt, "/") && !strings.Contains(prompt, "\n") {
 		a.mu.Unlock()
 		a.input.SetText("")
 		a.setInputPlaceholder()

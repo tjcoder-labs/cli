@@ -30,8 +30,23 @@ TUI you'll also need:
 
 - An [Ollama](https://ollama.com) server running locally
   (default: `http://localhost:11434`)
-- At least one model pulled (`ollama pull minimax-m3:cloud` or
-  similar)
+- At least one model pulled (`ollama pull gemma4:cloud` or similar)
+
+Don't have Ollama yet? The shell installer can set it up in one go:
+
+```bash
+INSTALL_OLLAMA=1 curl -fsSL https://raw.githubusercontent.com/tjcoder-labs/cli/main/install.sh | bash
+```
+
+## Features
+
+- **Live cognition pane** — watch the model reason in real time
+- **7 specialized agents** — software engineer, terminal specialist, code reviewer, Android assistant, cloud expert, social researcher, storyteller
+- **31 tools** — filesystem, shell, Git, browser automation (CDP), Cloudflare DNS, email, and more
+- **Multi-line paste** — paste code blocks or documents; they're kept as one message
+- **Headless mode** — script it with `coder -p "…"` for CI and automation
+- **Session persistence** — conversation history, tasks, and memories survive across runs
+- **Local-first privacy** — defaults to Ollama; your code never leaves your machine
 
 ## Updating
 
@@ -59,7 +74,7 @@ coder --provider ollama --host http://localhost:11434
 coder --provider gemini --gemini-api-key $GEMINI_API_KEY
 coder --provider gemini models     # list available Gemini models
 coder --workspace-root ~/code/foo
-coder --model minimax-m3:cloud
+coder --model gemma4:cloud
 coder --timeout 30m
 ```
 
