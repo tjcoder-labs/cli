@@ -19,3 +19,7 @@ node_modules/
 # TESTS.sh run output
 /report.json
 /tests.log
+
+# Personal strategy/planning docs
+REDDIT_COMMENT_STRATEGY.md
+PROMOTION_STRATEGY.md

@@ -1,6 +1,6 @@
 {
   "name": "@tjcoder/cli",
-  "version": "0.9.166",
+  "version": "0.9.167",
   "description": "Terminal-first AI coding assistant by TJ Coder / AI Labs. A keyboard-driven TUI with a live cognition pane, 7 specialized agents, and 31 tools, running on local Ollama models by default.",
   "license": "MIT",
   "private": false,
@@ -21,9 +21,10 @@
     "node": ">=18"
   },
   "os": [
-    "android",
+    "darwin",
     "linux",
-    "win32"
+    "win32",
+    "android"
   ],
   "cpu": [
     "x64",

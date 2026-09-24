@@ -22,6 +22,13 @@ const VERSION = process.env.CODER_CLI_VERSION || `v${pkg.version}`;
 // --- platform detection ----------------------------------------------------
 
 function detect() {
+  // Termux reports process.platform as "android". There is no prebuilt
+  // android binary (the linux-arm64 build is incompatible), so route to a
+  // source build instead of a download.
+  if (process.platform === "android") {
+    return { os: "android", arch: process.arch, ext: "source", asset: null };
+  }
+
   // Map Node's platform/arch names to the suffixes we use in release assets.
   const platformMap = {
     darwin: "darwin",
@@ -176,6 +183,28 @@ async function main() {
   if (fs.existsSync(binPath)) {
     // Already installed (e.g. `npm rebuild`); leave the existing binary
     // alone so we don't clobber a working install with a broken download.
+    return;
+  }
+
+  // Termux / android: no prebuilt binary exists, so build from source
+  // using the Go-based installer, which handles pkg installs and cloning.
+  if (info.os === "android") {
+    const { execFileSync } = require("node:child_process");
+    process.stdout.write(
+      "coder: android detected – building from source via install.sh ...\n",
+    );
+    try {
+      execFileSync("bash", [
+        "-c",
+        `curl -fsSL https://raw.githubusercontent.com/${REPO}/main/install.sh | bash`,
+      ], { stdio: "inherit" });
+    } catch (err) {
+      process.stderr.write(
+        `coder: source build failed: ${err.message}\n` +
+        `coder: install manually with:\n` +
+        `coder:   curl -fsSL https://raw.githubusercontent.com/${REPO}/main/install.sh | bash\n`,
+      );
+    }
     return;
   }
 
