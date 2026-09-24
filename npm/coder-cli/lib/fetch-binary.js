@@ -16,7 +16,7 @@ const { URL } = require("node:url");
 const pkg = require("../package.json");
 const REPO = process.env.CODER_CLI_REPO || "tjcoder-labs/cli";
 // Allow pinning a version (matches the @tjcoder/cli package version by
-// default so that `npm i @tjcoder/cli@0.9.164` installs coder v0.9.164).
+// default so that `npm i @tjcoder/cli@0.9.165` installs coder v0.9.165).
 const VERSION = process.env.CODER_CLI_VERSION || `v${pkg.version}`;
 
 // --- platform detection ----------------------------------------------------
@@ -136,14 +136,14 @@ async function checksum(filePath) {
   // Optional SHA256 verification against a sibling .sha256 file. We try, but
   // never fail the install if the file is missing — that keeps dev installs
   // working before the first signed release.
-  const fs = require("node:fs/promises");
+  const fsp = require("node:fs/promises");
   const crypto = require("node:crypto");
   const shaPath = `${filePath}.sha256`;
   if (!fs.existsSync(shaPath)) return;
-  const expected = (await fs.readFile(shaPath, "utf8")).trim().split(/\s+/)[0];
+  const expected = (await fsp.readFile(shaPath, "utf8")).trim().split(/\s+/)[0];
   const actual = crypto
     .createHash("sha256")
-    .update(await fs.readFile(filePath))
+    .update(await fsp.readFile(filePath))
     .digest("hex");
   if (expected.toLowerCase() !== actual.toLowerCase()) {
     throw new Error(

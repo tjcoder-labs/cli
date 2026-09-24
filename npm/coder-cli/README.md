@@ -92,7 +92,7 @@ coder --timeout 30m
 
 ```bash
 # install a specific coder version regardless of the @tjcoder/cli wrapper version
-CODER_CLI_VERSION=v0.9.164 npm install -g @tjcoder/cli
+CODER_CLI_VERSION=v0.9.165 npm install -g @tjcoder/cli
 ```
 
 ## Troubleshooting
