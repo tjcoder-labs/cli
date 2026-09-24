@@ -288,29 +288,48 @@ main() {
   log "platform: $platform"
   log "install:  $INSTALL_DIR"
 
-  # Try prebuilt release first, then a local checkout, then clone + build.
-  if src=$(download_release "$platform" "$tmpdir" 2>/dev/null); then
-    log "using prebuilt binary"
-  elif srcdir=$(find_source_dir 2>/dev/null) && [[ -n "$srcdir" ]]; then
-    warn "no prebuilt binary for $platform; building from local checkout"
-    src=$(build_from_source "$srcdir" "$tmpdir")
-  elif command -v go >/dev/null 2>&1 && command -v git >/dev/null 2>&1; then
-    warn "no prebuilt binary for $platform and no local checkout; cloning source"
-    srcdir=$(clone_source "$tmpdir")
-    src=$(build_from_source "$srcdir" "$tmpdir")
-  else
-    # Missing build deps. On Termux we can self-heal: pkg is always present.
-    if is_termux_env && command -v pkg >/dev/null 2>&1; then
-      warn "missing 'go' and/or 'git'; installing via pkg"
-      pkg update -y >/dev/null 2>&1 || true
-      pkg install -y git golang || die "pkg install git golang failed — run it manually and re-run this script"
-      srcdir=$(clone_source "$tmpdir")
-      src=$(build_from_source "$srcdir" "$tmpdir")
-    else
-      local msg="no prebuilt binary available for $platform, and cannot build from source (need 'go' and 'git' on PATH)"
-      die "$msg"
+  # If running on Termux, skip the prebuilt binary (it’s incompatible) and build from source.
+if is_termux_env; then
+    warn "Termux detected – building from source instead of using a prebuilt binary."
+    # Ensure go and git are present (install via pkg if needed).
+    if ! command -v go >/dev/null 2>&1 || ! command -v git >/dev/null 2>&1; then
+        if command -v pkg >/dev/null 2>&1; then
+            warn "installing go and git via pkg..."
+            pkg update -y >/dev/null 2>&1 || true
+            pkg install -y git golang || die "pkg install git golang failed – run it manually and re‑run this script"
+        else
+            die "go and git are required to build from source on Termux. Install them and re‑run."
+        fi
     fi
-  fi
+    srcdir=$(find_source_dir 2>/dev/null) && [[ -n "$srcdir" ]] && src=$(build_from_source "$srcdir" "$tmpdir") || {
+        srcdir=$(clone_source "$tmpdir")
+        src=$(build_from_source "$srcdir" "$tmpdir")
+    }
+else
+    # Try prebuilt release first, then a local checkout, then clone + build.
+    if src=$(download_release "$platform" "$tmpdir" 2>/dev/null); then
+        log "using prebuilt binary"
+    elif srcdir=$(find_source_dir 2>/dev/null) && [[ -n "$srcdir" ]]; then
+        warn "no prebuilt binary for $platform; building from local checkout"
+        src=$(build_from_source "$srcdir" "$tmpdir")
+    elif command -v go >/dev/null 2>&1 && command -v git >/dev/null 2>&1; then
+        warn "no prebuilt binary for $platform and no local checkout; cloning source"
+        srcdir=$(clone_source "$tmpdir")
+        src=$(build_from_source "$srcdir" "$tmpdir")
+    else
+        # Missing build deps. On Termux we can self‑heal: pkg is always present.
+        if is_termux_env && command -v pkg >/dev/null 2>&1; then
+            warn "missing 'go' and/or 'git'; installing via pkg"
+            pkg update -y >/dev/null 2>&1 || true
+            pkg install -y git golang || die "pkg install git golang failed – run it manually and re‑run this script"
+            srcdir=$(clone_source "$tmpdir")
+            src=$(build_from_source "$srcdir" "$tmpdir")
+        else
+            local msg="no prebuilt binary available for $platform, and cannot build from source (need 'go' and 'git' on PATH)"
+            die "$msg"
+        fi
+    fi
+fi
 
   installed=$(install_binary "$src" "$INSTALL_DIR")
   log "installed $installed"
