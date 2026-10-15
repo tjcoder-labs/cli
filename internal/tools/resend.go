@@ -36,6 +36,7 @@ func resendTokenPath() string {
 // resendResolveToken returns the bearer token from, in order:
 //  1. the RESEND_API_KEY environment variable, then
 //  2. the persisted token file (~/.local/share/coder/resend-token).
+//
 // An empty string means "not configured".
 func resendResolveToken() string {
 	if t := strings.TrimSpace(os.Getenv("RESEND_API_KEY")); t != "" {
@@ -64,20 +65,22 @@ func (e resendAPIError) String() string {
 
 // resendArgs is the decoded argument set for the resend tool.
 type resendArgs struct {
-	Action     string `json:"action"`
-	Token      string `json:"token"`
-	From       string `json:"from"`
-	To         string `json:"to"`
-	Subject    string `json:"subject"`
-	HTML       string `json:"html"`
-	Text       string `json:"text"`
-	CC         string `json:"cc"`
-	BCC        string `json:"bcc"`
-	ReplyTo    string `json:"reply_to"`
-	ScheduledAt string `json:"scheduled_at"`
-	ID         string `json:"id"`
-	Limit      int    `json:"limit"`
-	After      string `json:"after"`
+	Action       string `json:"action"`
+	Token        string `json:"token"`
+	From         string `json:"from"`
+	To           string `json:"to"`
+	Subject      string `json:"subject"`
+	HTML         string `json:"html"`
+	Text         string `json:"text"`
+	CC           string `json:"cc"`
+	BCC          string `json:"bcc"`
+	ReplyTo      string `json:"reply_to"`
+	ScheduledAt  string `json:"scheduled_at"`
+	ID           string `json:"id"`
+	Limit        int    `json:"limit"`
+	After        string `json:"after"`
+	Before       string `json:"before"`
+	AttachmentID string `json:"attachment_id"`
 }
 
 // resendTool provides send/list/retrieve access to emails via the
@@ -100,23 +103,29 @@ ACTIONS:
 - send(from, to, subject, html?, text?, cc?, bcc?, reply_to?, scheduled_at?): send an email.
 - list(limit?, after?): list sent emails (id, to, subject, created_at).
 - get(id): retrieve a single email by id (includes html, text, subject, from, to).
+- inbox(limit?, after?, before?): list received (inbound) emails. Requires the Resend Inbound feature enabled on a domain route; returns an empty list otherwise.
+- inbox_get(id): retrieve a single received email by id (includes html, text, headers).
+- inbox_attachments(id, limit?, after?, before?): list attachments for a received email.
+- inbox_attachment(id, attachment_id): retrieve a single attachment's metadata for a received email.
 
-SAFETY: list/get are safe. send sends a real email; confirm the recipient and content with the user before invoking. Never print the API key.`,
+SAFETY: list/get/inbox actions are safe and read-only. send sends a real email; confirm the recipient and content with the user before invoking. Never print the API key.`,
 			Parameters: objectSchema([]string{"action"}, map[string]any{
-				"action":      stringProp("auth | send | list | get"),
-				"token":       stringProp("Resend API key (only for action=auth)."),
-				"from":        stringProp("Sender email (e.g. Acme <onboarding@example.dev>)."),
-				"to":          stringProp("Recipient email (comma-separated for multiple)."),
-				"subject":     stringProp("Email subject."),
-				"html":        stringProp("HTML body of the email."),
-				"text":        stringProp("Plain text body of the email."),
-				"cc":          stringProp("CC recipient(s), comma-separated."),
-				"bcc":         stringProp("BCC recipient(s), comma-separated."),
-				"reply_to":    stringProp("Reply-to email address."),
-				"scheduled_at": stringProp("Schedule email (natural language or ISO 8601)."),
-				"id":          stringProp("Email id (for get)."),
-				"limit":       numberProp("Max results for list (1-100, default 20)."),
-				"after":       stringProp("Pagination cursor (email id)."),
+				"action":        stringProp("auth | send | list | get | inbox | inbox_get | inbox_attachments | inbox_attachment"),
+				"token":         stringProp("Resend API key (only for action=auth)."),
+				"from":          stringProp("Sender email (e.g. Acme <onboarding@example.dev>)."),
+				"to":            stringProp("Recipient email (comma-separated for multiple)."),
+				"subject":       stringProp("Email subject."),
+				"html":          stringProp("HTML body of the email."),
+				"text":          stringProp("Plain text body of the email."),
+				"cc":            stringProp("CC recipient(s), comma-separated."),
+				"bcc":           stringProp("BCC recipient(s), comma-separated."),
+				"reply_to":      stringProp("Reply-to email address."),
+				"scheduled_at":  stringProp("Schedule email (natural language or ISO 8601)."),
+				"id":            stringProp("Email id (for get, inbox_get, inbox_attachments)."),
+				"attachment_id": stringProp("Attachment id (for inbox_attachment)."),
+				"limit":         numberProp("Max results for list/inbox (1-100, default 20)."),
+				"after":         stringProp("Pagination cursor (email id) for list/inbox."),
+				"before":        stringProp("Pagination cursor (email id) for inbox; cannot be combined with after."),
 			}),
 		},
 	}
@@ -129,7 +138,7 @@ func (resendTool) Execute(ctx context.Context, raw json.RawMessage, env ExecEnv)
 	}
 	a.Action = strings.ToLower(strings.TrimSpace(a.Action))
 	if a.Action == "" {
-		return Result{}, fmt.Errorf("action is required (auth|send|list|get)")
+		return Result{}, fmt.Errorf("action is required (auth|send|list|get|inbox|inbox_get|inbox_attachments|inbox_attachment)")
 	}
 
 	if a.Action == "auth" {
@@ -148,8 +157,16 @@ func (resendTool) Execute(ctx context.Context, raw json.RawMessage, env ExecEnv)
 		return resendList(ctx, token, a)
 	case "get":
 		return resendGet(ctx, token, a.ID)
+	case "inbox":
+		return resendInbox(ctx, token, a)
+	case "inbox_get":
+		return resendInboxGet(ctx, token, a.ID)
+	case "inbox_attachments":
+		return resendInboxAttachments(ctx, token, a)
+	case "inbox_attachment":
+		return resendInboxAttachment(ctx, token, a)
 	default:
-		return Result{}, fmt.Errorf("unknown action %q (auth|send|list|get)", a.Action)
+		return Result{}, fmt.Errorf("unknown action %q (auth|send|list|get|inbox|inbox_get|inbox_attachments|inbox_attachment)", a.Action)
 	}
 }
 
@@ -252,6 +269,90 @@ func resendGet(ctx context.Context, token, id string) (Result, error) {
 		return Result{}, err
 	}
 	return Result{Content: body, Preview: preview(body)}, nil
+}
+
+// resendInbox lists received (inbound) emails.
+func resendInbox(ctx context.Context, token string, a resendArgs) (Result, error) {
+	if a.After != "" && a.Before != "" {
+		return Result{}, fmt.Errorf("after and before are mutually exclusive")
+	}
+	endpoint := "/emails/receiving"
+	params := []string{fmt.Sprintf("limit=%d", inboxLimit(a.Limit))}
+	if a.After != "" {
+		params = append(params, "after="+a.After)
+	}
+	if a.Before != "" {
+		params = append(params, "before="+a.Before)
+	}
+	body, err := resendCall(ctx, token, "GET", endpoint+"?"+strings.Join(params, "&"), nil)
+	if err != nil {
+		return Result{}, err
+	}
+	return Result{Content: body, Preview: preview(body)}, nil
+}
+
+// resendInboxGet retrieves a single received email by id.
+func resendInboxGet(ctx context.Context, token, id string) (Result, error) {
+	if id == "" {
+		return Result{}, fmt.Errorf("email id is required for inbox_get")
+	}
+	body, err := resendCall(ctx, token, "GET", "/emails/receiving/"+id, nil)
+	if err != nil {
+		return Result{}, err
+	}
+	return Result{Content: body, Preview: preview(body)}, nil
+}
+
+// resendInboxAttachments lists attachments for a received email.
+func resendInboxAttachments(ctx context.Context, token string, a resendArgs) (Result, error) {
+	if a.ID == "" {
+		return Result{}, fmt.Errorf("email id is required for inbox_attachments")
+	}
+	if a.After != "" && a.Before != "" {
+		return Result{}, fmt.Errorf("after and before are mutually exclusive")
+	}
+	endpoint := "/emails/receiving/" + a.ID + "/attachments"
+	params := []string{fmt.Sprintf("limit=%d", inboxLimit(a.Limit))}
+	if a.After != "" {
+		params = append(params, "after="+a.After)
+	}
+	if a.Before != "" {
+		params = append(params, "before="+a.Before)
+	}
+	body, err := resendCall(ctx, token, "GET", endpoint+"?"+strings.Join(params, "&"), nil)
+	if err != nil {
+		return Result{}, err
+	}
+	return Result{Content: body, Preview: preview(body)}, nil
+}
+
+// resendInboxAttachment retrieves a single attachment's metadata for a
+// received email.
+func resendInboxAttachment(ctx context.Context, token string, a resendArgs) (Result, error) {
+	if a.ID == "" {
+		return Result{}, fmt.Errorf("email id is required for inbox_attachment")
+	}
+	if a.AttachmentID == "" {
+		return Result{}, fmt.Errorf("attachment_id is required for inbox_attachment")
+	}
+	endpoint := "/emails/receiving/" + a.ID + "/attachments/" + a.AttachmentID
+	body, err := resendCall(ctx, token, "GET", endpoint, nil)
+	if err != nil {
+		return Result{}, err
+	}
+	return Result{Content: body, Preview: preview(body)}, nil
+}
+
+// inboxLimit normalizes the limit query param for inbox endpoints,
+// defaulting to 20 and capping at 100.
+func inboxLimit(n int) int {
+	if n <= 0 {
+		return 20
+	}
+	if n > 100 {
+		return 100
+	}
+	return n
 }
 
 // resendCall performs an authenticated request and returns the body.
