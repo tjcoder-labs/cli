@@ -152,6 +152,9 @@ var slashCommands = []slashCommand{
 	{"memory", "Store a memory"},
 	{"config", "Edit user config (JSON)"},
 	{"environment", "Edit injected environment/context template"},
+	{"login", "Authenticate with ergo (API key)"},
+	{"logout", "Sign out of ergo"},
+	{"balance", "Show ergo wallet balance"},
 	{"activity", "Open activity panel"},
 	{"canvas", "Open a file/range in the canvas panel"},
 	{"about", "Open the about / welcome screen"},
@@ -1810,6 +1813,12 @@ func (a *App) handleSlashCommand(cmd string) {
 		}
 	case "mcp":
 		a.handleMCPCommand(parts)
+	case "login":
+		a.handleLoginCommand()
+	case "logout":
+		a.handleLogoutCommand()
+	case "balance":
+		a.handleBalanceCommand()
 	default:
 		a.appendActivity(fmt.Sprintf("Unknown command: /%s. Try /agent, /tools, /model, /config, /environment, /scroll, /clear, /quit, /task, /memory, /tasks", command))
 	}

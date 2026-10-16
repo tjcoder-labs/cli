@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/tjcoder-labs/cli/internal/agent"
+	"github.com/tjcoder-labs/cli/internal/auth"
 	"github.com/tjcoder-labs/cli/internal/browser"
 	"github.com/tjcoder-labs/cli/internal/client"
 	ctxpkg "github.com/tjcoder-labs/cli/internal/context"
@@ -237,6 +238,19 @@ func main() {
 	provider, err := client.NewProvider(*providerName, *host, *geminiKey, *timeout)
 	if err != nil {
 		fatal("%v", err)
+	}
+	// For the ergo provider, resolve a persisted API key (saved via /login)
+	// when ERGO_API_KEY isn't set in the environment. Never fatal on a
+	// missing key — the first chat surfaces a typed 401 with guidance.
+	if *providerName == "ergo" {
+		if ep, ok := provider.(*client.Ergo); ok && auth.ResolveErgoToken() != "" {
+			base := strings.TrimSpace(os.Getenv("ERGO_BASE_URL"))
+			if base == "" {
+				base = client.ErgoDefaultBaseURL
+			}
+			provider = client.NewErgo(strings.TrimRight(base, "/"), auth.ResolveErgoToken(), *timeout)
+			_ = ep
+		}
 	}
 
 	// For Gemini, default to a sensible chat model when none is specified.
