@@ -31,6 +31,7 @@ func ErgoTokenPath() string {
 // ResolveErgoToken returns the bearer token from, in order:
 //  1. the ERGO_API_KEY environment variable, then
 //  2. the persisted token file (see ErgoTokenPath).
+//
 // An empty string means "not authenticated".
 func ResolveErgoToken() string {
 	if t := strings.TrimSpace(os.Getenv(ergoTokenEnv)); t != "" {
