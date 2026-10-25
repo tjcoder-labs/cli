@@ -6,11 +6,20 @@ import (
 	"time"
 )
 
-// NewProvider creates a Provider by name. Supported names: "ollama", "gemini", "ergo".
+// NewProvider creates a Provider by name. Supported names: "ollama", "ollama-cloud", "gemini", "ergo".
 func NewProvider(name, host, geminiAPIKey string, timeout time.Duration) (Provider, error) {
 	switch name {
 	case "", "ollama":
 		return NewOllamaWithTimeout(host, timeout), nil
+	case "ollama-cloud", "ollama_cloud":
+		// Hosted Ollama (ollama.com). Key comes from OLLAMA_API_KEY. A missing
+		// key is not fatal here: the first request surfaces the server's 401
+		// and the TUI can tell the user to set OLLAMA_API_KEY.
+		cloudHost := host
+		if cloudHost == "" || cloudHost == "http://localhost:11434" {
+			cloudHost = os.Getenv("OLLAMA_CLOUD_HOST")
+		}
+		return NewOllamaCloud(cloudHost, os.Getenv("OLLAMA_API_KEY"), timeout), nil
 	case "gemini":
 		if geminiAPIKey == "" {
 			return nil, fmt.Errorf("--gemini-api-key or GEMINI_API_KEY required for gemini provider")
@@ -28,6 +37,6 @@ func NewProvider(name, host, geminiAPIKey string, timeout time.Duration) (Provid
 		}
 		return NewErgo(base, os.Getenv("ERGO_API_KEY"), timeout), nil
 	default:
-		return nil, fmt.Errorf("unknown provider %q: supported values are ollama, gemini, ergo", name)
+		return nil, fmt.Errorf("unknown provider %q: supported values are ollama, ollama-cloud, gemini, ergo", name)
 	}
 }

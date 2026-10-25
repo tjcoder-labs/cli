@@ -19,8 +19,13 @@ import (
 
 const DefaultRequestTimeout = 30 * time.Minute
 
+// OllamaCloudHost is the hosted Ollama API. Cloud models (tags ending in
+// "-cloud") and hosted inference are served from here with Bearer auth.
+const OllamaCloudHost = "https://ollama.com"
+
 type Ollama struct {
 	baseURL    string
+	apiKey     string // optional; sent as "Authorization: Bearer" when set
 	httpClient *http.Client
 	mu         sync.Mutex
 	ctxWindow  map[string]int
@@ -81,6 +86,7 @@ func (o *Ollama) ShowModel(ctx context.Context, model string) (ModelDetails, err
 	if err != nil {
 		return ModelDetails{}, err
 	}
+	o.authorize(req)
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := o.httpClient.Do(req)
 	if err != nil {
@@ -144,6 +150,26 @@ func NewOllamaWithTimeout(baseURL string, requestTimeout time.Duration) *Ollama 
 	}
 }
 
+// NewOllamaCloud returns an Ollama client that talks to the hosted Ollama API
+// (https://ollama.com unless baseURL is non-empty) authenticated with apiKey.
+// The wire protocol (/api/chat, /api/tags, /api/show) is identical to a local
+// Ollama daemon, so all existing streaming/tool-calling behaviour is reused.
+func NewOllamaCloud(baseURL, apiKey string, requestTimeout time.Duration) *Ollama {
+	if strings.TrimSpace(baseURL) == "" {
+		baseURL = OllamaCloudHost
+	}
+	o := NewOllamaWithTimeout(baseURL, requestTimeout)
+	o.apiKey = strings.TrimSpace(apiKey)
+	return o
+}
+
+// authorize attaches the Bearer token when an API key is configured.
+func (o *Ollama) authorize(req *http.Request) {
+	if o.apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+o.apiKey)
+	}
+}
+
 func (o *Ollama) BaseURL() string {
 	return o.baseURL
 }
@@ -156,6 +182,7 @@ func (o *Ollama) ListModels(ctx context.Context) ([]ModelInfo, error) {
 	if err != nil {
 		return nil, err
 	}
+	o.authorize(req)
 	resp, err := o.httpClient.Do(req)
 	if err != nil {
 		return nil, err
@@ -225,6 +252,7 @@ func (o *Ollama) ContextWindow(ctx context.Context, model string) (int, error) {
 	if err != nil {
 		return 0, err
 	}
+	o.authorize(req)
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := o.httpClient.Do(req)
 	if err != nil {
@@ -275,6 +303,7 @@ func (o *Ollama) chatOnce(ctx context.Context, request ChatRequest, onEvent func
 	if err != nil {
 		return Message{}, err
 	}
+	o.authorize(req)
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := o.httpClient.Do(req)
