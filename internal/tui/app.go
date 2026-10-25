@@ -1682,6 +1682,10 @@ func (a *App) stopSpinner() {
 }
 
 func (a *App) globalKeys(event *tcell.EventKey) *tcell.EventKey {
+	if os.Getenv("CODER_DEBUG_FOCUS") == "1" && a.leftPane != nil {
+		f := a.tv.GetFocus()
+		fmt.Fprintf(os.Stderr, "[focus-debug] key=%v focus=%T\n", event.Key(), f)
+	}
 	if event.Key() == tcell.KeyCtrlC {
 		a.tv.Stop()
 		return nil
