@@ -160,3 +160,23 @@ func TestMergePrefsOnlyOverridesNonEmpty(t *testing.T) {
 		t.Fatalf("merge wiped untouched fields: %+v", merged)
 	}
 }
+
+func TestProviderPrefRoundTrip(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	if _, ok := GetProvider(); ok {
+		t.Fatal("expected no saved provider on fresh config")
+	}
+	if err := SetProvider("ollama"); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := GetProvider(); !ok || got != "ollama" {
+		t.Fatalf("got %q,%v", got, ok)
+	}
+	// Saving a model must not wipe the provider.
+	if err := SetLastModel(true, "m"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := GetProvider(); got != "ollama" {
+		t.Fatalf("provider lost after SetLastModel: %q", got)
+	}
+}

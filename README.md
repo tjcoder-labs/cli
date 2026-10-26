@@ -4,7 +4,7 @@
 
 **An AI-powered terminal coding assistant — designed and built for the future, from the command line.**
 
-A fast, keyboard-driven TUI that pairs a conversational agent with real developer tools: filesystem operations, shell execution, Git, task tracking, and a live "cognition" view of the model's reasoning. Runs against local Ollama models or cloud providers.
+A fast, keyboard-driven TUI that pairs a conversational agent with real developer tools: filesystem operations, shell execution, Git, task tracking, and a live "cognition" view of the model's reasoning. Runs against the ergo gateway by default, or local Ollama models and other cloud providers.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-6E56CF.svg)](./LICENSE)
 [![Go](https://img.shields.io/badge/Go-1.25+-00ADD8.svg)](https://go.dev)
@@ -30,7 +30,7 @@ A fast, keyboard-driven TUI that pairs a conversational agent with real develope
 - **Editable context injection** — a `{{token}}` environment template lets you control exactly what runtime context the model sees.
 - **Robust tool invocation** — native tool-calls plus a fenced-JSON fallback parser, so even smaller local models can use tools reliably.
 - **Session persistence** — conversation history, tasks, and project context survive across runs, per workspace.
-- **Multi-provider** — Ollama (default, local or cloud) and Google Gemini out of the box.
+- **Multi-provider** — ergo (default; sign in with `/login`), Ollama (local), Ollama Cloud, and Google Gemini out of the box.
 
 ## Installation
 
@@ -71,7 +71,7 @@ make install        # installs `coder` onto your PATH
 
 ### Requirements
 
-- **An LLM provider** — a local or cloud [Ollama](https://ollama.com) endpoint, or a Google Gemini API key
+- **An LLM provider** — an ergo account (run `/login` in the TUI), a local or cloud [Ollama](https://ollama.com) endpoint, or a Google Gemini API key
 - **Go 1.25+** (only for building from source)
 
 ## Quick Start
@@ -82,6 +82,10 @@ coder
 
 # Use a specific model
 coder --model gemma4:cloud
+
+# Default provider is ergo — run /login inside the TUI the first time.
+# Use local Ollama instead (ergo is tried first, then ollama, then ollama-cloud):
+coder --provider ollama
 
 # Point at a remote Ollama-compatible endpoint
 coder --host https://your-ollama-endpoint.com
@@ -208,6 +212,8 @@ export CODER_HTTP_TIMEOUT="5m"      # provider HTTP timeout (Go duration, option
 
 Provider, host, and model are selected per run via flags (`--provider`, `--host`, `--model`) and remembered between sessions (see below).
 
+**Provider priority:** `ergo` → `ollama` (local) → `ollama-cloud`. With no `--provider` flag and no saved choice, the TUI starts on `ergo` and, if you are not signed in, prompts you to run `/login` (it never silently switches to Ollama). Headless runs (`-p`, `ask`) use `ergo` when signed in, otherwise fall back to local Ollama (if reachable), then Ollama Cloud (if `OLLAMA_API_KEY` is set). An explicit `--provider` is saved and always wins over this default.
+
 **Per-workspace state** lives under `.ergo-cli-go/` in your working directory:
 
 - `session.json` — conversation history, tasks, memories, and the last-used agent/model
@@ -243,7 +249,7 @@ cli/
 ├── internal/
 │   ├── agent/            # Agent definitions and orchestration
 │   ├── browser/          # CDP client, tab registry, Chrome launcher, interaction ledger
-│   ├── client/           # LLM provider clients (ollama, gemini)
+│   ├── client/           # LLM provider clients (ergo, ollama, gemini)
 │   ├── context/          # Runtime context + environment templating
 │   ├── highlight/        # Syntax/markdown highlighting
 │   ├── memories/         # Persistent memory store

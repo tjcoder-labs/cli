@@ -167,6 +167,10 @@ func NewErgo(baseURL, apiKey string, timeout time.Duration) *Ergo {
 
 func (e *Ergo) BaseURL() string { return e.baseURL }
 
+// Authenticated reports whether an API key is configured. It does not
+// validate the key against the gateway.
+func (e *Ergo) Authenticated() bool { return e.apiKey != "" }
+
 func (e *Ergo) Chat(ctx context.Context, request ChatRequest, onEvent func(StreamEvent) error) (Message, error) {
 	if ctx == nil {
 		ctx = context.Background()

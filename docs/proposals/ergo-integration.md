@@ -35,8 +35,9 @@ $ coder                  # chat — all completions billed to their ergo wallet
 $ coder logout
 ```
 
-Provider selection: `ollama` (free, local) stays default; a new `ergo`
-provider appears once authenticated. `/model` lists models from the ergo
+Provider selection: `ergo` is the default (priority: ergo → ollama →
+ollama-cloud); when not signed in the TUI prompts for `/login` rather than
+falling back to ollama. An explicit `--provider` is saved and always wins. `/model` lists models from the ergo
 rate card the tenant's key may use.
 
 ### Auth path options (choose one — recommend B first)

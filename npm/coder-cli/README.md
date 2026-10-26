@@ -46,7 +46,7 @@ INSTALL_OLLAMA=1 curl -fsSL https://raw.githubusercontent.com/tjcoder-labs/cli/m
 - **Multi-line paste** — paste code blocks or documents; they're kept as one message
 - **Headless mode** — script it with `coder -p "…"` for CI and automation
 - **Session persistence** — conversation history, tasks, and memories survive across runs
-- **Local-first privacy** — defaults to Ollama; your code never leaves your machine
+- **Provider priority** — defaults to ergo (run `/login`), then local Ollama, then Ollama Cloud; use `--provider ollama` to keep everything on your machine
 
 ## Updating
 

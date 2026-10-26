@@ -4,9 +4,18 @@ import (
 	"fmt"
 	"os"
 	"time"
+
+	"github.com/tjcoder-labs/cli/internal/auth"
 )
 
-// NewProvider creates a Provider by name. Supported names: "ollama", "ollama-cloud", "gemini", "ergo".
+// ProviderOrder is the canonical priority order for listing providers and for
+// auto-selecting a default: ergo first, then local ollama, then ollama-cloud.
+// Anything that shows or iterates providers (help text, errors, pickers)
+// should use this slice so the ordering stays consistent.
+var ProviderOrder = []string{"ergo", "ollama", "ollama-cloud", "gemini"}
+
+// NewProvider creates a Provider by name. Supported names (in priority
+// order): "ergo", "ollama", "ollama-cloud", "gemini".
 func NewProvider(name, host, geminiAPIKey string, timeout time.Duration) (Provider, error) {
 	switch name {
 	case "", "ollama":
@@ -27,16 +36,15 @@ func NewProvider(name, host, geminiAPIKey string, timeout time.Duration) (Provid
 		return NewGemini(geminiAPIKey, timeout), nil
 	case "ergo":
 		// The ergo provider authenticates with a scoped ergo API key. We read
-		// it from the environment here; the TUI's /login flow persists it and
-		// re-resolves. When neither is set we still return a configured
+		// it from ERGO_API_KEY or the token saved by /login. When neither is set we still return a configured
 		// provider so the error surfaces at first chat with a clean 401-typed
 		// ErgoAuthError (rather than a startup failure).
 		base := os.Getenv("ERGO_BASE_URL")
 		if base == "" {
 			base = ErgoDefaultBaseURL
 		}
-		return NewErgo(base, os.Getenv("ERGO_API_KEY"), timeout), nil
+		return NewErgo(base, auth.ResolveErgoToken(), timeout), nil
 	default:
-		return nil, fmt.Errorf("unknown provider %q: supported values are ollama, ollama-cloud, gemini, ergo", name)
+		return nil, fmt.Errorf("unknown provider %q: supported values are ergo, ollama, ollama-cloud, gemini", name)
 	}
 }

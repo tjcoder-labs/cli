@@ -813,6 +813,9 @@ func (a *App) build() {
 	a.setActivePanel("activity")
 	a.appendActivity("Developed by TJ Coder / AI Labs")
 	a.appendActivity("Loaded provider " + a.provider.BaseURL())
+	if msg := ergoLoginPrompt(a.provider); msg != "" {
+		a.appendActivity(msg)
+	}
 	a.appendActivity("Enabled tools: " + strings.Join(a.enabledToolList(), ", "))
 
 	// If the agent has not yet had a chance to respond (no history),
@@ -1824,7 +1827,7 @@ func (a *App) handleSlashCommand(cmd string) {
 	case "balance":
 		a.handleBalanceCommand()
 	default:
-		a.appendActivity(fmt.Sprintf("Unknown command: /%s. Try /agent, /tools, /model, /config, /environment, /scroll, /clear, /quit, /task, /memory, /tasks", command))
+		a.appendActivity(fmt.Sprintf("Unknown command: /%s. Try /login, /agent, /tools, /model, /config, /environment, /scroll, /clear, /quit, /task, /memory, /tasks", command))
 	}
 }
 

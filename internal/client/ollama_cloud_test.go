@@ -4,8 +4,11 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/tjcoder-labs/cli/internal/auth"
 )
 
 func TestOllamaCloudSendsBearerOnAllRequests(t *testing.T) {
@@ -64,5 +67,34 @@ func TestFactoryOllamaCloudDefaultsToHostedAPI(t *testing.T) {
 	}
 	if p.BaseURL() != OllamaCloudHost {
 		t.Fatalf("BaseURL = %q, want %q", p.BaseURL(), OllamaCloudHost)
+	}
+}
+
+func TestProviderOrderErgoFirst(t *testing.T) {
+	want := []string{"ergo", "ollama", "ollama-cloud"}
+	for i, w := range want {
+		if ProviderOrder[i] != w {
+			t.Fatalf("ProviderOrder[%d]=%q want %q", i, ProviderOrder[i], w)
+		}
+	}
+	_, err := NewProvider("nope", "", "", 0)
+	if err == nil || !strings.Contains(err.Error(), "ergo, ollama, ollama-cloud") {
+		t.Fatalf("unknown-provider error should list ergo first, got %v", err)
+	}
+}
+
+func TestNewProviderErgoUsesSavedToken(t *testing.T) {
+	t.Setenv("ERGO_API_KEY", "")
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	p, _ := NewProvider("ergo", "", "", 0)
+	if p.(*Ergo).Authenticated() {
+		t.Fatal("expected unauthenticated with no token")
+	}
+	if err := auth.SaveErgoToken("test-token"); err != nil {
+		t.Fatal(err)
+	}
+	p, _ = NewProvider("ergo", "", "", 0)
+	if !p.(*Ergo).Authenticated() {
+		t.Fatal("expected saved token to be picked up")
 	}
 }

@@ -18,6 +18,17 @@ import (
 // validation, balance refresh).
 const ergoAuthTimeout = 12 * time.Second
 
+// ergoLoginPrompt returns a prominent sign-in notice when the active provider
+// is ergo but no credentials are configured, and "" otherwise. ergo is the
+// default provider, so we tell the user to /login instead of silently
+// falling back to ollama.
+func ergoLoginPrompt(p client.Provider) string {
+	if e, ok := p.(*client.Ergo); ok && !e.Authenticated() {
+		return "[yellow::b]ergo is your default provider but you are not signed in.[-:-:-] Run [::b]/login[-:-:-] to sign in (or start with --provider ollama to use a local model)."
+	}
+	return ""
+}
+
 // handleLoginCommand prompts for a scoped ergo API key (scope "ergo-chat")
 // and persists it under ~/.local/share/coder. The key is never echoed in
 // the transcript or written to session state — it only lives in memory

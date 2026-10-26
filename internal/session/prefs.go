@@ -53,6 +53,9 @@ type Prefs struct {
 	LastTUIModel string `json:"last_tui_model,omitempty"`
 	// LastHeadlessModel: see LastTUIModel.
 	LastHeadlessModel string `json:"last_headless_model,omitempty"`
+	// Provider is the provider the user explicitly chose (via --provider).
+	// When set it always wins over the automatic ergo-first default.
+	Provider string `json:"provider,omitempty"`
 	// Theme is reserved for future cross-workspace UI prefs.
 	// Not used yet; kept here so the on-disk schema does not
 	// shift the first time we add a non-model pref.
@@ -73,6 +76,9 @@ func mergePrefs(base, overrides Prefs) Prefs {
 	}
 	if overrides.LastHeadlessModel != "" {
 		out.LastHeadlessModel = overrides.LastHeadlessModel
+	}
+	if overrides.Provider != "" {
+		out.Provider = overrides.Provider
 	}
 	if overrides.Theme != "" {
 		out.Theme = overrides.Theme
@@ -230,4 +236,32 @@ func LastModelOrDefault(isTUI bool, fallback string) string {
 		return fallback
 	}
 	return DefaultModel
+}
+
+// GetProvider returns the user's explicitly saved provider choice. The
+// boolean is false when none has been saved (callers then apply the
+// automatic ergo-first default).
+func GetProvider() (string, bool) {
+	prefsMu.Lock()
+	defer prefsMu.Unlock()
+	p, _, err := loadPrefsLocked()
+	if err != nil || p.Provider == "" {
+		return "", false
+	}
+	return p.Provider, true
+}
+
+// SetProvider records an explicit provider choice. Empty is a no-op.
+func SetProvider(name string) error {
+	if name == "" {
+		return nil
+	}
+	prefsMu.Lock()
+	defer prefsMu.Unlock()
+	p, _, err := loadPrefsLocked()
+	if err != nil {
+		p = Prefs{}
+	}
+	p.Provider = name
+	return savePrefsLocked(p)
 }

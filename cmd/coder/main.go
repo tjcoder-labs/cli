@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"github.com/tjcoder-labs/cli/internal/agent"
-	"github.com/tjcoder-labs/cli/internal/auth"
 	"github.com/tjcoder-labs/cli/internal/browser"
 	"github.com/tjcoder-labs/cli/internal/client"
 	ctxpkg "github.com/tjcoder-labs/cli/internal/context"
@@ -30,7 +29,6 @@ import (
 const (
 	defaultHost        = "http://localhost:11434"
 	defaultGeminiModel = "gemini-2.5-flash"
-	defaultProvider    = "ollama"
 )
 
 // likeRe matches the "Like N" or "Like M-N posts" instruction at the
@@ -94,12 +92,12 @@ var (
 func main() {
 	versionFlag := flag.Bool("version", false, "print version and exit")
 	flag.BoolVar(versionFlag, "v", false, "print version and exit (shorthand)")
-	host := flag.String("host", defaultHost, "Ollama base URL (ignored for gemini provider)")
+	host := flag.String("host", defaultHost, "Ollama base URL (used by ollama / ollama-cloud; ignored for ergo and gemini)")
 	geminiKey := flag.String("gemini-api-key", os.Getenv("GEMINI_API_KEY"), "Gemini API key (or set GEMINI_API_KEY)")
 	model := flag.String("model", "", "override the default model")
 	timeout := flag.Duration("timeout", defaultTimeout(), "HTTP request timeout (e.g. 30s, 10m, 0 to disable)")
 	workspaceRoot := flag.String("workspace-root", mustCWD(), "workspace root")
-	providerName := flag.String("provider", defaultProvider, "override the default provider")
+	providerName := flag.String("provider", "", "provider: ergo, ollama, ollama-cloud, gemini (default: ergo if signed in or in the TUI; headless falls back to ollama, then ollama-cloud)")
 
 	// Headless (non-interactive) flags. Setting any of these — or providing a
 	// positional "ask" subcommand — routes execution through cmdAsk instead of
@@ -120,9 +118,11 @@ func main() {
 
 	flag.Parse()
 
-	var explicitAgent, explicitModel, explicitNoTools, explicitAllTools bool
+	var explicitAgent, explicitModel, explicitNoTools, explicitAllTools, explicitProvider bool
 	flag.Visit(func(f *flag.Flag) {
 		switch f.Name {
+		case "provider":
+			explicitProvider = true
 		case "agent":
 			explicitAgent = true
 		case "model":
@@ -139,6 +139,12 @@ func main() {
 		fmt.Printf("Developed by %s\n", author)
 		return
 	}
+
+	// Resolve the provider (ergo first). Headless = anything that is not the
+	// interactive TUI; there is nobody to show a /login prompt to.
+	headless := flag.NArg() > 0 || *prompt != "" || isStdinPiped()
+	savedProvider, _ := session.GetProvider()
+	*providerName = resolveProvider(autoProviderInputs(*providerName, savedProvider, *host, !headless))
 
 	if flag.NArg() > 0 {
 		switch flag.Arg(0) {
@@ -239,18 +245,10 @@ func main() {
 	if err != nil {
 		fatal("%v", err)
 	}
-	// For the ergo provider, resolve a persisted API key (saved via /login)
-	// when ERGO_API_KEY isn't set in the environment. Never fatal on a
-	// missing key — the first chat surfaces a typed 401 with guidance.
-	if *providerName == "ergo" {
-		if ep, ok := provider.(*client.Ergo); ok && auth.ResolveErgoToken() != "" {
-			base := strings.TrimSpace(os.Getenv("ERGO_BASE_URL"))
-			if base == "" {
-				base = client.ErgoDefaultBaseURL
-			}
-			provider = client.NewErgo(strings.TrimRight(base, "/"), auth.ResolveErgoToken(), *timeout)
-			_ = ep
-		}
+	// Remember an explicit --provider so it keeps winning over the ergo-first
+	// default on later launches.
+	if explicitProvider {
+		_ = session.SetProvider(*providerName)
 	}
 
 	// For Gemini, default to a sensible chat model when none is specified.
