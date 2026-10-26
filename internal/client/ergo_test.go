@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -153,5 +154,30 @@ func TestErgoContextWindow(t *testing.T) {
 	n, _ = e.ContextWindow(context.Background(), "totally-unknown-model")
 	if n != 0 {
 		t.Fatalf("expected 0 for unknown model, got %d", n)
+	}
+}
+
+func TestErgoChat402ParsesTopupAndBalance(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusPaymentRequired)
+		_, _ = w.Write([]byte(`{"error":{"code":"insufficient_credit","message":"Out of ergo credits","balance":0,"balance_cents":0,"topup_url":"https://pay.example/topup"}}`))
+	}))
+	defer srv.Close()
+
+	_, err := NewErgo(srv.URL, "k", 0).Chat(context.Background(), ChatRequest{Model: "ergo", Messages: []Message{{Role: "user", Content: "x"}}}, nil)
+	var ice *InsufficientCreditsError
+	if !errors.As(err, &ice) {
+		t.Fatalf("expected InsufficientCreditsError, got %v", err)
+	}
+	if ice.TopupLink() != "https://pay.example/topup" || ice.BalanceCents != 0 {
+		t.Fatalf("parsed fields wrong: %+v", ice)
+	}
+	if !strings.Contains(err.Error(), "https://pay.example/topup") {
+		t.Fatalf("error text must carry the top-up link: %v", err)
+	}
+	// Non-http(s) links from the server are ignored.
+	bad := decodeInsufficientCredits(strings.NewReader(`{"error":{"message":"m","topup_url":"javascript:alert(1)"}}`))
+	if bad.TopupLink() != ErgoDefaultTopupURL {
+		t.Fatalf("unsafe topup_url accepted: %q", bad.TopupLink())
 	}
 }

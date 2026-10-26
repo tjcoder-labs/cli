@@ -111,13 +111,31 @@ type ergoAPIError struct {
 
 // InsufficientCreditsError is returned when the ergo gateway responds 402:
 // the tenant's wallet lacks funds for this call.
-type InsufficientCreditsError struct{ Message string }
+type InsufficientCreditsError struct {
+	Message string
+	// TopupURL is the gateway-provided link to add credits ("" if absent).
+	TopupURL string
+	// BalanceCents is the wallet balance reported with the 402 (-1 if absent).
+	BalanceCents int64
+}
+
+// ErgoDefaultTopupURL is used when the 402 body carries no topup_url.
+const ErgoDefaultTopupURL = "https://dashboard.tjcoder.com"
+
+// TopupLink returns the URL to show the user.
+func (e *InsufficientCreditsError) TopupLink() string {
+	if e.TopupURL != "" {
+		return e.TopupURL
+	}
+	return ErgoDefaultTopupURL
+}
 
 func (e *InsufficientCreditsError) Error() string {
-	if e.Message == "" {
-		return "insufficient ergo credits — top up at https://app.tjcoder.com"
+	msg := e.Message
+	if msg == "" {
+		msg = "insufficient ergo credits"
 	}
-	return e.Message
+	return msg + " — top up at " + e.TopupLink()
 }
 
 // ErgoAuthError is returned on 401/403: the API key is missing, invalid,
@@ -221,7 +239,7 @@ func (e *Ergo) Chat(ctx context.Context, request ChatRequest, onEvent func(Strea
 	case resp.StatusCode == 401 || resp.StatusCode == 403:
 		return Message{}, &ErgoAuthError{Message: strings.TrimSpace(decodeErgoError(resp.Body))}
 	case resp.StatusCode == 402:
-		return Message{}, &InsufficientCreditsError{Message: strings.TrimSpace(decodeErgoError(resp.Body))}
+		return Message{}, decodeInsufficientCredits(resp.Body)
 	case resp.StatusCode >= 300:
 		errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		return Message{}, fmt.Errorf("ergo chat: %s: %s", resp.Status, strings.TrimSpace(string(errBody)))
@@ -389,6 +407,32 @@ func (e *Ergo) ShowModel(ctx context.Context, model string) (ModelDetails, error
 		details["context_window"] = fmt.Sprintf("%d", n)
 	}
 	return ModelDetails{Name: model, Details: details}, nil
+}
+
+// decodeInsufficientCredits parses the 402 body
+// {error:{code:"insufficient_credit", message, balance_cents, topup_url}}.
+func decodeInsufficientCredits(body io.Reader) *InsufficientCreditsError {
+	raw, _ := io.ReadAll(io.LimitReader(body, 8192))
+	out := &InsufficientCreditsError{BalanceCents: -1}
+	var parsed struct {
+		Error struct {
+			Message      string `json:"message"`
+			TopupURL     string `json:"topup_url"`
+			BalanceCents *int64 `json:"balance_cents"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(raw, &parsed); err == nil {
+		out.Message = strings.TrimSpace(parsed.Error.Message)
+		if u := strings.TrimSpace(parsed.Error.TopupURL); strings.HasPrefix(u, "https://") || strings.HasPrefix(u, "http://") {
+			out.TopupURL = u
+		}
+		if parsed.Error.BalanceCents != nil {
+			out.BalanceCents = *parsed.Error.BalanceCents
+		}
+	} else {
+		out.Message = strings.TrimSpace(string(raw))
+	}
+	return out
 }
 
 // decodeErgoError extracts the gateway's {error:{message}} body shape,

@@ -3,9 +3,12 @@ package tui
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
+	"os/exec"
+	"runtime"
 	"strings"
 	"time"
 
@@ -29,52 +32,258 @@ func ergoLoginPrompt(p client.Provider) string {
 	return ""
 }
 
-// handleLoginCommand prompts for a scoped ergo API key (scope "ergo-chat")
-// and persists it under ~/.local/share/coder. The key is never echoed in
-// the transcript or written to session state — it only lives in memory
-// and in the 0600 token file managed by internal/auth.
+// openBrowser is swapped in tests; it must never block the UI.
+var openBrowser = defaultOpenBrowser
+
+// defaultOpenBrowser best-effort opens an http(s) URL in the user's browser.
+// Failures are ignored by callers — the URL is always printed as well.
+func defaultOpenBrowser(url string) error {
+	if !strings.HasPrefix(url, "https://") && !strings.HasPrefix(url, "http://") {
+		return fmt.Errorf("refusing to open non-http URL")
+	}
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "darwin":
+		cmd = exec.Command("open", url)
+	case "windows":
+		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", url)
+	default:
+		cmd = exec.Command("xdg-open", url)
+	}
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	go func() { _ = cmd.Wait() }()
+	return nil
+}
+
+// plausibleEmail is a cheap client-side sanity check; the server validates properly.
+func plausibleEmail(s string) bool {
+	at := strings.Index(s, "@")
+	return at > 0 && at < len(s)-3 && strings.Contains(s[at:], ".") && !strings.ContainsAny(s, " \t<>\"'")
+}
+
+// deviceClient builds the device-code client for the configured gateway.
+func deviceClient() *auth.DeviceClient {
+	return &auth.DeviceClient{BaseURL: ergoBaseURL(), ClientName: "ergo-cli"}
+}
+
+// loginCodeView renders the waiting screen: the code is the hero, with
+// the URL and the email hint under it.
+func loginCodeView(email string, st *auth.DeviceStart, remaining time.Duration, opened bool) string {
+	uri := st.VerificationURIComplete
+	if uri == "" {
+		uri = st.VerificationURI
+	}
+	openedNote := ""
+	if opened {
+		openedNote = " (opened in your browser)"
+	}
+	mins := int(remaining.Minutes())
+	secs := int(remaining.Seconds()) % 60
+	return fmt.Sprintf(
+		"\n  Your sign-in code:\n\n      [::b][yellow]%s[-:-:-]\n\n"+
+			"  1. Open the sign-in link we emailed to [::b]%s[-:-:-]\n"+
+			"  2. Enter the code above to approve this device\n\n"+
+			"  Info page: %s%s\n\n"+
+			"  Waiting for approval…  [dim](expires in %d:%02d — Esc to cancel)[-]\n",
+		st.UserCode, tview.Escape(email), tview.Escape(uri), openedNote, mins, secs)
+}
+
+// handleLoginCommand runs the device-code sign-in: ask for an email,
+// show the code + URL, and poll until the user approves in a browser. The
+// scoped ergo-cli key is stored in the OS keychain (0600 file fallback)
+// and never echoed to the transcript.
 func (a *App) handleLoginCommand() {
+	if a.loginCancel != nil {
+		a.appendActivity("A sign-in is already in progress — press Esc in the sign-in panel to cancel it")
+		return
+	}
 	form := tview.NewForm()
 	a.styleModalForm(form)
-	var key string
-	form.AddPasswordField("ergo API key", "", 40, '*', func(s string) { key = s })
-	form.AddButton("Sign in", func() {
-		key = strings.TrimSpace(key)
-		if key == "" {
-			a.appendActivity("Sign-in cancelled: empty key")
+	var email string
+	form.AddInputField("Email", "", 44, nil, func(s string) { email = strings.TrimSpace(s) })
+	form.AddButton("Send sign-in link", func() {
+		if !plausibleEmail(email) {
+			a.appendActivity("[red]Enter a valid email address[-]")
 			return
 		}
-		// Validate against the gateway before persisting so a typo doesn't
-		// lock the user into a broken session.
-		if err := a.validateErgoKey(key); err != nil {
-			a.appendActivity(fmt.Sprintf("[red]ergo sign-in failed[-]: %v", err))
-			return
-		}
-		if err := auth.SaveErgoToken(key); err != nil {
-			a.appendActivity(fmt.Sprintf("[red]ergo sign-in failed[-]: %v", err))
-			return
-		}
-		a.swapErgoProvider(key)
-		a.appendActivity("Signed in to ergo (key stored at " + auth.ErgoTokenPath() + ")")
-		a.closeModal()
+		a.beginDeviceLogin(email)
 	})
 	form.AddButton("Cancel", func() { a.closeModal() })
+	form.SetCancelFunc(func() { a.closeModal() })
 	a.showModal("ergo Sign-in", form)
 }
 
-// handleLogoutCommand removes the persisted ergo key and detaches the
-// client-side credential so the next chat surfaces a clean auth error.
-func (a *App) handleLogoutCommand() {
-	if err := auth.ClearErgoToken(); err != nil {
-		a.appendActivity(fmt.Sprintf("[red]ergo sign-out failed[-]: %v", err))
-		return
+func (a *App) beginDeviceLogin(email string) {
+	ctx, cancel := context.WithCancel(context.Background())
+	a.loginCancel = cancel
+	finish := func() {
+		cancel()
+		a.loginCancel = nil
 	}
-	a.swapErgoProvider("")
-	a.appendActivity("Signed out of ergo")
+
+	view := tview.NewTextView().SetDynamicColors(true)
+	view.SetBackgroundColor(a.palette.BgInput)
+	view.SetTextColor(a.palette.TextMain)
+	view.SetText("\n  Contacting ergo…")
+	btns := tview.NewForm()
+	a.styleModalForm(btns)
+	cancelLogin := func() {
+		finish()
+		a.appendActivity("Sign-in cancelled")
+		a.closeModal()
+	}
+	btns.AddButton("Cancel", cancelLogin)
+	btns.SetCancelFunc(cancelLogin)
+	panel := tview.NewFlex().SetDirection(tview.FlexRow).
+		AddItem(view, 0, 1, false).
+		AddItem(btns, 3, 0, true)
+	panel.SetBackgroundColor(a.palette.BgInput)
+	a.showModal("ergo Sign-in", panel)
+
+	dc := deviceClient()
+	go func() {
+		fail := func(msg string) {
+			a.tv.QueueUpdateDraw(func() {
+				if ctx.Err() != nil {
+					return
+				}
+				finish()
+				a.appendActivity("[red]ergo sign-in failed[-]: " + msg)
+				a.closeModal()
+			})
+		}
+		st, err := dc.Start(ctx, email)
+		if err != nil {
+			if ctx.Err() == nil {
+				fail(describeLoginError(err))
+			}
+			return
+		}
+		uri := st.VerificationURIComplete
+		if uri == "" {
+			uri = st.VerificationURI
+		}
+		opened := openBrowser(uri) == nil
+		expires := time.Now().Add(time.Duration(st.ExpiresIn) * time.Second)
+		a.tv.QueueUpdateDraw(func() {
+			view.SetText(loginCodeView(email, st, time.Until(expires), opened))
+			a.appendActivity("Sign-in code " + st.UserCode + " — check " + email + " for the approval link")
+		})
+		// live countdown
+		go func() {
+			t := time.NewTicker(time.Second)
+			defer t.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-t.C:
+					rem := time.Until(expires)
+					if rem < 0 {
+						return
+					}
+					a.tv.QueueUpdateDraw(func() {
+						if ctx.Err() == nil {
+							view.SetText(loginCodeView(email, st, rem, opened))
+						}
+					})
+				}
+			}
+		}()
+
+		res, err := dc.Wait(ctx, st, nil)
+		if err != nil {
+			if ctx.Err() == nil {
+				fail(describeLoginError(err))
+			}
+			return
+		}
+		saveErr := auth.SaveErgoToken(res.APIKey)
+		a.tv.QueueUpdateDraw(func() {
+			finish()
+			if saveErr != nil {
+				a.appendActivity(fmt.Sprintf("[red]ergo sign-in failed[-]: could not store the key: %v", saveErr))
+				a.closeModal()
+				return
+			}
+			a.swapErgoProvider(res.APIKey)
+			a.setErgoBalanceCents(res.BalanceCents)
+			msg := fmt.Sprintf("Signed in to ergo as %s (key stored in %s)", res.Email, tokenStoreLabel())
+			if res.WelcomeGranted {
+				msg += fmt.Sprintf(" — welcome credit added, balance $%.2f", float64(res.BalanceCents)/100.0)
+			}
+			a.appendActivity(msg)
+			a.closeModal()
+		})
+	}()
 }
 
-// handleBalanceCommand fetches the wallet balance. The gateway may not
-// expose /v1/wallet/balance yet; we degrade gracefully with a clear hint.
+func tokenStoreLabel() string {
+	switch auth.TokenStore() {
+	case "keychain":
+		return "the OS keychain"
+	case "file":
+		return auth.ErgoTokenPath()
+	case "env":
+		return "ERGO_API_KEY"
+	}
+	return "local storage"
+}
+
+// describeLoginError turns device-flow errors into one actionable line.
+func describeLoginError(err error) string {
+	var rl *auth.RateLimitedError
+	switch {
+	case errors.Is(err, auth.ErrSignupClosed):
+		return err.Error() + " (ask your admin to enable sign-ups or add you to the allowlist)"
+	case errors.As(err, &rl):
+		return err.Error()
+	case errors.Is(err, auth.ErrExpired), errors.Is(err, auth.ErrDenied):
+		return err.Error()
+	}
+	return err.Error()
+}
+
+// handleLogoutCommand revokes the key server-side, then removes the local
+// credential and detaches the client so the next chat surfaces a clean
+// auth error. The local credential is cleared even if revocation fails.
+func (a *App) handleLogoutCommand() {
+	if a.loginCancel != nil {
+		a.loginCancel()
+		a.loginCancel = nil
+	}
+	key := auth.ResolveErgoToken()
+	store := auth.TokenStore()
+	go func() {
+		var revokeErr error
+		if key != "" && store != "env" {
+			ctx, cancel := context.WithTimeout(context.Background(), ergoAuthTimeout)
+			revokeErr = deviceClient().Logout(ctx, key)
+			cancel()
+		}
+		clearErr := auth.ClearErgoToken()
+		a.tv.QueueUpdateDraw(func() {
+			if clearErr != nil {
+				a.appendActivity(fmt.Sprintf("[red]ergo sign-out failed[-]: %v", clearErr))
+				return
+			}
+			a.swapErgoProvider("")
+			a.clearErgoBalance()
+			switch {
+			case store == "env":
+				a.appendActivity("Signed out locally. ERGO_API_KEY is set in your environment — unset it (the key was NOT revoked server-side)")
+			case revokeErr != nil:
+				a.appendActivity(fmt.Sprintf("Signed out locally, but the key could not be revoked on the server (%v) — it stays valid until it expires", revokeErr))
+			default:
+				a.appendActivity("Signed out of ergo (key revoked)")
+			}
+		})
+	}()
+}
+
+// handleBalanceCommand fetches the wallet balance and refreshes the status bar.
 func (a *App) handleBalanceCommand() {
 	key := auth.ResolveErgoToken()
 	if key == "" {
@@ -85,15 +294,84 @@ func (a *App) handleBalanceCommand() {
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), ergoAuthTimeout)
 		defer cancel()
-		bal, err := fetchErgoBalance(ctx, key)
+		cents, err := fetchErgoBalanceCents(ctx, key)
 		a.tv.QueueUpdateDraw(func() {
 			if err != nil {
 				a.appendActivity(fmt.Sprintf("[red]ergo balance unavailable[-]: %v", err))
 				return
 			}
-			a.appendActivity(fmt.Sprintf("ergo balance: %s", bal))
+			a.setErgoBalanceCents(cents)
+			a.appendActivity(fmt.Sprintf("ergo balance: %s  (top up: %s)", formatCents(cents), client.ErgoDefaultTopupURL))
 		})
 	}()
+}
+
+// refreshErgoBalanceAsync quietly updates the status-bar balance; a no-op
+// unless the active provider is a signed-in ergo client.
+func (a *App) refreshErgoBalanceAsync() {
+	e, ok := a.provider.(*client.Ergo)
+	if !ok || !e.Authenticated() {
+		return
+	}
+	key := auth.ResolveErgoToken()
+	if key == "" {
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), ergoAuthTimeout)
+		defer cancel()
+		cents, err := fetchErgoBalanceCents(ctx, key)
+		if err != nil {
+			return
+		}
+		a.tv.QueueUpdateDraw(func() { a.setErgoBalanceCents(cents) })
+	}()
+}
+
+func (a *App) setErgoBalanceCents(cents int64) {
+	a.ergoBalanceCents = cents
+	a.ergoBalanceKnown = true
+	a.refreshContextBar()
+}
+
+func (a *App) clearErgoBalance() {
+	a.ergoBalanceKnown = false
+	a.refreshContextBar()
+}
+
+func formatCents(c int64) string { return fmt.Sprintf("$%.2f", float64(c)/100.0) }
+
+// ergoBalanceSegment is the status-bar fragment ("" when unknown / not ergo).
+func (a *App) ergoBalanceSegment() string {
+	if !a.ergoBalanceKnown {
+		return ""
+	}
+	color := a.palette.HexDim
+	if a.ergoBalanceCents <= 0 {
+		color = a.palette.HexOrchid
+	}
+	return fmt.Sprintf("   [%s]●[-] [%s]ergo %s[-]", color, color, formatCents(a.ergoBalanceCents))
+}
+
+// ergoRunErrorNote returns extra guidance for billing/auth errors from the
+// ergo provider ("" for anything else). It also kicks a balance refresh.
+func (a *App) ergoRunErrorNote(err error) string {
+	var ice *client.InsufficientCreditsError
+	switch {
+	case errors.As(err, &ice):
+		a.setErgoBalanceCents(maxInt64(ice.BalanceCents, 0))
+		return fmt.Sprintf("Out of ergo credits. Top up: %s — then retry your message. (/balance to check)", ice.TopupLink())
+	case client.IsErgoAuthError(err):
+		return "Your ergo session is invalid or expired — run /login to sign in again."
+	}
+	return ""
+}
+
+func maxInt64(a, b int64) int64 {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 // ergoBaseURL honors ERGO_BASE_URL for staging/dev gateways.
@@ -104,51 +382,54 @@ func ergoBaseURL() string {
 	return client.ErgoDefaultBaseURL
 }
 
-// validateErgoKey checks the key with a cheap models-list call. The ergo
-// client maps 401/403 to ErgoAuthError so failure text reads naturally.
-func (a *App) validateErgoKey(key string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), ergoAuthTimeout)
-	defer cancel()
-	prov := client.NewErgo(ergoBaseURL(), key, ergoAuthTimeout)
-	_, err := prov.ListModels(ctx)
-	return err
-}
-
 // swapErgoProvider hot-swaps the TUI's chat provider to an ergo client
 // carrying `key` (empty string leaves it unauthenticated → friendly 401
 // on the next chat).
 func (a *App) swapErgoProvider(key string) {
 	a.provider = client.NewErgo(ergoBaseURL(), key, 0)
+	if a.runner != nil {
+		// The runner holds its own provider reference; keep it in sync so
+		// the very next turn uses the new credential.
+		a.runner.Provider = a.provider
+	}
 	a.refreshHeader()
 }
 
-// fetchErgoBalance asks the ergo gateway for the caller's wallet balance.
-// Returns "$12.34", or a descriptive error when the gateway doesn't serve
-// the endpoint yet (404 → hint to the dashboard).
+// fetchErgoBalance returns the wallet balance as "$12.34".
 func fetchErgoBalance(ctx context.Context, key string) (string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, ergoBaseURL()+"/v1/wallet/balance", nil)
+	cents, err := fetchErgoBalanceCents(ctx, key)
 	if err != nil {
 		return "", err
+	}
+	return formatCents(cents), nil
+}
+
+// fetchErgoBalanceCents asks the ergo gateway for the caller's wallet
+// balance in cents via GET /v1/wallet/balance.
+func fetchErgoBalanceCents(ctx context.Context, key string) (int64, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, ergoBaseURL()+"/v1/wallet/balance", nil)
+	if err != nil {
+		return 0, err
 	}
 	req.Header.Set("Authorization", "Bearer "+key)
 	resp, err := (&http.Client{Timeout: ergoAuthTimeout}).Do(req)
 	if err != nil {
-		return "", fmt.Errorf("wallet balance request failed: %w", err)
+		return 0, fmt.Errorf("wallet balance request failed: %w", err)
 	}
 	defer resp.Body.Close()
 	switch {
 	case resp.StatusCode == http.StatusNotFound:
-		return "", fmt.Errorf("endpoint not available yet — check https://app.tjcoder.com")
+		return 0, fmt.Errorf("endpoint not available — check %s", client.ErgoDefaultTopupURL)
 	case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
-		return "", fmt.Errorf("session expired — run /login again")
+		return 0, fmt.Errorf("session expired — run /login again")
 	case resp.StatusCode != http.StatusOK:
-		return "", fmt.Errorf("wallet balance: %s", resp.Status)
+		return 0, fmt.Errorf("wallet balance: %s", resp.Status)
 	}
 	var body struct {
 		BalanceCents int64 `json:"balance_cents"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
-		return "", err
+		return 0, err
 	}
-	return fmt.Sprintf("$%.2f", float64(body.BalanceCents)/100.0), nil
+	return body.BalanceCents, nil
 }

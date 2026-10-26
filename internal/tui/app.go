@@ -171,6 +171,12 @@ type App struct {
 	running bool
 
 	provider client.Provider
+	// loginCancel cancels an in-flight device-code /login (nil when idle).
+	loginCancel context.CancelFunc
+	// ergoBalanceCents is the last known wallet balance; valid only when
+	// ergoBalanceKnown. Touched only on the UI goroutine.
+	ergoBalanceCents int64
+	ergoBalanceKnown bool
 	registry *tools.Registry
 	runner   *tooling.Runner
 	// steeringCh carries mid-turn user steering messages from the
@@ -816,6 +822,7 @@ func (a *App) build() {
 	if msg := ergoLoginPrompt(a.provider); msg != "" {
 		a.appendActivity(msg)
 	}
+	a.refreshErgoBalanceAsync()
 	a.appendActivity("Enabled tools: " + strings.Join(a.enabledToolList(), ", "))
 
 	// If the agent has not yet had a chance to respond (no history),
@@ -1536,6 +1543,7 @@ func (a *App) renderMetaBar() string {
 				accent, a.progressGlyph(), a.palette.HexDim, cwd, accent, a.palette.HexDim, contextText, accent, a.palette.HexDim, refsText)
 		}
 	}
+	line += a.ergoBalanceSegment()
 	if a.contextBar != nil {
 		a.contextBar.SetText(line)
 	}
@@ -3048,12 +3056,17 @@ func (a *App) launchTurn(prompt, agentNameOverride string) {
 				} else {
 					a.appendActivity(fmt.Sprintf("["+a.palette.HexOrchid+"::b]error[-:-:-]: %v", err))
 					fmt.Fprintf(a.transcript, "\n["+a.palette.HexOrchid+"::b]error[-:-:-]: %v\n", err)
+					if note := a.ergoRunErrorNote(err); note != "" {
+						a.appendActivity(note)
+						fmt.Fprintf(a.transcript, "["+a.palette.HexLavender+"]%s[-]\n", tview.Escape(note))
+					}
 				}
 			} else {
 				a.assistantState = "replied"
 				a.assistantStamp = formatTimestamp(time.Now())
 				a.updateAssistantTurnLabel()
 				fmt.Fprint(a.transcript, "\n\n")
+				a.refreshErgoBalanceAsync()
 			}
 			if len(nextHistory) > 0 {
 				a.history = nextHistory

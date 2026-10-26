@@ -7,7 +7,12 @@ require (
 	github.com/rivo/tview v0.42.0
 )
 
-require github.com/gorilla/websocket v1.5.3 // indirect
+require (
+	github.com/danieljoos/wincred v1.2.3 // indirect
+	github.com/godbus/dbus/v5 v5.2.2 // indirect
+	github.com/gorilla/websocket v1.5.3 // indirect
+	github.com/zalando/go-keyring v0.2.8 // indirect
+)
 
 require (
 	github.com/alecthomas/chroma/v2 v2.27.0
