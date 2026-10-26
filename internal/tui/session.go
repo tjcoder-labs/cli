@@ -46,7 +46,12 @@ func (a *App) loadSession() {
 		a.currentAgent = cfg
 	}
 	if state.CurrentModel != "" {
-		a.currentModel = state.CurrentModel
+		// A workspace session may hold a model from another provider
+		// (an Ollama tag while on ergo, or an ergo agent while on
+		// Ollama). Only restore it when it is valid for this provider.
+		if m := a.sanitizeModel(state.CurrentModel); m != "" && (!a.isErgoProvider() || m == state.CurrentModel) {
+			a.currentModel = m
+		}
 	}
 	a.resetEnabledTools(a.currentAgent.ToolNames)
 	if len(state.EnabledTools) > 0 {

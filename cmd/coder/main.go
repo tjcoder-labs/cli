@@ -5,6 +5,7 @@ import (
 	"context"
 	"embed"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -573,6 +574,35 @@ func isReasoningRelated(text string) bool {
 		strings.Contains(lower, "model note")
 }
 
+// ergoModelNotFoundMessage is the friendly text for an ergo model_not_found.
+func ergoModelNotFoundMessage(e *client.ErgoModelNotFoundError, avail []string, explicit bool) string {
+	if len(e.Available) > 0 {
+		avail = e.Available
+	}
+	if len(avail) == 0 {
+		avail = client.ErgoFallbackModels()
+	}
+	bad := e.Model
+	if bad == "" {
+		bad = "that model"
+	}
+	hint := "Retry to use the default (" + client.ErgoDefaultModel + ")."
+	if explicit {
+		hint = "Pick one with --model."
+	}
+	return fmt.Sprintf("ergo doesn't have a model called %q. Available: %s. %s", bad, strings.Join(avail, ", "), hint)
+}
+
+// modelFitsProvider reports whether a remembered model name can be sent to the
+// active provider: ergo only serves the gateway's models, while every other
+// provider must not receive a gateway agent name.
+func modelFitsProvider(isErgo bool, model string, ergoAvail []string) bool {
+	if isErgo {
+		return client.ErgoModelAllowed(model, ergoAvail)
+	}
+	return !client.ErgoModelAllowed(model, client.ErgoFallbackModels())
+}
+
 func cmdAsk(opts askOptions) {
 	// Load the shared session document. We always load it (even when
 	// --session is off) so tools that mutate session state — tasks,
@@ -625,17 +655,32 @@ func cmdAsk(opts askOptions) {
 	}
 
 	model := opts.Model
+	provKey := client.ProviderKey(provider)
+	_, isErgo := provider.(*client.Ergo)
+	var ergoAvail []string
+	if isErgo {
+		// Gateway model set: GET /v1/models once signed in, else the
+		// hardcoded ergo / ergo-lite / ergo-genius.
+		fctx, fcancel := context.WithTimeout(context.Background(), 10*time.Second)
+		ergoAvail = client.ErgoAvailableModels(fctx, provider)
+		fcancel()
+	}
 	if !opts.ExplicitModel {
 		// Resolution priority: explicit -model flag (handled above) >
-		// this workspace's saved session model > the cross-mode
-		// remembered model (shared with the TUI) > agent default.
+		// this workspace's saved session model > the remembered model for
+		// THIS provider > agent default. Values that don't belong to the
+		// provider (an Ollama tag on ergo, an ergo agent on Ollama) are
+		// ignored without being deleted.
 		switch {
-		case sessionExists && sessionState.CurrentModel != "":
+		case sessionExists && sessionState.CurrentModel != "" && modelFitsProvider(isErgo, sessionState.CurrentModel, ergoAvail):
 			model = sessionState.CurrentModel
 		default:
-			if saved, ok := session.GetLastModel(false); ok && saved != "" {
+			if saved, ok := session.GetModelForProvider(provKey); ok && saved != "" && modelFitsProvider(isErgo, saved, ergoAvail) {
 				model = saved
 			}
+		}
+		if isErgo {
+			model = client.ResolveErgoModel("", model, ergoAvail)
 		}
 	}
 	if model == "" {
@@ -654,8 +699,8 @@ func cmdAsk(opts askOptions) {
 	// TUI or headless launch — in any workspace — starts on it. This
 	// mirrors the TUI, which persists an explicit model pick to the same
 	// prefs slot.
-	if opts.ExplicitModel && model != "" {
-		_ = session.SetLastModel(false, model)
+	if opts.ExplicitModel && model != "" && (!isErgo || client.ErgoModelAllowed(model, ergoAvail)) {
+		_ = session.SetModelForProvider(provKey, model)
 	}
 
 	// Inject the (interpolated) environment/context block ahead of the
@@ -810,6 +855,16 @@ func cmdAsk(opts askOptions) {
 	}
 
 	if err != nil {
+		var mnf *client.ErgoModelNotFoundError
+		if errors.As(err, &mnf) {
+			// Friendly guidance instead of the raw 404 body. The saved
+			// ergo pick is reset so the next run uses the default.
+			if opts.ExplicitModel {
+				fatal("ask: %s", ergoModelNotFoundMessage(mnf, ergoAvail, true))
+			}
+			_ = session.SetModelForProvider("ergo", client.ErgoDefaultModel)
+			fatal("ask: %s", ergoModelNotFoundMessage(mnf, ergoAvail, false))
+		}
 		fatal("ask: %v", err)
 	}
 

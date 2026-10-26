@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -139,5 +140,34 @@ func TestCmdAsk_SessionRetention(t *testing.T) {
 	// Also verify that the agent and model were restored from the session since they were not explicitly overridden
 	if req2.Model != "test-model" {
 		t.Errorf("expected model restored from session to be 'test-model', got %q", req2.Model)
+	}
+}
+
+func TestModelFitsProvider(t *testing.T) {
+	avail := client.ErgoFallbackModels()
+	if modelFitsProvider(true, "deepseek-v4-pro:cloud", avail) {
+		t.Error("ollama tag must not fit the ergo gateway")
+	}
+	if !modelFitsProvider(true, "ergo-genius", avail) {
+		t.Error("gateway agent must fit ergo")
+	}
+	if modelFitsProvider(false, "ergo-lite", avail) {
+		t.Error("gateway agent must not be sent to ollama")
+	}
+	if !modelFitsProvider(false, "minimax-m3:cloud", avail) {
+		t.Error("ollama tag must fit ollama")
+	}
+}
+
+func TestErgoModelNotFoundMessage(t *testing.T) {
+	e := &client.ErgoModelNotFoundError{Model: "foo:cloud", Available: []string{"ergo", "ergo-lite"}}
+	m := ergoModelNotFoundMessage(e, nil, false)
+	for _, want := range []string{`"foo:cloud"`, "ergo, ergo-lite", "default (ergo)"} {
+		if !strings.Contains(m, want) {
+			t.Errorf("message missing %q: %s", want, m)
+		}
+	}
+	if m := ergoModelNotFoundMessage(&client.ErgoModelNotFoundError{}, nil, true); !strings.Contains(m, "--model") || !strings.Contains(m, "ergo-genius") {
+		t.Errorf("explicit/fallback message: %s", m)
 	}
 }

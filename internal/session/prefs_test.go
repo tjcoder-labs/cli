@@ -180,3 +180,49 @@ func TestProviderPrefRoundTrip(t *testing.T) {
 		t.Fatalf("provider lost after SetLastModel: %q", got)
 	}
 }
+
+func TestPerProviderModelPrefsKeepOllamaValue(t *testing.T) {
+	withXDGConfigHome(t)
+	// legacy single value written by an older build
+	if err := SetLastModel(true, "minimax-m3:cloud"); err != nil {
+		t.Fatal(err)
+	}
+	// migration: every provider sees the legacy value until it has its own
+	if m, ok := GetModelForProvider("ergo"); !ok || m != "minimax-m3:cloud" {
+		t.Fatalf("migration fallback = (%q,%v)", m, ok)
+	}
+	// choosing an ergo agent must not clobber the Ollama-side value
+	if err := SetModelForProvider("ergo", "ergo-lite"); err != nil {
+		t.Fatal(err)
+	}
+	if m, _ := GetModelForProvider("ergo"); m != "ergo-lite" {
+		t.Fatalf("ergo = %q", m)
+	}
+	if m, _ := GetModelForProvider("ollama"); m != "minimax-m3:cloud" {
+		t.Fatalf("ollama = %q, want preserved minimax-m3:cloud", m)
+	}
+	if m, _ := GetLastModel(true); m != "minimax-m3:cloud" {
+		t.Fatalf("LastModel = %q, want preserved", m)
+	}
+	// setting an ollama model keeps the legacy slot in step, ergo untouched
+	if err := SetModelForProvider("ollama", "qwen3:cloud"); err != nil {
+		t.Fatal(err)
+	}
+	if m, _ := GetModelForProvider("ollama"); m != "qwen3:cloud" {
+		t.Fatalf("ollama = %q", m)
+	}
+	if m, _ := GetModelForProvider("ergo"); m != "ergo-lite" {
+		t.Fatalf("ergo = %q after ollama set", m)
+	}
+	// clearing ergo falls back to the legacy value, which callers validate
+	if err := ClearModelForProvider("ergo"); err != nil {
+		t.Fatal(err)
+	}
+	if m, _ := GetModelForProvider("ergo"); m != "qwen3:cloud" {
+		t.Fatalf("after clear = %q", m)
+	}
+	// empty model is a no-op
+	if err := SetModelForProvider("ergo", ""); err != nil {
+		t.Fatal(err)
+	}
+}

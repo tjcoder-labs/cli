@@ -242,6 +242,9 @@ func (e *Ergo) Chat(ctx context.Context, request ChatRequest, onEvent func(Strea
 		return Message{}, decodeInsufficientCredits(resp.Body)
 	case resp.StatusCode >= 300:
 		errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		if mnf := parseErgoModelNotFound(resp.StatusCode, errBody, request.Model); mnf != nil {
+			return Message{}, mnf
+		}
 		return Message{}, fmt.Errorf("ergo chat: %s: %s", resp.Status, strings.TrimSpace(string(errBody)))
 	}
 

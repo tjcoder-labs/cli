@@ -196,6 +196,9 @@ type App struct {
 	agents                    []agent.Config
 	currentAgent              agent.Config
 	currentModel              string
+	ergoModels                []string // gateway model set (from /v1/models or the fallback); ergo provider only
+	modelChosen               bool     // user/CLI picked a model this run
+	explicitModel             string   // --model value for this run (wins over gateway validation)
 	previousAgentDefaultModel string // tracks the last agent's default model so switching agents can swap models
 	models                    []client.ModelInfo
 	enabledTools              map[string]bool
@@ -343,20 +346,28 @@ func New(provider client.Provider, registry *tools.Registry, workspaceRoot, mode
 	agents := agent.AllWithWorkspace(workspaceRoot)
 	current := agents[0]
 	model := current.DefaultModel
+	provKey := client.ProviderKey(provider)
+	_, isErgo := provider.(*client.Ergo)
 	if modelOverride != "" {
 		model = modelOverride
-		// Persist the explicit override to the cross-workspace TUI
-		// prefs so the next launch (in any workspace) starts on the
-		// model the user just selected. Without this, a TUI
-		// invocation that bypasses the model modal would still need
-		// to re-select the model manually on every run.
-		_ = session.SetLastModel(true, modelOverride)
-	} else if saved, ok := session.GetLastModel(true); ok && saved != "" {
+		// Persist the explicit override to the per-provider prefs so the
+		// next launch (in any workspace) starts on the model the user just
+		// selected. An ergo override that the gateway does not serve is
+		// honored for this run (explicit wins) but not remembered.
+		if !isErgo || client.ErgoModelAllowed(modelOverride, client.ErgoFallbackModels()) {
+			_ = session.SetModelForProvider(provKey, modelOverride)
+		}
+	} else if saved, ok := session.GetModelForProvider(provKey); ok && saved != "" {
 		// No explicit override on this launch: fall through to the
-		// user's remembered TUI choice. This is what makes the
-		// model "stick" across re-invocations and across
-		// workspace switches.
+		// user's remembered choice for THIS provider (an Ollama tag
+		// remembered earlier is never sent to the ergo gateway).
 		model = saved
+	}
+	if isErgo {
+		// Gateway models only: ignore agent/Ollama defaults and stale
+		// saved values; default to "ergo". /v1/models refines this once the
+		// async model load completes (see applyErgoModels).
+		model = client.ResolveErgoModel(modelOverride, model, client.ErgoFallbackModels())
 	}
 	state, _, err := session.Load(workspaceRoot)
 	if err != nil {
@@ -378,6 +389,8 @@ func New(provider client.Provider, registry *tools.Registry, workspaceRoot, mode
 		agents:        agents,
 		currentAgent:  current,
 		currentModel:  model,
+		modelChosen:   modelOverride != "",
+		explicitModel: modelOverride,
 		enabledTools:  map[string]bool{},
 		contextInfo:   "ctx: unavailable",
 		refSet:        map[string]struct{}{},
@@ -1766,7 +1779,11 @@ func (a *App) handleSlashCommand(cmd string) {
 	case "tools":
 		a.openToolModal()
 	case "model":
-		a.openModelModal()
+		if len(parts) > 1 && a.isErgoProvider() {
+			a.selectErgoAgentByName(parts[1])
+		} else {
+			a.openModelModal()
+		}
 	case "scroll":
 		// /scroll [up|down] [lines] — scroll transcript
 		dir := "down"
@@ -2748,7 +2765,9 @@ func (a *App) compactHistory(parts []string) {
 	// use a cheaper / faster model for summarization while keeping
 	// a more capable model for the main conversation.
 	if a.config.CompactModel != "" {
-		model = a.config.CompactModel
+		if m := a.sanitizeModel(a.config.CompactModel); m != "" {
+			model = m
+		}
 	}
 	if len(parts) > 1 {
 		model = parts[1]
@@ -3039,6 +3058,12 @@ func (a *App) launchTurn(prompt, agentNameOverride string) {
 		// interactive session happens to have selected.
 		model = agentCfg.DefaultModel
 	}
+	// Never send an Ollama tag to the ergo gateway (or vice versa).
+	if m := a.sanitizeModel(model); m != "" {
+		model = m
+	} else {
+		model = a.currentModel
+	}
 
 	go func() {
 		// Use a timeout context to prevent indefinite hangs on API calls or tool execution.
@@ -3053,6 +3078,9 @@ func (a *App) launchTurn(prompt, agentNameOverride string) {
 				if isReasoningRelated(errText) {
 					fmt.Fprintf(a.reasoning, "\n["+a.palette.HexOrchid+"::b]%s[-:-:-]\n", errText)
 					a.reasoning.ScrollToEnd()
+				} else if note, ok := a.handleModelNotFound(err); ok {
+					a.appendActivity(fmt.Sprintf("[%s]%s[-]", a.palette.HexLavender, tview.Escape(note)))
+					fmt.Fprintf(a.transcript, "\n[%s::b]model[-:-:-] [%s]%s[-]\n", a.palette.HexOrchid, a.palette.HexLavender, tview.Escape(note))
 				} else {
 					a.appendActivity(fmt.Sprintf("["+a.palette.HexOrchid+"::b]error[-:-:-]: %v", err))
 					fmt.Fprintf(a.transcript, "\n["+a.palette.HexOrchid+"::b]error[-:-:-]: %v\n", err)
@@ -4051,10 +4079,25 @@ func (a *App) loadModels() {
 		return
 	}
 	a.models = models
+	a.afterModelsLoaded()
 	if a.currentModel == "" && len(models) > 0 {
 		a.currentModel = models[0].Name
 	}
 	a.refreshHeader()
+}
+
+// afterModelsLoaded syncs the ergo gateway model set from a fresh model list.
+func (a *App) afterModelsLoaded() {
+	if !a.isErgoProvider() {
+		return
+	}
+	names := make([]string, 0, len(a.models))
+	for _, m := range a.models {
+		names = append(names, m.Name)
+	}
+	if note := a.applyErgoModels(names); note != "" {
+		a.appendActivity(fmt.Sprintf("[%s]%s[-]", a.palette.HexLavender, note))
+	}
 }
 
 func (a *App) loadModelsAsync() {
@@ -4068,10 +4111,12 @@ func (a *App) loadModelsAsync() {
 				return
 			}
 			a.models = models
+			a.afterModelsLoaded()
 			if a.currentModel == "" && len(models) > 0 {
 				a.currentModel = models[0].Name
 			}
 			a.refreshHeader()
+			a.refreshFooter()
 		})
 	}()
 }
@@ -4087,8 +4132,12 @@ func (a *App) openAgentModal() {
 			// If no explicit model was chosen by the user, adopt the
 			// agent's DefaultModel so switching agents also switches
 			// to the right model family.
-			if agentCfg.DefaultModel != "" && (a.currentModel == "" || a.currentModel == a.previousAgentDefaultModel) {
-				a.currentModel = agentCfg.DefaultModel
+			if agentCfg.DefaultModel != "" && !a.isErgoProvider() && (a.currentModel == "" || a.currentModel == a.previousAgentDefaultModel) {
+				// (Skipped for ergo: agent defaults are Ollama tags and
+				// the gateway only serves ergo / ergo-lite / ergo-genius.)
+				if m := a.sanitizeModel(agentCfg.DefaultModel); m != "" {
+					a.currentModel = m
+				}
 			}
 			a.previousAgentDefaultModel = agentCfg.DefaultModel
 			a.refreshFooter()
@@ -4120,14 +4169,21 @@ func (a *App) openModelModal() {
 		if item.ParameterSize != "" {
 			label = fmt.Sprintf("%s (%s)", item.Name, item.ParameterSize)
 		}
-		list.AddItem(label, item.Family, 0, func() {
-			a.currentModel = item.Name
+		secondary := item.Family
+		if a.isErgoProvider() {
+			if item.Name == a.currentModel {
+				label = "● " + label
+			}
+			if d := client.ErgoAgentDesc(item.Name); d != "" {
+				secondary = d
+			}
+		}
+		list.AddItem(label, secondary, 0, func() {
+			a.selectModel(item.Name)
 			a.refreshFooter()
 			a.appendActivity("Selected model: " + item.Name)
-			// Remember the pick as the shared cross-mode model so it
-			// persists across program sessions and workspaces (and is
-			// honored by headless runs too).
-			_ = session.SetLastModel(true, item.Name)
+			// Remembered per provider so it persists across program
+			// sessions and workspaces (and is honored by headless runs).
 			a.saveSession()
 			a.closeModal()
 			// Different model → different context window. Recompute

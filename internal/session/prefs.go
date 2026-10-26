@@ -53,6 +53,12 @@ type Prefs struct {
 	LastTUIModel string `json:"last_tui_model,omitempty"`
 	// LastHeadlessModel: see LastTUIModel.
 	LastHeadlessModel string `json:"last_headless_model,omitempty"`
+	// ModelsByProvider remembers the last model per provider name
+	// ("ergo", "ollama-cloud", ...). A model name is only meaningful to the
+	// provider that served it (an Ollama tag sent to the ergo gateway is a
+	// 404), so each provider keeps its own slot. Older files that only have
+	// LastModel are migrated lazily by GetModelForProvider.
+	ModelsByProvider map[string]string `json:"models_by_provider,omitempty"`
 	// Provider is the provider the user explicitly chose (via --provider).
 	// When set it always wins over the automatic ergo-first default.
 	Provider string `json:"provider,omitempty"`
@@ -79,6 +85,18 @@ func mergePrefs(base, overrides Prefs) Prefs {
 	}
 	if overrides.Provider != "" {
 		out.Provider = overrides.Provider
+	}
+	if len(overrides.ModelsByProvider) > 0 {
+		merged := map[string]string{}
+		for k, v := range base.ModelsByProvider {
+			merged[k] = v
+		}
+		for k, v := range overrides.ModelsByProvider {
+			if v != "" {
+				merged[k] = v
+			}
+		}
+		out.ModelsByProvider = merged
 	}
 	if overrides.Theme != "" {
 		out.Theme = overrides.Theme
@@ -263,5 +281,76 @@ func SetProvider(name string) error {
 		p = Prefs{}
 	}
 	p.Provider = name
+	return savePrefsLocked(p)
+}
+
+// ergoProvider is the provider key whose models come from the ergo gateway.
+const ergoProvider = "ergo"
+
+// GetModelForProvider returns the remembered model for one provider. A value
+// stored under that provider wins. Otherwise the legacy single-slot value
+// (LastModel / legacy per-mode slots) is returned as a migration fallback —
+// the caller must validate it for providers with a closed model set (ergo
+// ignores anything not served by the gateway). Never returns a value written
+// for another provider's slot.
+func GetModelForProvider(provider string) (string, bool) {
+	prefsMu.Lock()
+	defer prefsMu.Unlock()
+	p, _, err := loadPrefsLocked()
+	if err != nil {
+		return "", false
+	}
+	if provider != "" {
+		if m := p.ModelsByProvider[provider]; m != "" {
+			return m, true
+		}
+	}
+	for _, legacy := range []string{p.LastModel, p.LastTUIModel, p.LastHeadlessModel} {
+		if legacy != "" {
+			return legacy, true
+		}
+	}
+	return "", false
+}
+
+// SetModelForProvider records model under provider. For non-ergo providers
+// the legacy shared LastModel is kept in step (older builds and the other
+// Ollama-flavoured providers read it); the ergo slot never overwrites it, so
+// an Ollama-side saved model survives using ergo. Empty model is a no-op.
+func SetModelForProvider(provider, model string) error {
+	if model == "" {
+		return nil
+	}
+	if provider == "" {
+		return SetLastModel(true, model)
+	}
+	prefsMu.Lock()
+	defer prefsMu.Unlock()
+	p, _, err := loadPrefsLocked()
+	if err != nil {
+		p = Prefs{}
+	}
+	if p.ModelsByProvider == nil {
+		p.ModelsByProvider = map[string]string{}
+	}
+	p.ModelsByProvider[provider] = model
+	if provider != ergoProvider {
+		p.LastModel = model
+	}
+	return savePrefsLocked(p)
+}
+
+// ClearModelForProvider forgets the saved model for one provider only.
+func ClearModelForProvider(provider string) error {
+	prefsMu.Lock()
+	defer prefsMu.Unlock()
+	p, _, err := loadPrefsLocked()
+	if err != nil {
+		return err
+	}
+	if _, ok := p.ModelsByProvider[provider]; !ok {
+		return nil
+	}
+	delete(p.ModelsByProvider, provider)
 	return savePrefsLocked(p)
 }
