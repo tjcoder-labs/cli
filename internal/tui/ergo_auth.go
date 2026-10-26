@@ -68,28 +68,6 @@ func deviceClient() *auth.DeviceClient {
 	return &auth.DeviceClient{BaseURL: ergoBaseURL(), ClientName: "ergo-cli"}
 }
 
-// loginCodeView renders the waiting screen: the code is the hero, with
-// the URL and the email hint under it.
-func loginCodeView(email string, st *auth.DeviceStart, remaining time.Duration, opened bool) string {
-	uri := st.VerificationURIComplete
-	if uri == "" {
-		uri = st.VerificationURI
-	}
-	openedNote := ""
-	if opened {
-		openedNote = " (opened in your browser)"
-	}
-	mins := int(remaining.Minutes())
-	secs := int(remaining.Seconds()) % 60
-	return fmt.Sprintf(
-		"\n  Your sign-in code:\n\n      [::b][yellow]%s[-:-:-]\n\n"+
-			"  1. Open the sign-in link we emailed to [::b]%s[-:-:-]\n"+
-			"  2. Enter the code above to approve this device\n\n"+
-			"  Info page: %s%s\n\n"+
-			"  Waiting for approval…  [dim](expires in %d:%02d — Esc to cancel)[-]\n",
-		st.UserCode, tview.Escape(email), tview.Escape(uri), openedNote, mins, secs)
-}
-
 // handleLoginCommand runs the device-code sign-in: ask for an email,
 // show the code + URL, and poll until the user approves in a browser. The
 // scoped ergo-cli key is stored in the OS keychain (0600 file fallback)
@@ -126,7 +104,7 @@ func (a *App) beginDeviceLogin(email string) {
 	view := tview.NewTextView().SetDynamicColors(true)
 	view.SetBackgroundColor(a.palette.BgInput)
 	view.SetTextColor(a.palette.TextMain)
-	view.SetText("\n  Contacting ergo…")
+	view.SetText(fmt.Sprintf("\n  [%s]Contacting ergo…[-]", a.palette.HexDim))
 	btns := tview.NewForm()
 	a.styleModalForm(btns)
 	cancelLogin := func() {
@@ -144,20 +122,21 @@ func (a *App) beginDeviceLogin(email string) {
 
 	dc := deviceClient()
 	go func() {
-		fail := func(msg string) {
+		fail := func(err error) {
 			a.tv.QueueUpdateDraw(func() {
 				if ctx.Err() != nil {
 					return
 				}
 				finish()
-				a.appendActivity("[red]ergo sign-in failed[-]: " + msg)
-				a.closeModal()
+				f := friendlyLoginError(err, email)
+				a.appendActivity(fmt.Sprintf("[%s]ergo sign-in failed[-]: %s", a.palette.HexOrchid, f.Headline))
+				a.showLoginResult("Sign-in didn't complete", loginFailureView(a.palette, f), "Close", nil)
 			})
 		}
 		st, err := dc.Start(ctx, email)
 		if err != nil {
 			if ctx.Err() == nil {
-				fail(describeLoginError(err))
+				fail(err)
 			}
 			return
 		}
@@ -168,7 +147,7 @@ func (a *App) beginDeviceLogin(email string) {
 		opened := openBrowser(uri) == nil
 		expires := time.Now().Add(time.Duration(st.ExpiresIn) * time.Second)
 		a.tv.QueueUpdateDraw(func() {
-			view.SetText(loginCodeView(email, st, time.Until(expires), opened))
+			view.SetText(loginCodeView(a.palette, email, st, time.Until(expires), opened))
 			a.appendActivity("Sign-in code " + st.UserCode + " — check " + email + " for the approval link")
 		})
 		// live countdown
@@ -186,7 +165,7 @@ func (a *App) beginDeviceLogin(email string) {
 					}
 					a.tv.QueueUpdateDraw(func() {
 						if ctx.Err() == nil {
-							view.SetText(loginCodeView(email, st, rem, opened))
+							view.SetText(loginCodeView(a.palette, email, st, rem, opened))
 						}
 					})
 				}
@@ -196,7 +175,7 @@ func (a *App) beginDeviceLogin(email string) {
 		res, err := dc.Wait(ctx, st, nil)
 		if err != nil {
 			if ctx.Err() == nil {
-				fail(describeLoginError(err))
+				fail(err)
 			}
 			return
 		}
@@ -204,18 +183,28 @@ func (a *App) beginDeviceLogin(email string) {
 		a.tv.QueueUpdateDraw(func() {
 			finish()
 			if saveErr != nil {
-				a.appendActivity(fmt.Sprintf("[red]ergo sign-in failed[-]: could not store the key: %v", saveErr))
-				a.closeModal()
+				a.appendActivity(fmt.Sprintf("[%s]ergo sign-in failed[-]: could not store the key: %v", a.palette.HexOrchid, saveErr))
+				f := loginFailure{
+					Headline: "Signed in, but the key couldn't be saved.",
+					Detail:   saveErr.Error(),
+					Next:     "Set ERGO_API_KEY in your environment, or fix the permissions on your config directory and run /login again.",
+				}
+				a.showLoginResult("Sign-in didn't complete", loginFailureView(a.palette, f), "Close", nil)
 				return
 			}
 			a.swapErgoProvider(res.APIKey)
 			a.setErgoBalanceCents(res.BalanceCents)
-			msg := fmt.Sprintf("Signed in to ergo as %s (key stored in %s)", res.Email, tokenStoreLabel())
-			if res.WelcomeGranted {
-				msg += fmt.Sprintf(" — welcome credit added, balance $%.2f", float64(res.BalanceCents)/100.0)
+			a.afterErgoLogin()
+			email := res.Email
+			if email == "" {
+				email = "your account"
 			}
-			a.appendActivity(msg)
-			a.closeModal()
+			card := loginSuccessView(a.palette, email, res.WelcomeGranted, res.BalanceCents, a.ergoAvailable(), a.currentModel, tokenStoreLabel())
+			a.appendActivity(fmt.Sprintf("[%s]Signed in to ergo as %s[-]", a.palette.HexPurple, tview.Escape(email)))
+			a.showLoginResult("You're signed in", card, "Start chatting", func() {
+				// Leave the card in the conversation so it stays visible.
+				fmt.Fprintf(a.transcript, "\n%s\n", card)
+			})
 		})
 	}()
 }
@@ -230,20 +219,6 @@ func tokenStoreLabel() string {
 		return "ERGO_API_KEY"
 	}
 	return "local storage"
-}
-
-// describeLoginError turns device-flow errors into one actionable line.
-func describeLoginError(err error) string {
-	var rl *auth.RateLimitedError
-	switch {
-	case errors.Is(err, auth.ErrSignupClosed):
-		return err.Error() + " (ask your admin to enable sign-ups or add you to the allowlist)"
-	case errors.As(err, &rl):
-		return err.Error()
-	case errors.Is(err, auth.ErrExpired), errors.Is(err, auth.ErrDenied):
-		return err.Error()
-	}
-	return err.Error()
 }
 
 // handleLogoutCommand revokes the key server-side, then removes the local

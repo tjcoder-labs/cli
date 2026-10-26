@@ -28,7 +28,7 @@ func TestPlausibleEmail(t *testing.T) {
 
 func TestLoginCodeViewShowsCodeAndURL(t *testing.T) {
 	st := &auth.DeviceStart{UserCode: "ABCD-2345", VerificationURI: "https://x.example/cli/auth/verify", ExpiresIn: 900}
-	v := loginCodeView("me@x.co", st, 14*time.Minute+5*time.Second, true)
+	v := loginCodeView(darkPalette(), "me@x.co", st, 14*time.Minute+5*time.Second, true)
 	for _, want := range []string{"ABCD-2345", "https://x.example/cli/auth/verify", "me@x.co", "14:05", "opened in your browser"} {
 		if !strings.Contains(v, want) {
 			t.Errorf("view missing %q:\n%s", want, v)
