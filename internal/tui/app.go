@@ -20,6 +20,7 @@ import (
 	ctxpkg "github.com/tjcoder-labs/cli/internal/context"
 	"github.com/tjcoder-labs/cli/internal/mcp"
 	"github.com/tjcoder-labs/cli/internal/memories"
+	"github.com/tjcoder-labs/cli/internal/providers"
 	"github.com/tjcoder-labs/cli/internal/session"
 	"github.com/tjcoder-labs/cli/internal/tasks"
 	"github.com/tjcoder-labs/cli/internal/tooling"
@@ -159,6 +160,7 @@ var slashCommands = []slashCommand{
 	{"canvas", "Open a file/range in the canvas panel"},
 	{"about", "Open the about / welcome screen"},
 	{"mcp", "Manage MCP integrations"},
+	{"providers", "Manage model providers"},
 }
 
 type App struct {
@@ -177,8 +179,8 @@ type App struct {
 	// ergoBalanceKnown. Touched only on the UI goroutine.
 	ergoBalanceCents int64
 	ergoBalanceKnown bool
-	registry *tools.Registry
-	runner   *tooling.Runner
+	registry         *tools.Registry
+	runner           *tooling.Runner
 	// steeringCh carries mid-turn user steering messages from the
 	// TUI's submit() handler to Runner.Steering. It is buffered so
 	// a quick double-Enter doesn't drop; submit() does a non-blocking
@@ -199,7 +201,7 @@ type App struct {
 	ergoModels                []string // gateway model set (from /v1/models or the fallback); ergo provider only
 	modelChosen               bool     // user/CLI picked a model this run
 	explicitModel             string   // --model value for this run (wins over gateway validation)
-	previousAgentDefaultModel string // tracks the last agent's default model so switching agents can swap models
+	previousAgentDefaultModel string   // tracks the last agent's default model so switching agents can swap models
 	models                    []client.ModelInfo
 	enabledTools              map[string]bool
 	history                   []client.Message
@@ -237,8 +239,8 @@ type App struct {
 	// Up/Down and presses Delete to remove a memory.
 	memoriesList  *tview.List
 	memoriesPanel *tview.Flex
-	testView   *tview.TextView
-	testPanel  *tview.Flex
+	testView      *tview.TextView
+	testPanel     *tview.Flex
 	// right is the right-column Flex (Cognition stacked over the
 	// active body). Cached so buildRightColumn can read its current
 	// size for adaptive height calculations.
@@ -1761,13 +1763,57 @@ func (a *App) globalKeys(event *tcell.EventKey) *tcell.EventKey {
 	return event
 }
 
+// handleProvidersCommand dispatches the /providers slash command:
+//
+//	/providers              → open the provider manager
+//	/providers list         → print the registry to the activity log
+//	/providers add          → open the new-provider editor
+//	/providers use <name>   → activate a provider
+func (a *App) handleProvidersCommand(parts []string) {
+	if len(parts) > 1 {
+		switch strings.ToLower(parts[1]) {
+		case "list":
+			reg := providers.Load()
+			for _, p := range reg.Providers {
+				marker := " "
+				if p.Name == reg.Active {
+					marker = "*"
+				}
+				a.appendActivity(fmt.Sprintf("%s %s — %s (auth: %s)", marker, p.Name, p.BaseURL, p.Auth))
+			}
+			return
+		case "add":
+			a.openProviderEditor(providers.Config{})
+			return
+		case "use", "activate":
+			if len(parts) < 3 {
+				a.appendActivity("usage: /providers use <name>")
+				return
+			}
+			name := strings.TrimSpace(parts[2])
+			if _, ok := providers.Get(name); !ok {
+				a.appendActivity(fmt.Sprintf("Provider %q not found", name))
+				return
+			}
+			reg := providers.Load()
+			reg.Active = name
+			if err := providers.Save(reg); err != nil {
+				a.appendActivity(fmt.Sprintf("[red]Provider activate failed[-]: %v", err))
+				return
+			}
+			a.appendActivity(fmt.Sprintf("Activated provider %s", name))
+			return
+		}
+	}
+	a.openProvidersModal()
+}
+
 func (a *App) handleSlashCommand(cmd string) {
 	parts := strings.Fields(strings.TrimPrefix(cmd, "/"))
 	if len(parts) == 0 {
 		return
 	}
 	command := strings.ToLower(parts[0])
-
 	switch command {
 	case "agent":
 		a.openAgentModal()
@@ -1820,6 +1866,8 @@ func (a *App) handleSlashCommand(cmd string) {
 		a.openMemoryModal()
 	case "config":
 		a.openConfigModal()
+	case "providers":
+		a.handleProvidersCommand(parts)
 	case "environment", "env":
 		a.openEnvironmentModal()
 	case "tasks":
@@ -4070,10 +4118,22 @@ func (a *App) enabledToolList() []string {
 	return names
 }
 
+// listModels dispatches to the provider's model enumeration. For the ergo
+// gateway we prefer ListAllModels (the full internal catalogue: ergo tiers +
+// ollama/* + xai/* + google/*) and fall back to ListModels on any error.
+func (a *App) listModels(ctx context.Context) ([]client.ModelInfo, error) {
+	if e, ok := a.provider.(*client.Ergo); ok {
+		if models, err := e.ListAllModels(ctx); err == nil {
+			return models, nil
+		}
+	}
+	return a.provider.ListModels(ctx)
+}
+
 func (a *App) loadModels() {
 	ctx, cancel := context.WithTimeout(context.Background(), modelLoadTimeout)
 	defer cancel()
-	models, err := a.provider.ListModels(ctx)
+	models, err := a.listModels(ctx)
 	if err != nil {
 		a.appendActivity(fmt.Sprintf("["+a.palette.HexOrchid+"::b]model load failed[-:-:-]: %v", err))
 		return
@@ -4104,7 +4164,7 @@ func (a *App) loadModelsAsync() {
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), modelLoadTimeout)
 		defer cancel()
-		models, err := a.provider.ListModels(ctx)
+		models, err := a.listModels(ctx)
 		a.tv.QueueUpdateDraw(func() {
 			if err != nil {
 				a.appendActivity(fmt.Sprintf("["+a.palette.HexViolet+"]model load deferred[-]: %v", err))

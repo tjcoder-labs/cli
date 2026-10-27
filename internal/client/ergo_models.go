@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"net/http"
 	"regexp"
 	"strings"
 )
@@ -148,6 +150,66 @@ func parseErgoModelNotFound(status int, body []byte, requested string) *ErgoMode
 		}
 	}
 	return out
+}
+
+// ListAllModels queries the gateway's GET /v1/providers, which enumerates
+// every model the ergo platform can route to (the three public tiers plus
+// ollama/*, xai/*, google/*). It returns a flattened []ModelInfo whose Family
+// is the provider id. On any failure — including a gateway that predates the
+// /v1/providers route (404) — it falls back to ListModels (the three tiers).
+func (e *Ergo) ListAllModels(ctx context.Context) ([]ModelInfo, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if e.apiKey == "" {
+		return nil, &ErgoAuthError{Message: "no ergo API key configured"}
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, e.baseURL+"/v1/providers", nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+e.apiKey)
+	resp, err := e.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == 401 || resp.StatusCode == 403 {
+		return nil, &ErgoAuthError{Message: strings.TrimSpace(decodeErgoError(resp.Body))}
+	}
+	// A gateway without /v1/providers returns 404: degrade to the tier list.
+	if resp.StatusCode == http.StatusNotFound {
+		return e.ListModels(ctx)
+	}
+	if resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("ergo list providers: %s", resp.Status)
+	}
+
+	var decoded struct {
+		Providers []struct {
+			ID     string `json:"id"`
+			Models []struct {
+				ID   string `json:"id"`
+				Name string `json:"name"`
+			} `json:"models"`
+		} `json:"providers"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&decoded); err != nil {
+		return nil, err
+	}
+
+	var models []ModelInfo
+	for _, p := range decoded.Providers {
+		for _, m := range p.Models {
+			if id := strings.TrimSpace(m.ID); id != "" {
+				models = append(models, ModelInfo{Name: id, Family: p.ID})
+			}
+		}
+	}
+	if len(models) == 0 {
+		return e.ListModels(ctx)
+	}
+	return models, nil
 }
 
 // ProviderKey returns the prefs key for a provider instance: "ergo",

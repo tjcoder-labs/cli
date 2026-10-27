@@ -100,3 +100,61 @@ func TestProviderKey(t *testing.T) {
 		t.Fatalf("got %q", got)
 	}
 }
+
+func TestErgoListAllModelsFlattensProviders(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer k" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		if r.URL.Path == "/v1/providers" {
+			_, _ = w.Write([]byte(`{"object":"list","providers":[
+				{"id":"ergo","models":[{"id":"ergo"},{"id":"ergo-lite"}]},
+				{"id":"xai","models":[{"id":"xai/grok-4.5"}]},
+				{"id":"ollama","models":[{"id":"ollama/phi3"}]}
+			]}`))
+			return
+		}
+		// /v1/models fallback path
+		_, _ = w.Write([]byte(`{"data":[{"id":"ergo"},{"id":"ergo-lite"},{"id":"ergo-genius"}]}`))
+	}))
+	defer srv.Close()
+
+	e := NewErgo(srv.URL, "k", 0)
+	models, err := e.ListAllModels(context.Background())
+	if err != nil {
+		t.Fatalf("ListAllModels: %v", err)
+	}
+	var names []string
+	for _, m := range models {
+		names = append(names, m.Name)
+	}
+	want := []string{"ergo", "ergo-lite", "xai/grok-4.5", "ollama/phi3"}
+	if !reflect.DeepEqual(names, want) {
+		t.Fatalf("got %v want %v", names, want)
+	}
+	// family is the provider id
+	if models[2].Family != "xai" {
+		t.Fatalf("family for xai model = %q", models[2].Family)
+	}
+}
+
+func TestErgoListAllModelsFallsBackOn404(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/providers" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		_, _ = w.Write([]byte(`{"data":[{"id":"ergo"},{"id":"ergo-lite"}]}`))
+	}))
+	defer srv.Close()
+
+	e := NewErgo(srv.URL, "k", 0)
+	models, err := e.ListAllModels(context.Background())
+	if err != nil {
+		t.Fatalf("ListAllModels: %v", err)
+	}
+	if len(models) != 2 || models[0].Name != "ergo" {
+		t.Fatalf("fallback mismatch: %+v", models)
+	}
+}
