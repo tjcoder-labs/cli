@@ -67,7 +67,8 @@ func (a *App) openProviderDetail(name string) {
 	list.AddItem("Activate", "make this the default provider", 0, func() {
 		reg.Active = name
 		_ = providers.Save(reg)
-		a.appendActivity(fmt.Sprintf("Activated provider %s", name))
+		// Rebuild the live client and reload models for the new provider.
+		a.switchProvider(cfg)
 		a.closeModal()
 	})
 	list.AddItem("Edit", "change name / base URL / auth flow", 0, func() {

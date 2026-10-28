@@ -1791,7 +1791,8 @@ func (a *App) handleProvidersCommand(parts []string) {
 				return
 			}
 			name := strings.TrimSpace(parts[2])
-			if _, ok := providers.Get(name); !ok {
+			cfg, ok := providers.Get(name)
+			if !ok {
 				a.appendActivity(fmt.Sprintf("Provider %q not found", name))
 				return
 			}
@@ -1801,7 +1802,8 @@ func (a *App) handleProvidersCommand(parts []string) {
 				a.appendActivity(fmt.Sprintf("[red]Provider activate failed[-]: %v", err))
 				return
 			}
-			a.appendActivity(fmt.Sprintf("Activated provider %s", name))
+			// Rebuild the live client and reload models.
+			a.switchProvider(cfg)
 			return
 		}
 	}
@@ -4118,6 +4120,30 @@ func (a *App) enabledToolList() []string {
 	return names
 }
 
+// switchProvider swaps the live provider to cfg, rebuilds the runner's
+// provider reference, clears the stale model list, and kicks off an async
+// reload so the /model picker repopulates immediately after the switch.
+// It must be called on the UI goroutine (inside QueueUpdateDraw or an
+// event handler).
+func (a *App) switchProvider(cfg providers.Config) {
+	p, err := client.NewProviderFromConfig(cfg, client.DefaultRequestTimeout)
+	if err != nil {
+		a.appendActivity(fmt.Sprintf("[red]Provider build failed[-]: %v", err))
+		return
+	}
+	a.provider = p
+	a.runner.Provider = p
+	// Clear stale model list so openModelModal triggers a fresh fetch.
+	a.models = nil
+	a.ergoModels = nil
+	// Re-resolve the current model for the new provider.
+	a.currentModel = a.sanitizeModel(a.currentModel)
+	a.refreshHeader()
+	a.refreshFooter()
+	a.appendActivity(fmt.Sprintf("Switched to provider %s (%s)", cfg.Name, cfg.BaseURL))
+	a.loadModelsAsync()
+}
+
 // listModels dispatches to the provider's model enumeration. For the ergo
 // gateway we prefer ListAllModels (the full internal catalogue: ergo tiers +
 // ollama/* + xai/* + google/*) and fall back to ListModels on any error.
@@ -4218,11 +4244,42 @@ func (a *App) openAgentModal() {
 }
 
 func (a *App) openModelModal() {
-	if len(a.models) == 0 {
-		a.loadModels()
-	}
 	list := tview.NewList().ShowSecondaryText(true)
 	a.styleModalList(list)
+
+	if len(a.models) == 0 {
+		// Show a spinner item and kick off an async fetch so the UI stays
+		// responsive. The async loader calls QueueUpdateDraw which will
+		// re-render, but since the modal is already open we need to rebuild
+		// it once models arrive. We do this by re-opening the modal from
+		// within the async completion path.
+		list.AddItem("⠋ loading models…", "fetching from "+a.provider.BaseURL(), 0, nil)
+		list.SetDoneFunc(func() { a.closeModal() })
+		a.showModal("Select Model", list)
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), modelLoadTimeout)
+			defer cancel()
+			models, err := a.listModels(ctx)
+			a.tv.QueueUpdateDraw(func() {
+				if err != nil {
+					a.appendActivity(fmt.Sprintf("["+a.palette.HexOrchid+"::b]model load failed[-:-:-]: %v", err))
+					a.closeModal()
+					return
+				}
+				a.models = models
+				a.afterModelsLoaded()
+				if a.currentModel == "" && len(models) > 0 {
+					a.currentModel = models[0].Name
+				}
+				a.refreshHeader()
+				a.refreshFooter()
+				// Re-open modal now that models are loaded.
+				a.openModelModal()
+			})
+		}()
+		return
+	}
+
 	for _, model := range a.models {
 		item := model
 		label := item.Name

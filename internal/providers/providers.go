@@ -77,9 +77,9 @@ type Registry struct {
 	Active string `json:"active,omitempty"`
 }
 
-// Defaults returns the built-in registry: ergo-gateway (default) and a local
-// ollama. They are removable — the user may delete either — but they seed a
-// first-run install.
+// Defaults returns the built-in registry: ergo-gateway (default), a local
+// ollama, and the hosted Ollama cloud API. They are removable — the user
+// may delete any of them — but they seed a first-run install.
 func Defaults() Registry {
 	return Registry{
 		Active: "ergo-gateway",
@@ -93,6 +93,13 @@ func Defaults() Registry {
 			{
 				Name:    "ollama",
 				BaseURL: "http://localhost:11434",
+				Auth:    AuthNone,
+			},
+			{
+				// Hosted Ollama cloud API (https://ollama.com).
+				// Requires an OLLAMA_API_KEY; use Login (API key) to store it.
+				Name:    "ollama-cloud",
+				BaseURL: "https://ollama.com",
 				Auth:    AuthAPIKey,
 			},
 		},

@@ -25,9 +25,10 @@ type providerInputs struct {
 //
 //  1. An explicit --provider always wins, then a saved provider choice.
 //     The automatic default never overrides either.
-//  2. Otherwise ergo is the default whenever it is configured.
-//  3. Interactive (TUI) with no ergo credentials: still ergo. The TUI shows
-//     a "run /login" prompt instead of silently switching to ollama.
+//  2. Otherwise ergo is the default when it has credentials (ErgoReady).
+//  3. Interactive (TUI) with no ergo credentials: probe local Ollama first;
+//     if reachable, use it. Otherwise fall back to ergo so the TUI can
+//     prompt /login.
 //  4. Headless with no ergo credentials (nobody to prompt): fall back to
 //     local ollama if reachable, then ollama-cloud if OLLAMA_API_KEY is set,
 //     else local ollama (so errors point at the local host as before).
@@ -38,14 +39,19 @@ func resolveProvider(in providerInputs) string {
 	if s := strings.TrimSpace(in.Saved); s != "" {
 		return s
 	}
-	if in.ErgoReady || in.Interactive {
+	if in.ErgoReady {
 		return "ergo"
 	}
+	// No ergo credentials: probe local Ollama regardless of interactive/headless.
 	if in.OllamaUp != nil && in.OllamaUp() {
 		return "ollama"
 	}
 	if in.CloudKey {
 		return "ollama-cloud"
+	}
+	// Final fallback: ergo for interactive (shows /login prompt), ollama for headless.
+	if in.Interactive {
+		return "ergo"
 	}
 	return "ollama"
 }
