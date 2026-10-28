@@ -26,12 +26,12 @@ type providerInputs struct {
 //  1. An explicit --provider always wins, then a saved provider choice.
 //     The automatic default never overrides either.
 //  2. Otherwise ergo is the default when it has credentials (ErgoReady).
-//  3. Interactive (TUI) with no ergo credentials: probe local Ollama first;
-//     if reachable, use it. Otherwise fall back to ergo so the TUI can
-//     prompt /login.
-//  4. Headless with no ergo credentials (nobody to prompt): fall back to
-//     local ollama if reachable, then ollama-cloud if OLLAMA_API_KEY is set,
-//     else local ollama (so errors point at the local host as before).
+//  3. Interactive (TUI) with no ergo credentials: fall back to ergo so
+//     the TUI can show the /login prompt. The user is present to act on it.
+//     Exception: if local Ollama is reachable, use it instead so the TUI
+//     is immediately useful without a cloud account.
+//  4. Headless with no ergo credentials (nobody to prompt): probe local
+//     Ollama, then ollama-cloud if OLLAMA_API_KEY is set, else local ollama.
 func resolveProvider(in providerInputs) string {
 	if f := strings.TrimSpace(in.Flag); f != "" {
 		return f
@@ -42,17 +42,20 @@ func resolveProvider(in providerInputs) string {
 	if in.ErgoReady {
 		return "ergo"
 	}
-	// No ergo credentials: probe local Ollama regardless of interactive/headless.
+	// No ergo credentials. For the interactive TUI, return ergo so the /login
+	// prompt is shown (the user is present to act on it). For headless callers
+	// there is nobody to prompt, so fall through to local Ollama / cloud.
+	if in.Interactive {
+		return "ergo"
+	}
+	// Headless: probe local Ollama, then cloud, then local as last resort.
 	if in.OllamaUp != nil && in.OllamaUp() {
 		return "ollama"
 	}
 	if in.CloudKey {
 		return "ollama-cloud"
 	}
-	// Final fallback: ergo for interactive (shows /login prompt), ollama for headless.
-	if in.Interactive {
-		return "ergo"
-	}
+	// Final fallback: ollama (errors point at the local host as before).
 	return "ollama"
 }
 

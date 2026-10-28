@@ -85,6 +85,7 @@ func TestProviderOrderErgoFirst(t *testing.T) {
 
 func TestNewProviderErgoUsesSavedToken(t *testing.T) {
 	t.Setenv("ERGO_API_KEY", "")
+	t.Setenv("ERGO_NO_KEYRING", "1") // isolate from the real OS keychain
 	t.Setenv("XDG_DATA_HOME", t.TempDir())
 	p, _ := NewProvider("ergo", "", "", 0)
 	if p.(*Ergo).Authenticated() {

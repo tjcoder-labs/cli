@@ -21,18 +21,41 @@ var ProviderOrder = []string{"ergo", "ollama", "ollama-cloud", "gemini"}
 // a registered OpenAI-compatible gateway builds an OpenAICompatible client
 // (or an Ergo client for the ergo-gateway default).
 func NewProvider(name, host, geminiAPIKey string, timeout time.Duration) (Provider, error) {
+	// defaultOllamaHost is the well-known local Ollama address. It is used as
+	// a sentinel: if the caller passes this (or empty) we check the registry
+	// for a user-configured override before falling back to the literal value.
+	const defaultOllamaHost = "http://localhost:11434"
 	switch name {
 	case "", "ollama":
+		// Prefer a custom base_url from the registry over the hardcoded default,
+		// but only when the caller has not already supplied an explicit host.
+		// This lets callers (tests, --host flag) pin a specific address while
+		// still respecting a user-configured non-default Ollama port/address.
+		if host == "" || host == defaultOllamaHost {
+			if cfg, ok := providers.Get("ollama"); ok && cfg.BaseURL != "" {
+				host = cfg.BaseURL
+			}
+		}
 		return NewOllamaWithTimeout(host, timeout), nil
 	case "ollama-cloud", "ollama_cloud":
-		// Hosted Ollama (ollama.com). Key comes from OLLAMA_API_KEY. A missing
-		// key is not fatal here: the first request surfaces the server's 401
-		// and the TUI can tell the user to set OLLAMA_API_KEY.
+		// Hosted Ollama (ollama.com). Prefer registry credentials over env vars
+		// so that `coder providers add` / `/login ollama-cloud` are the
+		// canonical way to store the key. Fall back to OLLAMA_API_KEY so that
+		// existing setups continue to work without re-running /login.
 		cloudHost := host
-		if cloudHost == "" || cloudHost == "http://localhost:11434" {
+		cloudKey := os.Getenv("OLLAMA_API_KEY")
+		if cfg, ok := providers.Get("ollama-cloud"); ok {
+			if cfg.BaseURL != "" && (cloudHost == "" || cloudHost == defaultOllamaHost) {
+				cloudHost = cfg.BaseURL
+			}
+			if cfg.APIKey != "" {
+				cloudKey = cfg.APIKey
+			}
+		}
+		if cloudHost == "" || cloudHost == defaultOllamaHost {
 			cloudHost = os.Getenv("OLLAMA_CLOUD_HOST")
 		}
-		return NewOllamaCloud(cloudHost, os.Getenv("OLLAMA_API_KEY"), timeout), nil
+		return NewOllamaCloud(cloudHost, cloudKey, timeout), nil
 	case "gemini":
 		if geminiAPIKey == "" {
 			return nil, fmt.Errorf("--gemini-api-key or GEMINI_API_KEY required for gemini provider")
