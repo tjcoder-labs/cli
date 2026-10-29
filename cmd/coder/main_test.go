@@ -234,12 +234,12 @@ func TestCmdAskRoutesToAvailableOpenAICompatibleModel(t *testing.T) {
 func TestErgoModelNotFoundMessage(t *testing.T) {
 	e := &client.ErgoModelNotFoundError{Model: "foo:cloud", Available: []string{"ergo", "ergo-lite"}}
 	m := ergoModelNotFoundMessage(e, nil, false)
-	for _, want := range []string{`"foo:cloud"`, "ergo, ergo-lite", "default (ergo)"} {
+	for _, want := range []string{`"foo:cloud"`, "ergo, ergo-lite", "default (ergo/pro)"} {
 		if !strings.Contains(m, want) {
 			t.Errorf("message missing %q: %s", want, m)
 		}
 	}
-	if m := ergoModelNotFoundMessage(&client.ErgoModelNotFoundError{}, nil, true); !strings.Contains(m, "--model") || !strings.Contains(m, "ergo-genius") {
+	if m := ergoModelNotFoundMessage(&client.ErgoModelNotFoundError{}, nil, true); !strings.Contains(m, "--model") || !strings.Contains(m, "ergo/genius") {
 		t.Errorf("explicit/fallback message: %s", m)
 	}
 }

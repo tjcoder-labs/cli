@@ -67,6 +67,10 @@ type Config struct {
 	// Ollama client (/api/...). This lets a non-Ollama-named endpoint that
 	// happens to serve the Ollama API still route to the right client.
 	Protocol string `json:"protocol,omitempty"`
+	// APIPath is the Ollama API prefix when Protocol is "ollama" and the
+	// endpoint does not serve it at /api (e.g. "/ollama/api" on the ergo
+	// gateway). "" = /api.
+	APIPath string `json:"api_path,omitempty"`
 	// Default marks the provider selected on launch when no explicit
 	// --provider is given. Exactly one provider should have this set.
 	Default bool `json:"default,omitempty"`
@@ -83,7 +87,7 @@ const (
 // explicit Protocol wins; otherwise the name is inspected: "ollama" and
 // "ollama-cloud" (and their aliases) are the Ollama API, everything else is
 // assumed OpenAI-compatible. The ergo gateway is handled separately by the
-// client factory (it is neither protocol).
+// client factory: it defaults to OpenAI and honors an explicit "ollama".
 func (p Config) ResolveProtocol() string {
 	switch strings.ToLower(strings.TrimSpace(p.Protocol)) {
 	case ProtocolOllama:
@@ -257,6 +261,31 @@ func Get(name string) (Config, bool) {
 
 // Active returns the currently selected provider config, defaulting to
 // "ergo-gateway" when the registry has no Active marker.
+// ConfiguredActive returns the user's chosen active provider name, or ""
+// when no registry file has been written (first run uses the built-in
+// defaults, which should not override automatic selection).
+func ConfiguredActive() string {
+	p, err := path()
+	if err != nil {
+		return ""
+	}
+	if _, err := os.Stat(p); err != nil {
+		return ""
+	}
+	reg := Load()
+	if reg.Active != "" {
+		if _, ok := Get(reg.Active); ok {
+			return reg.Active
+		}
+	}
+	for _, c := range reg.Providers {
+		if c.Default {
+			return c.Name
+		}
+	}
+	return ""
+}
+
 func Active() Config {
 	reg := Load()
 	if reg.Active != "" {

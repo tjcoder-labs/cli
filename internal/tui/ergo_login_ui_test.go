@@ -3,6 +3,7 @@ package tui
 import (
 	"errors"
 	"fmt"
+	"reflect"
 	"regexp"
 	"strings"
 	"testing"
@@ -76,25 +77,25 @@ func TestFriendlyLoginError(t *testing.T) {
 func TestLoginSuccessView(t *testing.T) {
 	pal := darkPalette()
 	agents := client.ErgoFallbackModels()
-	v := loginSuccessView(pal, "me@x.co", true, 500, agents, "ergo-lite", "the OS keychain")
+	v := loginSuccessView(pal, "me@x.co", true, 500, agents, "ergo/flash", "the OS keychain")
 	p := plain(v)
 	for _, want := range []string{
 		"✓ You're signed in", "me@x.co", "$5.00 welcome credit added",
-		"● ergo-lite", "ergo-genius", "ergo  ", "fast and economical",
+		"● ergo/flash", "ergo/genius", "ergo/pro", "fast and economical",
 		"Type a message to start", "/model", "/balance", "/logout",
 	} {
 		if !strings.Contains(p, want) {
 			t.Errorf("success view missing %q:\n%s", want, p)
 		}
 	}
-	if strings.Contains(p, "● ergo-genius") || strings.Contains(p, "● ergo  ") {
+	if strings.Contains(p, "● ergo/genius") || strings.Contains(p, "● ergo/pro") {
 		t.Errorf("only the selected agent is marked:\n%s", p)
 	}
 	if strings.Contains(p, "ergo_") {
 		t.Error("must not render key material")
 	}
 	// not a fresh grant -> show the balance
-	p = plain(loginSuccessView(pal, "me@x.co", false, 1234, agents, "ergo", "file"))
+	p = plain(loginSuccessView(pal, "me@x.co", false, 1234, agents, "ergo/pro", "file"))
 	if !strings.Contains(p, "Balance: $12.34") || strings.Contains(p, "welcome credit") {
 		t.Errorf("balance line: %s", p)
 	}
@@ -113,10 +114,10 @@ func newModelTestApp(t *testing.T, p client.Provider) *App {
 
 func TestSanitizeModel(t *testing.T) {
 	a := newModelTestApp(t, client.NewErgo("http://x", "k", 0))
-	if got := a.sanitizeModel("deepseek-v4-pro:cloud"); got != "ergo" {
-		t.Errorf("ollama tag on ergo -> %q, want ergo", got)
+	if got := a.sanitizeModel("deepseek-v4-pro:cloud"); got != "ergo/pro" {
+		t.Errorf("ollama tag on ergo -> %q, want ergo/pro", got)
 	}
-	if got := a.sanitizeModel("ergo-genius"); got != "ergo-genius" {
+	if got := a.sanitizeModel("ergo/genius"); got != "ergo/genius" {
 		t.Errorf("got %q", got)
 	}
 	a.explicitModel = "weird"
@@ -131,24 +132,36 @@ func TestApplyErgoModelsReplacesStaleModelAndKeepsOllamaPref(t *testing.T) {
 		t.Fatal(err)
 	}
 	a.currentModel = "minimax-m3:cloud"
-	note := a.applyErgoModels([]string{"ergo", "ergo-lite"})
-	if a.currentModel != "ergo" || !strings.Contains(note, "not served by ergo") {
+	note := a.applyErgoModels([]string{"ergo/flash", "ergo/pro", "xai/grok-4.3"})
+	if a.currentModel != "ergo/pro" || !strings.Contains(note, "not served by ergo") {
 		t.Errorf("model=%q note=%q", a.currentModel, note)
 	}
 	if m, _ := session.GetModelForProvider("ollama"); m != "minimax-m3:cloud" {
 		t.Errorf("ollama pref clobbered: %q", m)
 	}
 	// remembered ergo pick is adopted when the user hasn't chosen
+	// (a legacy saved id is migrated on disk)
 	_ = session.SetModelForProvider("ergo", "ergo-lite")
-	a.currentModel = "ergo"
-	if note := a.applyErgoModels([]string{"ergo", "ergo-lite"}); note != "" || a.currentModel != "ergo-lite" {
+	a.currentModel = "ergo/pro"
+	if note := a.applyErgoModels([]string{"ergo/flash", "ergo/pro", "xai/grok-4.3"}); note != "" || a.currentModel != "ergo/flash" {
 		t.Errorf("model=%q note=%q", a.currentModel, note)
+	}
+	if m, _ := session.GetModelForProvider("ergo"); m != "ergo/flash" {
+		t.Errorf("legacy saved id not migrated: %q", m)
+	}
+	// a saved unified-catalogue pick (xai/…) survives
+	_ = session.SetModelForProvider("ergo", "xai/grok-4.3")
+	a.currentModel = "ergo/pro"
+	if a.applyErgoModels([]string{"ergo/flash", "ergo/pro", "xai/grok-4.3"}); a.currentModel != "xai/grok-4.3" {
+		t.Errorf("model=%q", a.currentModel)
 	}
 }
 
 func TestHandleModelNotFoundResetsToDefaultAndListsModels(t *testing.T) {
 	a := newModelTestApp(t, client.NewErgo("http://x", "k", 0))
 	a.currentModel = "deepseek-v4-pro:cloud"
+	full := []string{"ergo", "ergo-lite", "ergo-genius", "xai/grok-4.3", "ollama/qwen3:8b"}
+	a.ergoModels = full
 	err := fmt.Errorf("turn failed: %w", &client.ErgoModelNotFoundError{
 		Model: "deepseek-v4-pro:cloud", Available: []string{"ergo", "ergo-lite", "ergo-genius"},
 	})
@@ -163,6 +176,9 @@ func TestHandleModelNotFoundResetsToDefaultAndListsModels(t *testing.T) {
 	}
 	if a.currentModel != "ergo" {
 		t.Errorf("model = %q, want ergo", a.currentModel)
+	}
+	if !reflect.DeepEqual(a.ergoModels, full) {
+		t.Errorf("404 shrank the model list to %v", a.ergoModels)
 	}
 	if _, ok := a.handleModelNotFound(errors.New("other")); ok {
 		t.Error("other errors are not model_not_found")

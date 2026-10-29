@@ -233,6 +233,20 @@ The `/environment` editor controls the context block injected ahead of every tur
 
 Unknown tokens are left untouched so typos are easy to spot. Save to persist to `.ergo-cli-go/environment.tmpl`; saving the built-in default removes the file so you always track upstream changes.
 
+### Ergo gateway models
+
+Ergo serves three tiers — `ergo/flash`, `ergo/pro` (default) and `ergo/genius` —
+plus the full unified catalogue (`xai/…`, `ollama/…`, `google/…`, `openai/…`),
+grouped by provider in `/model` and listed by `coder models`. Legacy saved ids
+(`ergo`, `ergo-lite`, `ergo-genius`) are migrated automatically. Keys come from
+`/login` (scope `ergo-cli`).
+
+The client speaks the OpenAI protocol by default. To use the gateway's
+Ollama-compatible API instead, set `ERGO_PROTOCOL=ollama` (optionally
+`ERGO_OLLAMA_PATH=/ollama/api`; default `/api`), or set `"protocol": "ollama"`
+and `"api_path"` on the `ergo-gateway` entry in `providers.json`. The registry's
+active provider is honored at startup when no `--provider` or saved choice is set.
+
 ### Telemetry
 
 Coder sends anonymous usage stats (PostHog), crash reports (Sentry) and an install/usage heartbeat to the ergo gateway (`POST /cli/heartbeat`) so we can see what breaks and how many installs are active. Every event is keyed by a random install id stored in `~/.config/tjcoder/coder-cli/settings.json`. Prompts, code, file paths, tool arguments, emails and keys are never sent. Error messages are scrubbed of paths, URLs, emails and tokens.

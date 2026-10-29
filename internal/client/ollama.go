@@ -25,6 +25,7 @@ const OllamaCloudHost = "https://ollama.com"
 
 type Ollama struct {
 	baseURL    string
+	apiPath    string // "" = "/api"; e.g. "/ollama/api" behind the ergo gateway
 	apiKey     string // optional; sent as "Authorization: Bearer" when set
 	httpClient *http.Client
 	mu         sync.Mutex
@@ -82,7 +83,7 @@ func (o *Ollama) ShowModel(ctx context.Context, model string) (ModelDetails, err
 	if err != nil {
 		return ModelDetails{}, err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, o.baseURL+"/api/show", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, o.apiBase()+"/show", bytes.NewReader(body))
 	if err != nil {
 		return ModelDetails{}, err
 	}
@@ -163,6 +164,24 @@ func NewOllamaCloud(baseURL, apiKey string, requestTimeout time.Duration) *Ollam
 	return o
 }
 
+// WithAPIPath sets the Ollama API path prefix (default "/api"), e.g.
+// "/ollama/api" for the ergo gateway's Ollama-compatible surface.
+func (o *Ollama) WithAPIPath(path string) *Ollama {
+	path = strings.TrimRight(strings.TrimSpace(path), "/")
+	if path != "" && !strings.HasPrefix(path, "/") {
+		path = "/" + path
+	}
+	o.apiPath = path
+	return o
+}
+
+func (o *Ollama) apiBase() string {
+	if o.apiPath == "" {
+		return o.baseURL + "/api"
+	}
+	return o.baseURL + o.apiPath
+}
+
 // authorize attaches the Bearer token when an API key is configured.
 func (o *Ollama) authorize(req *http.Request) {
 	if o.apiKey != "" {
@@ -178,7 +197,7 @@ func (o *Ollama) ListModels(ctx context.Context) ([]ModelInfo, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, o.baseURL+"/api/tags", nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, o.apiBase()+"/tags", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -248,7 +267,7 @@ func (o *Ollama) ContextWindow(ctx context.Context, model string) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, o.baseURL+"/api/show", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, o.apiBase()+"/show", bytes.NewReader(body))
 	if err != nil {
 		return 0, err
 	}
@@ -299,7 +318,7 @@ func (o *Ollama) chatOnce(ctx context.Context, request ChatRequest, onEvent func
 	if err != nil {
 		return Message{}, err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, o.baseURL+"/api/chat", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, o.apiBase()+"/chat", bytes.NewReader(body))
 	if err != nil {
 		return Message{}, err
 	}

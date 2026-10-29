@@ -3,6 +3,7 @@ package client
 import (
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/tjcoder-labs/cli/internal/auth"
@@ -71,7 +72,7 @@ func NewProvider(name, host, geminiAPIKey string, timeout time.Duration) (Provid
 		if base == "" {
 			base = ErgoDefaultBaseURL
 		}
-		return NewErgo(base, auth.ResolveErgoToken(), timeout), nil
+		return newErgo(base, auth.ResolveErgoToken(), timeout, "", ""), nil
 	default:
 		// A registered provider name (e.g. "ergo-gateway", a custom gateway).
 		if cfg, ok := providers.Get(name); ok {
@@ -98,7 +99,7 @@ func NewProviderFromConfig(cfg providers.Config, timeout time.Duration) (Provide
 		if key == "" {
 			key = auth.ResolveErgoToken()
 		}
-		return NewErgo(cfg.BaseURL, key, timeout), nil
+		return newErgo(cfg.BaseURL, key, timeout, cfg.Protocol, cfg.APIPath), nil
 	}
 
 	switch cfg.ResolveProtocol() {
@@ -127,4 +128,22 @@ func NewProviderFromConfig(cfg providers.Config, timeout time.Duration) (Provide
 func ActiveProvider(host, geminiAPIKey string, timeout time.Duration) (Provider, error) {
 	active := providers.Active()
 	return NewProviderFromConfig(active, timeout)
+}
+
+// newErgo builds the ergo client. The wire protocol is OpenAI unless
+// ERGO_PROTOCOL=ollama (env wins) or the registry entry sets
+// "protocol":"ollama"; the Ollama API prefix comes from ERGO_OLLAMA_PATH
+// or "api_path" (default /api; the gateway also serves /ollama/api).
+func newErgo(base, key string, timeout time.Duration, protocol, apiPath string) *Ergo {
+	e := NewErgo(base, key, timeout)
+	if v := strings.TrimSpace(os.Getenv("ERGO_PROTOCOL")); v != "" {
+		protocol = v
+	}
+	if v := strings.TrimSpace(os.Getenv("ERGO_OLLAMA_PATH")); v != "" {
+		apiPath = v
+	}
+	if strings.EqualFold(strings.TrimSpace(protocol), providers.ProtocolOllama) {
+		e.UseOllamaProtocol(apiPath)
+	}
+	return e
 }

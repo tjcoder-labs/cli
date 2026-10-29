@@ -15,10 +15,13 @@ import (
 func TestResolveErgoModel(t *testing.T) {
 	avail := ErgoFallbackModels()
 	cases := []struct{ name, explicit, saved, want string }{
-		{"default when nothing saved", "", "", "ergo"},
-		{"ollama tag ignored", "", "deepseek-v4-pro:cloud", "ergo"},
-		{"saved gateway model kept", "", "ergo-genius", "ergo-genius"},
+		{"default when nothing saved", "", "", "ergo/pro"},
+		{"ollama tag ignored", "", "deepseek-v4-pro:cloud", "ergo/pro"},
+		{"saved gateway model kept", "", "ergo/genius", "ergo/genius"},
+		{"saved legacy id migrated", "", "ergo-genius", "ergo/genius"},
+		{"saved legacy lite", "", "ergo-lite", "ergo/flash"},
 		{"explicit wins even if unknown", "my-model", "ergo-lite", "my-model"},
+		{"explicit legacy alias mapped", "ergo", "", "ergo/pro"},
 	}
 	for _, c := range cases {
 		if got := ResolveErgoModel(c.explicit, c.saved, avail); got != c.want {
@@ -165,5 +168,86 @@ func TestErgoListAllModelsFallsBackOn404(t *testing.T) {
 	}
 	if len(models) != 2 || models[0].Name != "ergo" {
 		t.Fatalf("fallback mismatch: %+v", models)
+	}
+}
+
+func TestNormalizeErgoModel(t *testing.T) {
+	for in, want := range map[string]string{
+		"ergo": "ergo/pro", "ergo-lite": "ergo/flash", "ergo-genius": "ergo/genius",
+		"ergo-standard": "ergo/flash", "ergo/lite": "ergo/flash", "ERGO/PRO": "ergo/pro",
+		"ergo-turbo": "ergo/pro", "ergo/unknown": "ergo/pro",
+		"xai/grok-4.3": "xai/grok-4.3", "qwen3:8b": "qwen3:8b", "": "",
+	} {
+		if got := NormalizeErgoModel(in); got != want {
+			t.Errorf("NormalizeErgoModel(%q) = %q, want %q", in, got, want)
+		}
+	}
+	if !IsErgoTier("ergo-lite") || IsErgoTier("xai/grok-4.3") {
+		t.Fatal("IsErgoTier")
+	}
+}
+
+func TestErgoListModelsUnifiedCatalogue(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/models" {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = w.Write([]byte(`{"data":[{"id":"ergo/pro","owned_by":"ergo"},{"id":"ergo","owned_by":"ergo","alias_for":"ergo/pro"},{"id":"xai/grok-4.3","owned_by":"xai"},{"id":"ollama/qwen3:8b"}]}`))
+	}))
+	defer srv.Close()
+	got := ErgoAvailableModels(context.Background(), NewErgo(srv.URL, "k", 0))
+	if !reflect.DeepEqual(got, []string{"ergo/pro", "xai/grok-4.3", "ollama/qwen3:8b"}) {
+		t.Fatalf("got %v (aliases must be hidden, /v1/providers 404 falls back)", got)
+	}
+	infos, _ := NewErgo(srv.URL, "k", 0).ListModels(context.Background())
+	if infos[1].Family != "xai" || infos[2].Family != "ollama" {
+		t.Fatalf("families: %+v", infos)
+	}
+}
+
+func TestErgoOllamaProtocol(t *testing.T) {
+	var paths []string
+	var auth string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path)
+		auth = r.Header.Get("Authorization")
+		switch r.URL.Path {
+		case "/ollama/api/tags":
+			_, _ = w.Write([]byte(`{"models":[{"name":"ergo/pro","details":{"family":"ergo"}}]}`))
+		case "/ollama/api/chat":
+			_, _ = w.Write([]byte(`{"message":{"role":"assistant","content":"hi"},"done":true}` + "\n"))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("ERGO_PROTOCOL", "ollama")
+	t.Setenv("ERGO_OLLAMA_PATH", "/ollama/api")
+	e := newErgo(srv.URL, "k", 0, "", "")
+	if e.Protocol() != "ollama" {
+		t.Fatalf("protocol %q", e.Protocol())
+	}
+	models, err := e.ListModels(context.Background())
+	if err != nil || len(models) != 1 || models[0].Name != "ergo/pro" {
+		t.Fatalf("models %v err %v", models, err)
+	}
+	msg, err := e.Chat(context.Background(), ChatRequest{Model: "ergo/pro", Messages: []Message{{Role: "user", Content: "hey"}}}, nil)
+	if err != nil || msg.Content != "hi" {
+		t.Fatalf("chat %+v err %v", msg, err)
+	}
+	if auth != "Bearer k" || paths[len(paths)-1] != "/ollama/api/chat" {
+		t.Fatalf("auth %q paths %v", auth, paths)
+	}
+
+	// default: OpenAI protocol; registry "protocol":"ollama" with default /api.
+	t.Setenv("ERGO_PROTOCOL", "")
+	t.Setenv("ERGO_OLLAMA_PATH", "")
+	if p := newErgo(srv.URL, "k", 0, "", "").Protocol(); p != "openai" {
+		t.Fatalf("default protocol %q", p)
+	}
+	r := newErgo(srv.URL, "k", 0, "ollama", "")
+	if r.ollama == nil || r.ollama.apiBase() != srv.URL+"/api" {
+		t.Fatalf("registry ollama base %v", r.ollama)
 	}
 }

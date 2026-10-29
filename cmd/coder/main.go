@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"cmp"
 	"context"
 	"embed"
 	"encoding/json"
@@ -441,12 +442,18 @@ func cmdModelsList(providerName, host, geminiKey string, timeout time.Duration) 
 	if err != nil {
 		fatal("%v", err)
 	}
-	models, err := provider.ListModels(nil)
+	var models []client.ModelInfo
+	if e, ok := provider.(*client.Ergo); ok {
+		// Full unified catalogue (ergo tiers + xai/, ollama/, google/, …).
+		models, err = e.ListAllModels(context.Background())
+	} else {
+		models, err = provider.ListModels(nil)
+	}
 	if err != nil {
 		fatal("list models: %v", err)
 	}
 	for _, m := range models {
-		fmt.Printf("%-36s  %s\n", m.Name, m.ParameterSize)
+		fmt.Printf("%-36s  %s\n", m.Name, cmp.Or(m.ParameterSize, m.Family))
 	}
 }
 
@@ -617,9 +624,9 @@ func ergoModelNotFoundMessage(e *client.ErgoModelNotFoundError, avail []string, 
 // provider must not receive a gateway agent name.
 func modelFitsProvider(isErgo bool, model string, ergoAvail []string) bool {
 	if isErgo {
-		return client.ErgoModelAllowed(model, ergoAvail)
+		return client.ErgoModelAllowed(client.NormalizeErgoModel(model), ergoAvail)
 	}
-	return !client.ErgoModelAllowed(model, client.ErgoFallbackModels())
+	return !client.IsErgoTier(model)
 }
 
 func cmdAsk(opts askOptions) {
@@ -678,8 +685,8 @@ func cmdAsk(opts askOptions) {
 	_, isErgo := provider.(*client.Ergo)
 	var ergoAvail []string
 	if isErgo {
-		// Gateway model set: GET /v1/models once signed in, else the
-		// hardcoded ergo / ergo-lite / ergo-genius.
+		// Full unified gateway catalogue (/v1/providers or /v1/models) once
+		// signed in, else the hardcoded ergo/flash, ergo/pro, ergo/genius.
 		fctx, fcancel := context.WithTimeout(context.Background(), 10*time.Second)
 		ergoAvail = client.ErgoAvailableModels(fctx, provider)
 		fcancel()
@@ -696,6 +703,9 @@ func cmdAsk(opts askOptions) {
 		default:
 			if saved, ok := session.GetModelForProvider(provKey); ok && saved != "" && modelFitsProvider(isErgo, saved, ergoAvail) {
 				model = saved
+				if norm := client.NormalizeErgoModel(saved); isErgo && norm != saved {
+					_ = session.SetModelForProvider(provKey, norm) // migrate legacy id
+				}
 			}
 		}
 		if isErgo {

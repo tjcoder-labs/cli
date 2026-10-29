@@ -381,8 +381,14 @@ func New(provider client.Provider, registry *tools.Registry, workspaceRoot, mode
 	}
 	if isErgo {
 		// Gateway models only: ignore agent/Ollama defaults and stale
-		// saved values; default to "ergo". /v1/models refines this once the
-		// async model load completes (see applyErgoModels).
+		// saved values; default to ergo/pro. Legacy saved ids are migrated
+		// on disk. /v1/models refines this once the async model load
+		// completes (see applyErgoModels), restoring a saved xai/… pick.
+		if modelOverride == "" {
+			if s := savedErgoModel(); s != "" {
+				model = s
+			}
+		}
 		model = client.ResolveErgoModel(modelOverride, model, client.ErgoFallbackModels())
 	}
 	state, _, err := session.Load(workspaceRoot)
@@ -4254,7 +4260,7 @@ func (a *App) openAgentModal() {
 			// to the right model family.
 			if agentCfg.DefaultModel != "" && !a.isErgoProvider() && (a.currentModel == "" || a.currentModel == a.previousAgentDefaultModel) {
 				// (Skipped for ergo: agent defaults are Ollama tags and
-				// the gateway only serves ergo / ergo-lite / ergo-genius.)
+				// the gateway serves ergo/* and provider-prefixed ids.)
 				if m := a.sanitizeModel(agentCfg.DefaultModel); m != "" {
 					a.currentModel = m
 				}
@@ -4314,8 +4320,7 @@ func (a *App) openModelModal() {
 		return
 	}
 
-	for _, model := range a.models {
-		item := model
+	addModel := func(item client.ModelInfo) {
 		label := item.Name
 		if item.ParameterSize != "" {
 			label = fmt.Sprintf("%s (%s)", item.Name, item.ParameterSize)
@@ -4342,6 +4347,20 @@ func (a *App) openModelModal() {
 			// bar move to the new model's total, not the old one.
 			a.refreshContextForModel(item.Name)
 		})
+	}
+	if a.isErgoProvider() {
+		// Unified catalogue grouped by provider prefix, ergo tiers first.
+		// Group headers are inert rows.
+		for _, g := range groupErgoModels(a.models) {
+			list.AddItem(fmt.Sprintf("[%s::b]── %s ──[-:-:-]", a.palette.HexDim, g.Name), "", 0, nil)
+			for _, m := range g.Models {
+				addModel(m)
+			}
+		}
+	} else {
+		for _, m := range a.models {
+			addModel(m)
+		}
 	}
 	list.SetDoneFunc(func() {
 		a.closeModal()

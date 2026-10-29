@@ -87,7 +87,7 @@ func (a *App) compactWindow(model string) int {
 
 // compactTip is the /compact hint: the model that will summarise and
 // how full the context is relative to THAT model's window, e.g.
-// "Compact with ergo-lite · context 62% of 128k". When the window is
+// "Compact with ergo/flash · context 62% of 128k". When the window is
 // unknown the raw token count is shown without a percentage.
 func (a *App) compactTip(input string) string {
 	model := a.compactionModel(strings.Fields(input))

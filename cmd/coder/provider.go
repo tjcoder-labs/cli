@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/tjcoder-labs/cli/internal/auth"
+	"github.com/tjcoder-labs/cli/internal/providers"
 )
 
 // providerInputs captures everything resolveProvider needs, so the policy
@@ -14,6 +15,7 @@ import (
 type providerInputs struct {
 	Flag        string // value of --provider ("" when not given)
 	Saved       string // provider saved in prefs ("" when none)
+	Registry    string // active/default entry in providers.json ("" when unset)
 	Interactive bool   // true for the TUI; false for headless/ask/models/schedule
 	ErgoReady   bool   // an ergo API key is available (env or saved by /login)
 	OllamaUp    func() bool
@@ -23,13 +25,15 @@ type providerInputs struct {
 // resolveProvider picks the provider by priority: ergo, then local ollama,
 // then ollama-cloud.
 //
-//  1. An explicit --provider always wins, then a saved provider choice.
-//     The automatic default never overrides either.
+//  1. An explicit --provider always wins, then a saved provider choice,
+//     then the provider registry's active/default entry (providers.json).
+//     The automatic default never overrides any of these. The built-in
+//     "ergo-gateway" entry defers to the automatic policy below so a
+//     signed-out headless run can still fall back to local Ollama.
 //  2. Otherwise ergo is the default when it has credentials (ErgoReady).
 //  3. Interactive (TUI) with no ergo credentials: fall back to ergo so
-//     the TUI can show the /login prompt. The user is present to act on it.
-//     Exception: if local Ollama is reachable, use it instead so the TUI
-//     is immediately useful without a cloud account.
+//     the TUI can show the /login prompt. The user is present to act on it
+//     (or switch to local Ollama with /provider).
 //  4. Headless with no ergo credentials (nobody to prompt): probe local
 //     Ollama, then ollama-cloud if OLLAMA_API_KEY is set, else local ollama.
 func resolveProvider(in providerInputs) string {
@@ -38,6 +42,9 @@ func resolveProvider(in providerInputs) string {
 	}
 	if s := strings.TrimSpace(in.Saved); s != "" {
 		return s
+	}
+	if r := strings.TrimSpace(in.Registry); r != "" && r != "ergo-gateway" && r != "ergo" {
+		return r
 	}
 	if in.ErgoReady {
 		return "ergo"
@@ -75,6 +82,7 @@ func autoProviderInputs(flagVal, saved, host string, interactive bool) providerI
 	return providerInputs{
 		Flag:        flagVal,
 		Saved:       saved,
+		Registry:    providers.ConfiguredActive(),
 		Interactive: interactive,
 		ErgoReady:   auth.ResolveErgoToken() != "",
 		OllamaUp:    func() bool { return ollamaReachable(host) },

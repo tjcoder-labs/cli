@@ -10,7 +10,6 @@ import (
 	"github.com/rivo/tview"
 	"github.com/tjcoder-labs/cli/internal/auth"
 	"github.com/tjcoder-labs/cli/internal/client"
-	"github.com/tjcoder-labs/cli/internal/session"
 )
 
 // codeBoxes renders a XXXX-XXXX device code as spaced boxed characters, in
@@ -196,7 +195,7 @@ func (a *App) showLoginResult(title, text, button string, onClose func()) {
 // value the gateway doesn't serve) is replaced by the remembered ergo pick
 // or the default, and the live /v1/models list is fetched in the background.
 func (a *App) afterErgoLogin() {
-	saved, _ := session.GetModelForProvider("ergo")
+	saved := savedErgoModel()
 	if !a.modelChosen || !client.ErgoModelAllowed(a.currentModel, a.ergoAvailable()) {
 		a.currentModel = client.ResolveErgoModel("", saved, a.ergoAvailable())
 	}

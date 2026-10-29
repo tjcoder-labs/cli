@@ -1,5 +1,10 @@
 # Proposal: unified /model list + ergo tier prompts & client-side tool exposure
 
+> **Superseded (0.9.182):** the public tiers are now `ergo/flash`, `ergo/pro`
+> (default) and `ergo/genius`; legacy ids (`ergo`, `ergo-lite`, `ergo-genius`)
+> are aliases. `/v1/models` returns the full unified catalogue (xai/, ollama/,
+> google/, openai/ included).
+
 ## Goal
 
 The `/model` picker must enumerate **both** remote ergo tiers **and** the

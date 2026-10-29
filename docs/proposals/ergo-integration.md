@@ -17,8 +17,8 @@ speculation — file paths are from `/home/tj/ergo/ergo-ai-server`:
 - **Scoped API keys (the "proven security framework")** —
   `src/models/ApiKey.ts` + `src/middleware/apiKeyAuth.ts`, plus a
   `scopedApiKeyAuth` variant keyed off the Mongo collection:
-  - Scopes: `"ergo" | "ergo-chat" | "ergo-chat-admin" | "ergo-sentinel" | "mcp"`.
-    A `coder-cli` key would be minted with scope `ergo-chat` (chat completions
+  - Scopes: `"ergo" | "ergo-chat" | "ergo-cli" | "ergo-chat-admin" | "ergo-sentinel" | "mcp"`.
+    A `coder-cli` key would be minted with scope `ergo-cli` (chat completions
     only — no admin surface reachable).
   - Keys stored **SHA-256 hashed** (`keyHash`) with an 8-char `keyPrefix`;
     raw key shown once at creation.
@@ -51,7 +51,7 @@ multi-week security-critical effort. Not needed for v1.
 **B — ergo-issued scoped API key (recommended v1).** Leverages the existing,
 proven framework above:
 1. User visits the ergo dashboard (already authenticated there) → "API Keys" →
-   creates a key with scope `ergo-chat`, optional IP allowlist / expiry.
+   creates a key with scope `ergo-cli`, optional IP allowlist / expiry.
 2. `coder login` prompts for the key (hidden input), validates it against
    `GET /v1/models` (cheap probe), and stores it in
    `~/.local/share/coder/ergo-token` mode 0600 (same pattern as
@@ -86,12 +86,12 @@ Later v2 can add OAuth for the "one-click sign-in" polish without breaking B.
 
 - `GET /v1/models` passthrough? (optional; CLI can ship a static list)
 - `GET /v1/wallet/balance` for `/balance` + live ticker.
-- Confirm `scopedApiKeyAuth` checks Mongo `ApiKey` with scope `ergo-chat`
+- Confirm `scopedApiKeyAuth` checks Mongo `ApiKey` with scope `ergo-cli`
   on the gateway route (the current route uses legacy env-var API keys
   from `config.api.keys`; switching to `scopedApiKeyAuth` is presumably the
   intended production posture for per-user billing, since env keys have no
   tenantId → no wallet to debit).
-- Dashboard UI to mint/revoke `ergo-chat` keys (may already exist — TBD).
+- Dashboard UI to mint/revoke `ergo-cli` keys (may already exist — TBD).
 - CORS not relevant for CLI (no browser), but `allowedOrigins` harmless.
 
 ## Billing flow (per request)
@@ -117,5 +117,5 @@ Later v2 can add OAuth for the "one-click sign-in" polish without breaking B.
 - `internal/client/ergo.go` (non-streaming), `internal/auth/token.go`,
   `/login`+`/logout` slash commands, 402/401 handling, tests with httptest.
 - One ergo PR: add `GET /v1/wallet/balance`; ensure gateway route uses
-  Mongo-backed `scopedApiKeyAuth` for scope `ergo-chat`.
+  Mongo-backed `scopedApiKeyAuth` for scope `ergo-cli`.
 EOF
