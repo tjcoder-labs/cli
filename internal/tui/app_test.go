@@ -111,7 +111,7 @@ func TestStartupSplashClearsWhenUserMessageAppended(t *testing.T) {
 func TestRenderStartupSplashIncludesCredit(t *testing.T) {
 	app := &App{productName: "Coder CLI"}
 	got := app.renderStartupSplash()
-	if !strings.Contains(got, "Made with love in Las Vegas by TJ Coder AI Labs") {
+	if !strings.Contains(got, "Made with love in Salt Lake City by TJ Coder AI Labs") {
 		t.Fatalf("expected splash credit line, got %q", got)
 	}
 	if !strings.Contains(got, "@tjcoder/cli") {
@@ -131,7 +131,7 @@ func TestRenderAboutSplashIncludesVersionAndHandle(t *testing.T) {
 	if !strings.Contains(got, "0.5.9") {
 		t.Fatalf("expected ABOUT splash to include the version, got %q", got)
 	}
-	if strings.Contains(got, "Made with love in Las Vegas") {
+	if strings.Contains(got, "Made with love in Salt Lake City") {
 		t.Fatalf("expected ABOUT splash to not include the credit line, got %q", got)
 	}
 }

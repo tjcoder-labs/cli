@@ -19,6 +19,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 )
 
@@ -60,9 +61,43 @@ type Config struct {
 	APIKey string `json:"api_key,omitempty"`
 	// Auth is how /login <provider> begins authentication.
 	Auth AuthFlow `json:"auth,omitempty"`
+	// Protocol selects the wire protocol the client speaks. "" (auto)
+	// infers it from Name (ergo*/ollama* vs. everything else); "openai"
+	// forces the OpenAI-compatible client (/v1/...); "ollama" forces the
+	// Ollama client (/api/...). This lets a non-Ollama-named endpoint that
+	// happens to serve the Ollama API still route to the right client.
+	Protocol string `json:"protocol,omitempty"`
 	// Default marks the provider selected on launch when no explicit
 	// --provider is given. Exactly one provider should have this set.
 	Default bool `json:"default,omitempty"`
+}
+
+// ProtocolOpenAI and ProtocolOllama are the two concrete wire protocols a
+// gateway can speak. "" (auto) is resolved by ResolveProtocol.
+const (
+	ProtocolOpenAI = "openai"
+	ProtocolOllama = "ollama"
+)
+
+// ResolveProtocol returns the effective wire protocol for a config. An
+// explicit Protocol wins; otherwise the name is inspected: "ollama" and
+// "ollama-cloud" (and their aliases) are the Ollama API, everything else is
+// assumed OpenAI-compatible. The ergo gateway is handled separately by the
+// client factory (it is neither protocol).
+func (p Config) ResolveProtocol() string {
+	switch strings.ToLower(strings.TrimSpace(p.Protocol)) {
+	case ProtocolOllama:
+		return ProtocolOllama
+	case ProtocolOpenAI:
+		return ProtocolOpenAI
+	}
+	name := strings.ToLower(strings.TrimSpace(p.Name))
+	switch name {
+	case "ollama", "ollama-cloud", "ollama_cloud", "ollama-cloud-api":
+		return ProtocolOllama
+	default:
+		return ProtocolOpenAI
+	}
 }
 
 // Valid reports whether the config has the minimum required fields.

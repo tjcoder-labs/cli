@@ -728,7 +728,7 @@ func (a *App) build() {
 		SetWrap(false).
 		SetTextAlign(tview.AlignLeft)
 	a.aboutAscii.SetBackgroundColor(a.palette.BgRoot)
-	a.aboutAscii.SetTextColor(a.palette.Lavender)
+	a.aboutAscii.SetTextColor(a.palette.Purple)
 	a.aboutAscii.SetBorderPadding(2, 1, 4, 2)
 	a.aboutAscii.SetText(a.loadAsciiArt())
 
@@ -4007,10 +4007,12 @@ func (a *App) renderStartupSplash() string {
 
 	var b strings.Builder
 	if ascii != "" {
+		b.WriteString(fmt.Sprintf("[%s]", a.palette.HexPurple))
 		b.WriteString(ascii)
+		b.WriteString("[-]")
 		b.WriteString("\n\n")
 	}
-	b.WriteString(fmt.Sprintf("[%s]Made with love in Las Vegas by TJ Coder AI Labs.  %s[-]",
+	b.WriteString(fmt.Sprintf("[%s]Made with love in Salt Lake City by TJ Coder AI Labs.  %s[-]",
 		a.palette.HexFaint, "@tjcoder/cli"))
 	return b.String()
 }
@@ -4031,7 +4033,7 @@ func (a *App) renderAboutIntro() string {
 	fmt.Fprintf(&b, "[%s]A terminal-first coding TUI that talks to local and remote[-]\n", a.palette.HexDim)
 	fmt.Fprintf(&b, "[%s]models, streams its thinking in a side panel, and routes tool[-]\n", a.palette.HexDim)
 	fmt.Fprintf(&b, "[%s]calls through a curated terminal/code toolkit.[-]\n\n", a.palette.HexDim)
-	fmt.Fprintf(&b, "[%s]Made with love in Las Vegas by TJ Coder AI Labs.[-]\n\n", a.palette.HexFaint)
+	fmt.Fprintf(&b, "[%s]Made with love in Salt Lake City by TJ Coder AI Labs.[-]\n\n", a.palette.HexFaint)
 	if a.appVersion != "" {
 		fmt.Fprintf(&b, "[%s]version  %s[-]\n", a.palette.HexPurple, a.appVersion)
 	} else {

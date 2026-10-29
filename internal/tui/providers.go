@@ -118,6 +118,10 @@ func (a *App) openProviderEditor(existing providers.Config) {
 	if auth == "" {
 		auth = "none"
 	}
+	protocol := existing.Protocol
+	if protocol == "" {
+		protocol = "auto"
+	}
 
 	if name == "" {
 		form.AddInputField("Name", "", 30, nil, func(s string) { name = strings.TrimSpace(s) })
@@ -127,6 +131,9 @@ func (a *App) openProviderEditor(existing providers.Config) {
 	form.AddInputField("Base URL", baseURL, 60, nil, func(s string) { baseURL = strings.TrimSpace(s) })
 	form.AddDropDown("Auth", []string{"none", "api_key", "device_code"}, authIndex(auth), func(option string, _ int) {
 		auth = option
+	})
+	form.AddDropDown("Protocol", []string{"auto", "openai", "ollama"}, protocolIndex(protocol), func(option string, _ int) {
+		protocol = option
 	})
 	form.AddInputField("API key (optional)", existing.APIKey, 60, nil, func(s string) { existing.APIKey = strings.TrimSpace(s) })
 
@@ -139,6 +146,7 @@ func (a *App) openProviderEditor(existing providers.Config) {
 		cfg.Name = name
 		cfg.BaseURL = strings.TrimRight(baseURL, "/")
 		cfg.Auth = providers.AuthFlow(auth)
+		cfg.Protocol = protocolFromIndex(protocol)
 		if cfg.Auth != providers.AuthAPIKey {
 			cfg.APIKey = ""
 		}
@@ -230,6 +238,28 @@ func authIndex(auth string) int {
 		return 2
 	default:
 		return 0
+	}
+}
+
+func protocolIndex(protocol string) int {
+	switch protocol {
+	case providers.ProtocolOpenAI:
+		return 1
+	case providers.ProtocolOllama:
+		return 2
+	default:
+		return 0
+	}
+}
+
+func protocolFromIndex(idx string) string {
+	switch idx {
+	case providers.ProtocolOpenAI:
+		return providers.ProtocolOpenAI
+	case providers.ProtocolOllama:
+		return providers.ProtocolOllama
+	default:
+		return ""
 	}
 }
 

@@ -15,16 +15,17 @@ import (
 // should use this slice so the ordering stays consistent.
 var ProviderOrder = []string{"ergo", "ollama", "ollama-cloud", "gemini"}
 
+// defaultOllamaHost is the well-known local Ollama address. It is used as
+// a sentinel: if the caller passes this (or empty) we check the registry
+// for a user-configured override before falling back to the literal value.
+const defaultOllamaHost = "http://localhost:11434"
+
 // NewProvider creates a Provider by name. Supported names (in priority
 // order): "ergo", "ollama", "ollama-cloud", "gemini". Any other name is
 // resolved against the global provider registry (see session.Providers):
 // a registered OpenAI-compatible gateway builds an OpenAICompatible client
 // (or an Ergo client for the ergo-gateway default).
 func NewProvider(name, host, geminiAPIKey string, timeout time.Duration) (Provider, error) {
-	// defaultOllamaHost is the well-known local Ollama address. It is used as
-	// a sentinel: if the caller passes this (or empty) we check the registry
-	// for a user-configured override before falling back to the literal value.
-	const defaultOllamaHost = "http://localhost:11434"
 	switch name {
 	case "", "ollama":
 		// Prefer a custom base_url from the registry over the hardcoded default,
@@ -81,10 +82,12 @@ func NewProvider(name, host, geminiAPIKey string, timeout time.Duration) (Provid
 }
 
 // NewProviderFromConfig builds a live Provider from a registry entry.
-// The ergo-gateway default maps to the full Ergo client (device-auth, wallet
-// billing, 401/402 handling); everything else maps to the generic
-// OpenAICompatible client. A provider with AuthAPIKey uses its stored APIKey;
-// one with AuthDeviceCode reads the keychain token.
+// Routing is driven by the config's resolved wire protocol: ergo/ergo-gateway
+// maps to the full Ergo client (device-auth, wallet billing, 401/402
+// handling); anything resolving to "ollama" builds the Ollama client
+// (/api/...); everything else maps to the generic OpenAICompatible client
+// (/v1/...). A provider with AuthAPIKey uses its stored APIKey; one with
+// AuthDeviceCode reads the keychain token.
 func NewProviderFromConfig(cfg providers.Config, timeout time.Duration) (Provider, error) {
 	if !cfg.Valid() {
 		return nil, fmt.Errorf("invalid provider config %q (missing name or base_url)", cfg.Name)
@@ -96,6 +99,21 @@ func NewProviderFromConfig(cfg providers.Config, timeout time.Duration) (Provide
 			key = auth.ResolveErgoToken()
 		}
 		return NewErgo(cfg.BaseURL, key, timeout), nil
+	}
+
+	switch cfg.ResolveProtocol() {
+	case providers.ProtocolOllama:
+		key := cfg.APIKey
+		if key == "" {
+			key = os.Getenv("OLLAMA_API_KEY")
+		}
+		base := cfg.BaseURL
+		if base == "" || base == defaultOllamaHost {
+			if env := os.Getenv("OLLAMA_CLOUD_HOST"); env != "" {
+				base = env
+			}
+		}
+		return NewOllamaCloud(base, key, timeout), nil
 	default:
 		key := cfg.APIKey
 		p := NewOpenAICompatible(cfg.BaseURL, key, timeout)
