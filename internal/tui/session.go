@@ -89,7 +89,7 @@ func (a *App) loadSession() {
 		a.pendingTranscript = append([]session.TranscriptEntry(nil), state.Transcript...)
 	}
 	a.reasoning.SetText(state.Reasoning)
-	a.activity.SetText(state.Activity)
+	a.activity.SetText(a.palette.Theme.Normalize(state.Activity))
 	if a.transcript.GetText(true) == "" && len(a.pendingTranscript) == 0 {
 		a.setTranscriptSplash()
 	}

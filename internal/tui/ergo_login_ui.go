@@ -132,7 +132,7 @@ func friendlyLoginError(err error, email string) loginFailure {
 // loginFailureView renders a friendly failure card.
 func loginFailureView(pal Palette, f loginFailure) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "\n  [%s::b]✕ %s[-:-:-]\n", pal.HexOrchid, tview.Escape(f.Headline))
+	fmt.Fprintf(&b, "\n  [%s::b]✗ %s[-:-:-]\n", pal.HexAlert, tview.Escape(f.Headline))
 	if f.Detail != "" {
 		fmt.Fprintf(&b, "\n  [%s]%s[-]\n", pal.HexDim, tview.Escape(f.Detail))
 	}
@@ -179,10 +179,8 @@ func (a *App) showLoginResult(title, text, button string, onClose func()) {
 			onClose()
 		}
 	}
-	btns := tview.NewForm()
-	a.styleModalForm(btns)
+	btns := a.newModalForm(closeFn)
 	btns.AddButton(button, closeFn)
-	btns.SetCancelFunc(closeFn)
 	panel := tview.NewFlex().SetDirection(tview.FlexRow).
 		AddItem(view, 0, 1, false).
 		AddItem(btns, 3, 0, true)

@@ -1,0 +1,94 @@
+ 1 │ # Heading One
+ 2 │ ## Heading Two
+ 3 │ ### Heading Three
+ 4 │ #### Heading Four
+ 5 │ ##### Heading Five
+ 6 │ ###### Heading Six
+ 7 │
+ 8 │ Plain paragraph with **bold**, *italic*, ***both***,
+   ┆ ~~strike~~, `inline code`, and a
+   ┆ [link](https://example.com).
+ 9 │ Literal tags must stay literal: [red]not red[-] and
+   ┆ [::b]not bold[::-] and [#00ff00]no green[-].
+10 │
+11 │ > A blockquote line
+12 │ > with **bold** inside
+13 │
+14 │ 1. First numbered
+15 │ 2. Second numbered
+16 │    - nested bullet
+17 │      - deeper bullet
+18 │ 3. Third numbered
+19 │
+20 │ - [ ] open task
+21 │ - [x] done task
+22 │ * star bullet
+23 │ + plus bullet
+24 │
+25 │ ---
+26 │
+27 │ | Name | Lang | Stars |
+28 │ | ---- | :--: | ----: |
+29 │ | coder | `go` | 42 |
+30 ▌ | ergo | ts | 7 |
+31 ▌
+32 ▌ ```go
+33 ▌ package main
+34 │
+35 │ import "fmt"
+36 │
+37 │ // main prints a greeting.
+38 │ func main() {
+39 │     msg := "hello [red]world"
+40 │     fmt.Println(msg, 42, true)
+41 │ }
+42 │ ```
+43 │
+44 │ ```json
+45 │ {"name": "coder", "version": "0.9.188", "tags":
+   ┆ ["cli", "tui"], "ok": true, "n": null}
+46 │ ```
+47 │
+48 │ ```xml
+49 │ <?xml version="1.0"?>
+50 │ <config enabled="true"><item id="1">Hello &amp;
+   ┆ bye</item><!-- note --></config>
+51 │ ```
+52 │
+53 │ ```yaml
+54 │ name: coder
+55 │ version: 0.9.188
+56 │ list:
+57 │   - a
+58 │   - b # comment
+59 │ ```
+60 │
+61 │ ```python
+62 │ def greet(name: str) -> str:
+63 │     """Docstring."""
+64 │     return f"hi {name}"  # comment
+65 │ ```
+66 │
+67 │ ```bash
+68 │ #!/usr/bin/env bash
+69 │ for f in *.go; do echo "$f"; done
+70 │ ```
+71 │
+72 │ ```sql
+73 │ SELECT id, name FROM users WHERE active = 1 ORDER BY
+   ┆ name;
+74 │ ```
+75 │
+76 │ ```rust
+77 │ fn main() { let x: i32 = 5; println!("{}", x); }
+78 │ ```
+79 │
+80 │ ```ts
+81 │ const add = (a: number, b: number): number => a + b;
+   ┆ // sum
+82 │ ```
+83 │
+84 │ A very long line that should wrap sensibly at word
+   ┆ boundaries rather than being chopped mid-word in the
+   ┆ middle of the transcript pane because terminals are
+   ┆ narrow sometimes and the canvas is narrower still.

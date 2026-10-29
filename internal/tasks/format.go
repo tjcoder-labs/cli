@@ -2,6 +2,8 @@ package tasks
 
 import (
 	"fmt"
+	"github.com/rivo/tview"
+	"github.com/tjcoder-labs/cli/internal/theme"
 	"strings"
 	"time"
 )
@@ -29,19 +31,22 @@ func Glyph(status string) string {
 // the TUI's hex color codes so callers can drop the result straight
 // into a tview dynamic-color string.
 func GlyphFor(status string) string {
+	th := theme.Current()
 	switch NormalizeStatus(status) {
 	case StatusTodo:
-		return "[#968CB2]○[-]"
+		return "[" + th.Dim + "]○[-]"
 	case StatusDoing:
-		return "[#A77CF8]◐[-]"
+		return "[" + th.Primary + "]◐[-]"
 	case StatusDone:
-		return "[#564A70]●[-]"
+		return "[" + th.Faint + "]●[-]"
 	case StatusBlocked:
-		return "[#C73CDC]✕[-]"
+		// Blocked is the one status that needs attention: brightest
+		// shade + bold, distinguished by the ✕ glyph rather than hue.
+		return "[" + th.Bright + "::b]✕[-::B]"
 	case StatusCancelled:
-		return "[#564A70]⊘[-]"
+		return "[" + th.Faint + "]⊘[-]"
 	}
-	return "[#564A70]·[-]"
+	return "[" + th.Faint + "]·[-]"
 }
 
 // FormatPromptBlock renders the open task list as a flat text block
@@ -88,22 +93,23 @@ func FormatContextBar(list *List) string {
 	for _, t := range list.All() {
 		counts[Status(t.Status)]++
 	}
+	th := theme.Current()
 	var b strings.Builder
 	b.WriteString(GlyphFor(string(StatusDoing)))
-	fmt.Fprintf(&b, "[#C4A5FF]%d[-]", counts[StatusDoing])
+	fmt.Fprintf(&b, "[%s]%d[-]", th.Bright, counts[StatusDoing])
 	if c := counts[StatusTodo]; c > 0 {
 		b.WriteString(" ")
 		b.WriteString(GlyphFor(string(StatusTodo)))
-		fmt.Fprintf(&b, "[#968CB2]%d[-]", c)
+		fmt.Fprintf(&b, "[%s]%d[-]", th.Dim, c)
 	}
 	if c := counts[StatusBlocked]; c > 0 {
 		b.WriteString(" ")
 		b.WriteString(GlyphFor(string(StatusBlocked)))
-		fmt.Fprintf(&b, "[#C73CDC]%d[-]", c)
+		fmt.Fprintf(&b, "[%s::b]%d[-::B]", th.Bright, c)
 	}
 	if done := counts[StatusDone] + counts[StatusCancelled]; done > 0 {
 		b.WriteString(" ")
-		fmt.Fprintf(&b, "[#564A70]✓%d[-]", done)
+		fmt.Fprintf(&b, "[%s]✓%d[-]", th.Faint, done)
 	}
 	if len(open) > 0 {
 		// Surface the most recent doing task as a one-line hint so the
@@ -112,7 +118,7 @@ func FormatContextBar(list *List) string {
 		for _, t := range open {
 			if Status(t.Status) == StatusDoing {
 				b.WriteString("  ")
-				fmt.Fprintf(&b, "[#E8E2F5]%s[-]", truncate(t.Title, 40))
+				fmt.Fprintf(&b, "[%s]%s[-]", th.Text, tview.Escape(truncate(t.Title, 40)))
 				break
 			}
 		}

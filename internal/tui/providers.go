@@ -71,11 +71,11 @@ func (a *App) openProviderDetail(name string) {
 	list.AddItem("Activate", "make this the default provider", 0, func() {
 		reg.Active = name
 		if err := providers.Save(reg); err != nil {
-			a.appendActivity(fmt.Sprintf("[red]Provider activation failed[-]: %v", err))
+			a.appendActivity(fmt.Sprintf(a.palette.Theme.Err("Provider activation failed")+": %v", err))
 			return
 		}
 		if err := session.SetProvider(name); err != nil {
-			a.appendActivity(fmt.Sprintf("[red]Provider preference save failed[-]: %v", err))
+			a.appendActivity(fmt.Sprintf(a.palette.Theme.Err("Provider preference save failed")+": %v", err))
 		}
 		// Rebuild the live client and reload models for the new provider.
 		a.switchProvider(cfg)
@@ -109,8 +109,7 @@ func (a *App) openProviderDetail(name string) {
 // existing fields are pre-filled and the name field is read-only (renaming
 // would orphan credentials; users should remove + re-add instead).
 func (a *App) openProviderEditor(existing providers.Config) {
-	form := tview.NewForm()
-	a.styleModalForm(form)
+	form := a.newModalForm(a.openProvidersModal)
 
 	name := existing.Name
 	baseURL := existing.BaseURL
@@ -139,7 +138,7 @@ func (a *App) openProviderEditor(existing providers.Config) {
 
 	save := func() {
 		if name == "" || baseURL == "" {
-			a.appendActivity("[red]Provider name and base URL are required[-]")
+			a.appendActivity(a.palette.Theme.Err("Provider name and base URL are required"))
 			return
 		}
 		cfg := existing
@@ -151,7 +150,7 @@ func (a *App) openProviderEditor(existing providers.Config) {
 			cfg.APIKey = ""
 		}
 		if !cfg.Valid() {
-			a.appendActivity("[red]Invalid provider config[-]")
+			a.appendActivity(a.palette.Theme.Err("Invalid provider config"))
 			return
 		}
 
@@ -173,7 +172,7 @@ func (a *App) openProviderEditor(existing providers.Config) {
 			reg.Active = cfg.Name
 		}
 		if err := providers.Save(reg); err != nil {
-			a.appendActivity(fmt.Sprintf("[red]Provider save failed[-]: %v", err))
+			a.appendActivity(fmt.Sprintf(a.palette.Theme.Err("Provider save failed")+": %v", err))
 			return
 		}
 		a.appendActivity(fmt.Sprintf("Saved provider %s; checking integration...", cfg.Name))
@@ -222,10 +221,10 @@ func (a *App) checkProviderIntegration(cfg providers.Config) {
 		count, err := validateProviderIntegration(cfg)
 		a.postUI(func() {
 			if err != nil {
-				a.appendActivity(fmt.Sprintf("[yellow]Provider %s saved, but integration check failed: %v[-]", cfg.Name, err))
+				a.appendActivity(a.palette.Theme.Warn(fmt.Sprintf("Provider %s saved, but integration check failed", cfg.Name)) + ": " + tview.Escape(err.Error()))
 				return
 			}
-			a.appendActivity(fmt.Sprintf("[green]Provider %s integration verified (%d models)[-]", cfg.Name, count))
+			a.appendActivity(a.palette.Theme.OK(fmt.Sprintf("Provider %s integration verified (%d models)", cfg.Name, count)))
 		})
 	}()
 }
@@ -287,12 +286,12 @@ func (a *App) removeProvider(name string) {
 		reg.Active = ""
 	}
 	if err := providers.Save(reg); err != nil {
-		a.appendActivity(fmt.Sprintf("[red]Provider remove failed[-]: %v", err))
+		a.appendActivity(fmt.Sprintf(a.palette.Theme.Err("Provider remove failed")+": %v", err))
 		return
 	}
 	if reg.Active != "" && (wasActive || savedProvider == name) {
 		if err := session.SetProvider(reg.Active); err != nil {
-			a.appendActivity(fmt.Sprintf("[red]Provider preference update failed[-]: %v", err))
+			a.appendActivity(fmt.Sprintf(a.palette.Theme.Err("Provider preference update failed")+": %v", err))
 			return
 		}
 	}
@@ -314,13 +313,12 @@ func (a *App) beginProviderLogin(cfg providers.Config) {
 
 // openAPIKeyLogin prompts for a Bearer API key and stores it in the registry.
 func (a *App) openAPIKeyLogin(cfg providers.Config) {
-	form := tview.NewForm()
-	a.styleModalForm(form)
+	form := a.newModalForm(nil)
 	var key string
 	form.AddInputField("API key", "", 60, nil, func(s string) { key = strings.TrimSpace(s) })
 	form.AddButton("Save", func() {
 		if key == "" {
-			a.appendActivity("[red]API key is required[-]")
+			a.appendActivity(a.palette.Theme.Err("API key is required"))
 			return
 		}
 		cfg.APIKey = key
@@ -332,7 +330,7 @@ func (a *App) openAPIKeyLogin(cfg providers.Config) {
 			}
 		}
 		if err := providers.Save(reg); err != nil {
-			a.appendActivity(fmt.Sprintf("[red]Provider login failed[-]: %v", err))
+			a.appendActivity(fmt.Sprintf(a.palette.Theme.Err("Provider login failed")+": %v", err))
 			return
 		}
 		a.appendActivity(fmt.Sprintf("Stored API key for %s", cfg.Name))

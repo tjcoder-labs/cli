@@ -27,11 +27,10 @@ import (
 	"fmt"
 	"os"
 	"regexp"
-	"strconv"
-	"strings"
 	"sync"
 	"time"
 
+	"github.com/rivo/tview"
 	"github.com/tjcoder-labs/cli/internal/browser"
 	"github.com/tjcoder-labs/cli/internal/reminders"
 )
@@ -63,6 +62,10 @@ type scheduleWorker struct {
 	mu          sync.Mutex
 	lastFileKey fileKey
 	lastEntries []reminders.Entry
+
+	// cron removes one-shot crontab lines; nil means the system
+	// crontab. Tests inject a fake.
+	cron reminders.CrontabRunner
 }
 
 // fileKey identifies a version of reminders.json cheaply. We avoid
@@ -104,7 +107,10 @@ func (w *scheduleWorker) stop() {
 func (w *scheduleWorker) loop() {
 	defer close(w.doneCh)
 	for {
-		delay := w.evaluate(time.Now().UTC())
+		// Local wall clock: crontab evaluates expressions in the
+		// system zone, and so must the in-session runner, or the two
+		// would fire the same entry hours apart.
+		delay := w.evaluate(time.Now())
 		if delay <= 0 {
 			delay = time.Minute
 		}
@@ -130,9 +136,11 @@ func (w *scheduleWorker) loop() {
 // steering channel instead, where the runner will pick it up as user
 // steering context for the current turn.
 //
-// Passive reminders (no Prompt) are ignored by this worker — they
-// exist only for the headless/cron path and the TUI reminder list —
-// so they explicitly do not influence the next-wake computation.
+// Passive reminders (no Prompt) are surfaced as an Activity
+// notification when due (see notify). One-shot entries ("once at …"
+// from the /reminder form) are removed — together with their crontab
+// line — right after they fire, since their cron expression would
+// otherwise repeat next year.
 func (w *scheduleWorker) evaluate(now time.Time) time.Duration {
 	entries, ok := w.loadEntries()
 	if !ok {
@@ -141,12 +149,17 @@ func (w *scheduleWorker) evaluate(now time.Time) time.Duration {
 
 	next := schedulePollFallback
 	for _, e := range entries {
-		if e.Prompt == "" {
-			continue // passive reminder, not a schedule; never due here
-		}
 		due, nextIn := scheduleDue(e, now)
 		if due {
-			w.fire(e, now)
+			if e.Prompt == "" {
+				w.notify(e, now)
+			} else {
+				w.fire(e, now)
+			}
+			if e.OneShot {
+				w.retire(e)
+				continue
+			}
 			// After firing, recompute this entry's next tick from a
 			// fresh last-run so its contribution to `next` is correct.
 			e.LastRun = now.UTC().Format(time.RFC3339)
@@ -157,6 +170,45 @@ func (w *scheduleWorker) evaluate(now time.Time) time.Duration {
 		}
 	}
 	return next
+}
+
+// notify surfaces a due passive reminder in the Activity feed and
+// stamps its last-run so the tick is not repeated.
+func (w *scheduleWorker) notify(e reminders.Entry, now time.Time) {
+	a := w.app
+	if err := reminders.MarkRun(a.workspaceRoot, e.ID, now); err == nil {
+		w.mu.Lock()
+		for i := range w.lastEntries {
+			if w.lastEntries[i].ID == e.ID {
+				w.lastEntries[i].LastRun = now.UTC().Format(time.RFC3339)
+			}
+		}
+		w.mu.Unlock()
+	}
+	line := fmt.Sprintf("[%s::b]◆ reminder[-:-:-] [%s]%s[-]",
+		a.palette.HexPurple, a.palette.HexLavender, tview.Escape(e.Message))
+	a.postUI(func() { a.appendActivity(line) })
+}
+
+// retire removes a one-shot entry after its single run: the
+// reminders.json entry and, when installed, its crontab line.
+func (w *scheduleWorker) retire(e reminders.Entry) {
+	a := w.app
+	cron := w.cron
+	if cron == nil {
+		cron = reminders.SystemCrontab{}
+	}
+	res, _, err := reminders.NewStore().Remove(a.workspaceRoot, e.ID, cron)
+	var line string
+	switch {
+	case err != nil:
+		line = fmt.Sprintf("[%s::b]! warning[-:-:-]: could not remove one-shot %s: %v", a.palette.HexPurple, shortScheduleID(e.ID), err)
+	case res.CronErr != nil:
+		line = fmt.Sprintf("[%s]• one-shot %s done; crontab line not removed: %v[-]", a.palette.HexDim, shortScheduleID(e.ID), res.CronErr)
+	default:
+		line = fmt.Sprintf("[%s]• one-shot %s done and removed[-]", a.palette.HexDim, shortScheduleID(e.ID))
+	}
+	a.postUI(func() { a.appendActivity(line) })
 }
 
 // fire runs one due schedule: enforces the daily cap, stamps the
@@ -176,7 +228,8 @@ func (w *scheduleWorker) fire(e reminders.Entry, now time.Time) {
 	if e.DailyCap > 0 && e.Platform != "" {
 		// Day boundary is UTC, matching the headless cmdSchedule path,
 		// so the two runners can never disagree on the cap count.
-		dayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+		u := now.UTC()
+		dayStart := time.Date(u.Year(), u.Month(), u.Day(), 0, 0, 0, 0, time.UTC)
 		log, err := browser.LoadInteractionLog(browser.DefaultInteractionLogPath())
 		if err == nil {
 			done := log.CountSince(e.Platform, browser.InteractionLike, dayStart)
@@ -200,7 +253,7 @@ func (w *scheduleWorker) fire(e reminders.Entry, now time.Time) {
 	// Stamp last-run so a restart doesn't refire this tick and a
 	// concurrent headless runner sees the tick as claimed.
 	if err := reminders.MarkRun(a.workspaceRoot, e.ID, now); err != nil {
-		a.appendActivity(fmt.Sprintf("["+a.palette.HexOrchid+"::b]warning[-:-:-]: could not persist schedule last-run: %v", err))
+		a.appendActivity(fmt.Sprintf("["+a.palette.HexPurple+"::b]! warning[-:-:-]: could not persist schedule last-run: %v", err))
 	} else {
 		// Keep our in-memory cache consistent with what we wrote.
 		w.mu.Lock()
@@ -284,7 +337,7 @@ func scheduleDue(e reminders.Entry, now time.Time) (bool, time.Duration) {
 	if err != nil {
 		return false, schedulePollFallback
 	}
-	now = now.UTC().Truncate(time.Minute)
+	now = now.Truncate(time.Minute) // keep now's zone: cron is wall-clock
 
 	if cronMatches(fields, now) && !alreadyRanThisMinute(e.LastRun, now) {
 		return true, 0
@@ -299,7 +352,7 @@ func scheduleDue(e reminders.Entry, now time.Time) (bool, time.Duration) {
 }
 
 // alreadyRanThisMinute returns true if lastRun (RFC3339) falls in the
-// same UTC minute as now.
+// same minute as now.
 func alreadyRanThisMinute(lastRun string, now time.Time) bool {
 	if lastRun == "" {
 		return false
@@ -308,137 +361,19 @@ func alreadyRanThisMinute(lastRun string, now time.Time) bool {
 	if err != nil {
 		return false
 	}
-	return t.UTC().Truncate(time.Minute).Equal(now)
+	return t.Truncate(time.Minute).Equal(now)
 }
 
-// cronFields is an allocation-free 5-field cron representation: each
-// field is a bitmask over its valid range (min 0-59, hour 0-23, dom
-// 1-31, month 1-12, dow 0-6).
-type cronFields struct {
-	min   uint64          // bits 0..59
-	hour  uint32          // bits 0..23
-	dom   uint32          // bits 1..31
-	month uint16          // bits 1..12
-	dow   uint8           // bits 0..6 (Sunday=0)
-	// domRestricted/dowRestricted implement the standard cron rule:
-	// when both fields are restricted, a day matches if EITHER
-	// matches; when only one is restricted, that one gates.
-	domRestricted bool
-	dowRestricted bool
-}
+// cronFields is the shared reminders.CronSchedule; the matcher lives
+// in internal/reminders so the TUI scheduler, the /reminder form's
+// next-run readout and `coder reminders` agree on when entries fire.
+type cronFields = reminders.CronSchedule
 
-// parseCronFields parses a standard 5-field cron expression. Fields
-// support "*", lists ("1,2,3"), ranges ("9-17"), and steps ("*/10",
-// "1-30/2"). Parsing is done once per entry-change and the result is
-// cached by the caller; invalid input yields an error and the entry
-// is skipped.
-func parseCronFields(expr string) (cronFields, error) {
-	var out cronFields
-	parts := strings.Fields(expr)
-	if len(parts) != 5 {
-		return out, fmt.Errorf("cron expression must have 5 fields")
-	}
-	var err error
-	if out.min, err = parseCronField(parts[0], 0, 59); err != nil {
-		return out, fmt.Errorf("minute: %w", err)
-	}
-	var hour uint64
-	if hour, err = parseCronField(parts[1], 0, 23); err != nil {
-		return out, fmt.Errorf("hour: %w", err)
-	}
-	out.hour = uint32(hour)
-	var dom uint64
-	if dom, err = parseCronField(parts[2], 1, 31); err != nil {
-		return out, fmt.Errorf("day-of-month: %w", err)
-	}
-	out.dom = uint32(dom)
-	out.domRestricted = parts[2] != "*"
-	var mon uint64
-	if mon, err = parseCronField(parts[3], 1, 12); err != nil {
-		return out, fmt.Errorf("month: %w", err)
-	}
-	out.month = uint16(mon)
-	var dow uint64
-	if dow, err = parseCronField(parts[4], 0, 6); err != nil {
-		return out, fmt.Errorf("day-of-week: %w", err)
-	}
-	out.dow = uint8(dow)
-	out.dowRestricted = parts[4] != "*"
-	return out, nil
-}
+func parseCronFields(expr string) (cronFields, error) { return reminders.ParseCron(expr) }
 
-// parseCronField parses one cron field into a bitmask over [lo, hi].
-// The bitmask uses uint64 storage regardless of field width so a
-// single helper covers all five fields; callers narrow as needed.
-func parseCronField(s string, lo, hi int) (uint64, error) {
-	if s == "" {
-		return 0, fmt.Errorf("empty field")
-	}
-	var bits uint64
-	for _, part := range strings.Split(s, ",") {
-		step := 1
-		rangePart := part
-		if i := strings.IndexByte(part, '/'); i >= 0 {
-			n, err := strconv.Atoi(part[i+1:])
-			if err != nil || n <= 0 {
-				return 0, fmt.Errorf("invalid step %q", part[i+1:])
-			}
-			step = n
-			rangePart = part[:i]
-		}
-		start, end := lo, hi
-		switch {
-		case rangePart == "*":
-			// full range
-		case strings.Contains(rangePart, "-"):
-			a, b, ok := strings.Cut(rangePart, "-")
-			if !ok {
-				return 0, fmt.Errorf("invalid range %q", rangePart)
-			}
-			na, err1 := strconv.Atoi(a)
-			nb, err2 := strconv.Atoi(b)
-			if err1 != nil || err2 != nil || na < lo || nb > hi || na > nb {
-				return 0, fmt.Errorf("invalid range %q", rangePart)
-			}
-			start, end = na, nb
-		default:
-			n, err := strconv.Atoi(rangePart)
-			if err != nil || n < lo || n > hi {
-				return 0, fmt.Errorf("invalid value %q", rangePart)
-			}
-			start, end = n, n
-		}
-		for v := start; v <= end; v += step {
-			bits |= 1 << uint(v)
-		}
-	}
-	return bits, nil
-}
-
-// cronMatches reports whether time t matches the parsed schedule.
-func cronMatches(f cronFields, t time.Time) bool {
-	if f.min&(1<<uint(t.Minute())) == 0 {
-		return false
-	}
-	if f.hour&(1<<uint(t.Hour())) == 0 {
-		return false
-	}
-	if f.month&(1<<uint(t.Month())) == 0 {
-		return false
-	}
-	domOK := f.dom&(1<<uint(t.Day())) != 0
-	dowOK := f.dow&(1<<uint(int(t.Weekday()))) != 0
-	switch {
-	case f.domRestricted && f.dowRestricted:
-		return domOK || dowOK // standard cron OR semantics
-	case f.domRestricted:
-		return domOK
-	case f.dowRestricted:
-		return dowOK
-	default:
-		return true
-	}
-}
+// cronMatches reports whether time t matches the parsed schedule,
+// evaluated in t's location.
+func cronMatches(f cronFields, t time.Time) bool { return f.Matches(t) }
 
 // shortScheduleID renders the tail of a schedule ID for log lines.
 func shortScheduleID(id string) string {

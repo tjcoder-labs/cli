@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/rivo/tview"
 	"github.com/tjcoder-labs/cli/internal/agent"
 	"github.com/tjcoder-labs/cli/internal/browser"
 	"github.com/tjcoder-labs/cli/internal/client"
@@ -23,6 +24,7 @@ import (
 	"github.com/tjcoder-labs/cli/internal/reminders"
 	"github.com/tjcoder-labs/cli/internal/session"
 	"github.com/tjcoder-labs/cli/internal/telemetry"
+	"github.com/tjcoder-labs/cli/internal/theme"
 	"github.com/tjcoder-labs/cli/internal/tooling"
 	"github.com/tjcoder-labs/cli/internal/tools"
 	"github.com/tjcoder-labs/cli/internal/tracking"
@@ -142,6 +144,20 @@ func main() {
 		fmt.Printf("%s %s\n", productName, version)
 		fmt.Printf("Developed by %s\n", author)
 		return
+	}
+
+	// Local, read-mostly subcommands: dispatched before provider
+	// resolution and telemetry so they never touch the network, never
+	// prompt and work in cron/ssh/CI.
+	if flag.NArg() > 0 {
+		switch flag.Arg(0) {
+		case "reminders", "reminder":
+			cmdReminders(flag.Args()[1:], *workspaceRoot)
+			return
+		case "tasks", "task":
+			cmdTasks(flag.Args()[1:], *workspaceRoot)
+			return
+		}
 	}
 
 	// Resolve the provider (ergo first). Headless = anything that is not the
@@ -291,18 +307,24 @@ func main() {
 // checked and the run is skipped (exit 0, logged) once the cap for the
 // current calendar day is reached. Otherwise cmdAsk is invoked headlessly
 // with the entry's prompt and agent.
+const scheduleUsage = `usage: coder schedule run <id>
+
+Runs one scheduled entry now (this is what installed crontab lines call).
+To list, inspect or remove entries use ` + "`coder reminders list|show|rm`" + `.
+`
+
 func cmdSchedule(args []string, workspaceRoot, providerName, host, geminiKey string, timeout time.Duration) {
 	if len(args) == 0 {
-		fmt.Fprintf(os.Stderr, "usage: coder schedule run <id>\n")
+		fmt.Fprint(os.Stderr, scheduleUsage)
 		os.Exit(2)
 	}
 	sub := args[0]
 	if sub != "run" {
-		fmt.Fprintf(os.Stderr, "usage: coder schedule run <id>\n")
+		fmt.Fprint(os.Stderr, scheduleUsage)
 		os.Exit(2)
 	}
 	if len(args) != 2 {
-		fmt.Fprintf(os.Stderr, "usage: coder schedule run <id>\n")
+		fmt.Fprint(os.Stderr, scheduleUsage)
 		os.Exit(2)
 	}
 	id := strings.TrimSpace(args[1])
@@ -319,11 +341,23 @@ func cmdSchedule(args []string, workspaceRoot, providerName, host, geminiKey str
 	if !ok {
 		fatal("schedule run: reminder %q not found", id)
 	}
-	if entry.Prompt == "" {
-		fatal("schedule run: reminder %q is a passive reminder, not a schedule", id)
-	}
-
 	now := time.Now()
+
+	if entry.Prompt == "" {
+		// Passive reminders only reach here when installed as a
+		// one-shot ("once at …"): log the message like the legacy
+		// echo line would, then retire the entry and its cron line.
+		if !entry.OneShot {
+			fatal("schedule run: reminder %q is a passive reminder, not a schedule", id)
+		}
+		dir := filepath.Join(workspaceRoot, ".ergo-cli-go")
+		if f, err := os.OpenFile(filepath.Join(dir, "reminders.log"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600); err == nil {
+			fmt.Fprintln(f, entry.Message)
+			f.Close()
+		}
+		retireOneShot(store, workspaceRoot, entry)
+		return
+	}
 
 	// Guardrail 0: tick dedup. The in-session TUI scheduler and this
 	// headless entrypoint can both be alive for the same workspace;
@@ -393,6 +427,11 @@ func cmdSchedule(args []string, workspaceRoot, providerName, host, geminiKey str
 	if err := store.MarkRun(workspaceRoot, id, now); err != nil {
 		fmt.Fprintf(os.Stderr, "schedule %s: warning: could not persist last-run marker: %v\n", id, err)
 	}
+	// A one-shot runs exactly once: retire it before the run so a
+	// failed/aborted run can't leave a line that refires next year.
+	if entry.OneShot {
+		retireOneShot(store, workspaceRoot, entry)
+	}
 
 	cmdAsk(askOptions{
 		Host:          host,
@@ -415,6 +454,19 @@ func cmdSchedule(args []string, workspaceRoot, providerName, host, geminiKey str
 		ExplicitModel: false,
 		ExplicitTools: false,
 	})
+}
+
+// retireOneShot removes a fired one-shot entry and its crontab line.
+func retireOneShot(store *reminders.Store, workspaceRoot string, entry reminders.Entry) {
+	res, _, err := store.Remove(workspaceRoot, entry.ID, reminders.SystemCrontab{})
+	switch {
+	case err != nil:
+		fmt.Fprintf(os.Stderr, "schedule %s: warning: could not remove one-shot entry: %v\n", entry.ID, err)
+	case res.CronErr != nil:
+		fmt.Fprintf(os.Stderr, "schedule %s: one-shot removed; crontab line not removed: %v\n", entry.ID, res.CronErr)
+	default:
+		fmt.Printf("schedule %s: one-shot fired and removed\n", entry.ID)
+	}
 }
 
 func cmdModels(args []string, providerName, host, geminiKey string, timeout time.Duration) {
@@ -833,13 +885,14 @@ func cmdAsk(opts askOptions) {
 			// its content below from history.
 			commentaryBuf.WriteString(ev.Text)
 		case tooling.EventToolStart:
-			line := fmt.Sprintf("[#7C3AED]→ %s[-] %s\n", ev.ToolName, ev.Text)
+			th := theme.Current()
+			line := fmt.Sprintf("[%s]→ %s[-] %s\n", th.Deep, tview.Escape(ev.ToolName), tview.Escape(ev.Text))
 			activityBuf.WriteString(line)
 			if !opts.Quiet {
 				fmt.Fprintf(stderrWriter, "→ %s %s\n", ev.ToolName, strings.TrimSpace(ev.Text))
 			}
 		case tooling.EventToolResult:
-			line := fmt.Sprintf("[#C4A5FF::b]✓ %s[-:-:-] %s\n", ev.ToolName, ev.Text)
+			line := theme.Current().OK(ev.ToolName) + " " + tview.Escape(ev.Text) + "\n"
 			activityBuf.WriteString(line)
 			if !opts.Quiet {
 				fmt.Fprintf(stderrWriter, "✓ %s %s\n", ev.ToolName, ev.Text)
@@ -847,10 +900,10 @@ func cmdAsk(opts askOptions) {
 		case tooling.EventError:
 			var line string
 			if isReasoningRelated(ev.Text) {
-				line = fmt.Sprintf("\n[#C73CDC::b]✗ %s[-:-:-] %s\n", ev.ToolName, ev.Text)
+				line = "\n" + theme.Current().Err(ev.ToolName) + " " + tview.Escape(ev.Text) + "\n"
 				reasoningBuf.WriteString(line)
 			} else {
-				line = fmt.Sprintf("[#C73CDC::bu]✗ %s[-:-:-] %s\n", ev.ToolName, ev.Text)
+				line = theme.Current().Err(ev.ToolName) + " " + tview.Escape(ev.Text) + "\n"
 				activityBuf.WriteString(line)
 			}
 			if !opts.Quiet {

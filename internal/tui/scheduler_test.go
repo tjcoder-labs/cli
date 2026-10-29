@@ -22,45 +22,45 @@ func TestParseCronFields_EveryTenMinutes(t *testing.T) {
 	// Minute bits set: 0,10,20,30,40,50
 	for m := 0; m < 60; m++ {
 		want := m%10 == 0
-		got := f.min&(1<<uint(m)) != 0
+		got := f.Min&(1<<uint(m)) != 0
 		if got != want {
 			t.Errorf("minute %d: match=%v, want %v", m, got, want)
 		}
 	}
 	// Hours/days/months/dow unrestricted.
-	if f.hour != 0xFFFFFF { // 24 bits
-		t.Errorf("hour mask = %#x, want 24 bits set", f.hour)
+	if f.Hour != 0xFFFFFF { // 24 bits
+		t.Errorf("hour mask = %#x, want 24 bits set", f.Hour)
 	}
-	if f.domRestricted || f.dowRestricted {
+	if f.DomRestricted || f.DowRestricted {
 		t.Error("*/10 * * * * should mark dom/dow unrestricted")
 	}
 }
 
 func TestParseCronFields_ListsRangesSteps(t *testing.T) {
 	f := mustParse(t, "0,30 9-17/2 1,15 * 1-5")
-	if f.min != (1<<0|1<<30) {
-		t.Errorf("minute mask wrong: %#b", f.min)
+	if f.Min != (1<<0 | 1<<30) {
+		t.Errorf("minute mask wrong: %#b", f.Min)
 	}
 	// hours: 9,11,13,15,17
 	for h := 0; h < 24; h++ {
 		want := h >= 9 && h <= 17 && (h-9)%2 == 0
-		got := f.hour&(1<<uint(h)) != 0
+		got := f.Hour&(1<<uint(h)) != 0
 		if got != want {
 			t.Errorf("hour %d: match=%v, want %v", h, got, want)
 		}
 	}
-	if f.dom&(1<<1) == 0 || f.dom&(1<<15) == 0 || f.dom&(1<<2) != 0 {
-		t.Errorf("dom mask wrong: %#b", f.dom)
+	if f.Dom&(1<<1) == 0 || f.Dom&(1<<15) == 0 || f.Dom&(1<<2) != 0 {
+		t.Errorf("dom mask wrong: %#b", f.Dom)
 	}
 	for m := 1; m <= 7; m++ {
 		want := m >= 1 && m <= 5
 		// weekday in dow mask: 1=Mon..5=Fri
-		got := f.dow&(1<<uint(m)) != 0
+		got := f.Dow&(1<<uint(m)) != 0
 		if got != want {
 			t.Errorf("dow %d: match=%v, want %v", m, got, want)
 		}
 	}
-	if !f.domRestricted || !f.dowRestricted {
+	if !f.DomRestricted || !f.DowRestricted {
 		t.Error("dom/dow should be restricted when not '*'")
 	}
 }
@@ -165,17 +165,14 @@ func TestScheduleDue_CatchUpMissedTick(t *testing.T) {
 	}
 }
 
-func TestScheduleDue_PassiveReminderFilteredByWorker(t *testing.T) {
-	// The gating rule lives in evaluate(): entries with no Prompt are
-	// skipped before scheduleDue is consulted, so passive reminders
-	// never fire and never influence the next-wake delay. scheduleDue
-	// itself treats any entry with a valid cron expr as a candidate;
-	// it is the worker's Prompt=="" filter that applies the policy.
+func TestScheduleDue_PassiveReminderTimingMatchesSchedules(t *testing.T) {
+	// Passive reminders (no Prompt) go through the same scheduleDue
+	// timing as schedules; evaluate() then surfaces them as an Activity
+	// notification instead of running an agent turn (see
+	// TestScheduler_PassiveNotifyAndOneShotRetire).
 	passive := reminders.Entry{ID: "x", CronExpr: "*/10 * * * *"} // no Prompt
 	now := time.Date(2026, time.September, 16, 17, 41, 0, 0, time.UTC)
 
-	// Raw function still computes a sane next tick for the expr —
-	// the worker just never calls it for passive entries.
 	due, next := scheduleDue(passive, now)
 	if due {
 		t.Error("17:41 is not a */10 boundary; should not be due")

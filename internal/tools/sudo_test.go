@@ -241,12 +241,12 @@ func TestRunCommandSudoUsesShim(t *testing.T) {
 func TestAskUserTool(t *testing.T) {
 	raw, _ := json.Marshal(map[string]any{"question": "Deploy?", "options": []string{"Yes", "No"}, "kind": "authorization"})
 	res, err := askUserTool{}.Execute(context.Background(), raw, ExecEnv{})
-	if err != nil || !strings.Contains(res.Content, "not available") {
+	if err != nil || !strings.HasPrefix(res.Content, "UNAVAILABLE") {
 		t.Fatalf("headless ask_user must not block: %v %q", err, res.Content)
 	}
 	p := &fakePrompter{answers: []PromptAnswer{{Index: 1, Choice: "No"}}}
 	res, err = askUserTool{}.Execute(context.Background(), raw, ExecEnv{Prompter: p})
-	if err != nil || res.Content != "The user chose option 2: No" {
+	if err != nil || res.Content != "ANSWERED: No" {
 		t.Fatalf("got %v %q", err, res.Content)
 	}
 	if p.asked[0].Kind != PromptAuthorization {
@@ -254,7 +254,7 @@ func TestAskUserTool(t *testing.T) {
 	}
 	p = &fakePrompter{answers: []PromptAnswer{{Index: -1, Other: "staging first"}}}
 	res, _ = askUserTool{}.Execute(context.Background(), raw, ExecEnv{Prompter: p})
-	if res.Content != "The user answered: staging first" {
+	if res.Content != "ANSWERED (custom): staging first" {
 		t.Fatalf("other answer = %q", res.Content)
 	}
 }

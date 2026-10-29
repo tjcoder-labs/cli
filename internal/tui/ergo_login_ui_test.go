@@ -69,7 +69,7 @@ func TestFriendlyLoginError(t *testing.T) {
 		}
 	}
 	v := plain(loginFailureView(darkPalette(), friendlyLoginError(auth.ErrExpired, "a@b.co")))
-	if !strings.Contains(v, "✕") || !strings.Contains(v, "Next:") {
+	if !strings.Contains(v, "✗") || !strings.Contains(v, "Next:") {
 		t.Errorf("failure view: %s", v)
 	}
 }

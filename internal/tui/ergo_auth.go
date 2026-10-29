@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/tjcoder-labs/cli/internal/theme"
 	"net/http"
 	"os"
 	"os/exec"
@@ -27,7 +28,7 @@ const ergoAuthTimeout = 12 * time.Second
 // falling back to ollama.
 func ergoLoginPrompt(p client.Provider) string {
 	if e, ok := p.(*client.Ergo); ok && !e.Authenticated() {
-		return "[yellow::b]ergo is your default provider but you are not signed in.[-:-:-] Run [::b]/login[-:-:-] to sign in (or start with --provider ollama to use a local model)."
+		return theme.Current().Warn("ergo is your default provider but you are not signed in.") + " Run [::b]/login[-:-:-] to sign in (or start with --provider ollama to use a local model)."
 	}
 	return ""
 }
@@ -77,19 +78,17 @@ func (a *App) handleLoginCommand() {
 		a.appendActivity("A sign-in is already in progress — press Esc in the sign-in panel to cancel it")
 		return
 	}
-	form := tview.NewForm()
-	a.styleModalForm(form)
+	form := a.newModalForm(nil)
 	var email string
 	form.AddInputField("Email", "", 44, nil, func(s string) { email = strings.TrimSpace(s) })
 	form.AddButton("Send sign-in link", func() {
 		if !plausibleEmail(email) {
-			a.appendActivity("[red]Enter a valid email address[-]")
+			a.appendActivity(a.palette.Theme.Err("Enter a valid email address"))
 			return
 		}
 		a.beginDeviceLogin(email)
 	})
 	form.AddButton("Cancel", func() { a.closeModal() })
-	form.SetCancelFunc(func() { a.closeModal() })
 	a.showModal("ergo Sign-in", form)
 }
 
@@ -105,15 +104,13 @@ func (a *App) beginDeviceLogin(email string) {
 	view.SetBackgroundColor(a.palette.BgInput)
 	view.SetTextColor(a.palette.TextMain)
 	view.SetText(fmt.Sprintf("\n  [%s]Contacting ergo…[-]", a.palette.HexDim))
-	btns := tview.NewForm()
-	a.styleModalForm(btns)
 	cancelLogin := func() {
 		finish()
 		a.appendActivity("Sign-in cancelled")
 		a.closeModal()
 	}
+	btns := a.newModalForm(cancelLogin)
 	btns.AddButton("Cancel", cancelLogin)
-	btns.SetCancelFunc(cancelLogin)
 	panel := tview.NewFlex().SetDirection(tview.FlexRow).
 		AddItem(view, 0, 1, false).
 		AddItem(btns, 3, 0, true)
@@ -130,7 +127,7 @@ func (a *App) beginDeviceLogin(email string) {
 				}
 				finish()
 				f := friendlyLoginError(err, email)
-				a.appendActivity(fmt.Sprintf("[%s]ergo sign-in failed[-]: %s", a.palette.HexOrchid, f.Headline))
+				a.appendActivity(fmt.Sprintf("[%s::b]✗ ergo sign-in failed[-::B]: %s", a.palette.HexAlert, f.Headline))
 				a.showLoginResult("Sign-in didn't complete", loginFailureView(a.palette, f), "Close", nil)
 			})
 		}
@@ -185,7 +182,7 @@ func (a *App) beginDeviceLogin(email string) {
 		a.postUI(func() {
 			finish()
 			if saveErr != nil {
-				a.appendActivity(fmt.Sprintf("[%s]ergo sign-in failed[-]: could not store the key: %v", a.palette.HexOrchid, saveErr))
+				a.appendActivity(fmt.Sprintf("[%s::b]✗ ergo sign-in failed[-::B]: could not store the key: %v", a.palette.HexAlert, saveErr))
 				f := loginFailure{
 					Headline: "Signed in, but the key couldn't be saved.",
 					Detail:   saveErr.Error(),
@@ -245,7 +242,7 @@ func (a *App) handleLogoutCommand() {
 		clearErr := auth.ClearErgoToken()
 		a.postUI(func() {
 			if clearErr != nil {
-				a.appendActivity(fmt.Sprintf("[red]ergo sign-out failed[-]: %v", clearErr))
+				a.appendActivity(fmt.Sprintf(a.palette.Theme.Err("ergo sign-out failed")+": %v", clearErr))
 				return
 			}
 			a.swapErgoProvider("")
@@ -276,7 +273,7 @@ func (a *App) handleBalanceCommand() {
 		cents, err := fetchErgoBalanceCents(ctx, key)
 		a.postUI(func() {
 			if err != nil {
-				a.appendActivity(fmt.Sprintf("[red]ergo balance unavailable[-]: %v", err))
+				a.appendActivity(fmt.Sprintf(a.palette.Theme.Err("ergo balance unavailable")+": %v", err))
 				return
 			}
 			a.setErgoBalanceCents(cents)
@@ -325,11 +322,11 @@ func (a *App) ergoBalanceSegment() string {
 	if !a.ergoBalanceKnown {
 		return ""
 	}
-	color := a.palette.HexDim
 	if a.ergoBalanceCents <= 0 {
-		color = a.palette.HexOrchid
+		// Out of credit: flagged by glyph + bold, not by hue.
+		return fmt.Sprintf("   [%s::b]! ergo %s[-::B]", a.palette.HexAlert, formatCents(a.ergoBalanceCents))
 	}
-	return fmt.Sprintf("   [%s]●[-] [%s]ergo %s[-]", color, color, formatCents(a.ergoBalanceCents))
+	return fmt.Sprintf("   [%s]●[-] [%s]ergo %s[-]", a.palette.HexDim, a.palette.HexDim, formatCents(a.ergoBalanceCents))
 }
 
 // ergoRunErrorNote returns extra guidance for billing/auth errors from the

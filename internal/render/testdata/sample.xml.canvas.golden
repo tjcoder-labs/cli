@@ -1,0 +1,7 @@
+1 │ <?xml version="1.0" encoding="UTF-8"?>
+2 │ <!-- sample config -->
+3 │ <config version="2">
+4 │   <server host="localhost" port="8080"/>
+5 │   <message lang="en">Hello &amp; welcome
+  ┆ [red]x[-]</message>
+6 │ </config>

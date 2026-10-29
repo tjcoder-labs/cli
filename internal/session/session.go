@@ -136,8 +136,14 @@ type State struct {
 // returns the decode error so callers can decide whether to back it up
 // or wipe it.
 func Load(workspaceRoot string) (State, bool, error) {
+	return LoadFile(Path(workspaceRoot))
+}
+
+// LoadFile is Load for an explicit session.json path (used by
+// `coder tasks --session <path>`). Same missing/corrupt semantics.
+func LoadFile(path string) (State, bool, error) {
 	var state State
-	data, err := os.ReadFile(Path(workspaceRoot))
+	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return state, false, nil
@@ -163,7 +169,7 @@ func Load(workspaceRoot string) (State, bool, error) {
 		BackgroundJobs []BackgroundJob      `json:"background_jobs,omitempty"`
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
-		return state, true, fmt.Errorf("session: decode %s: %w", Path(workspaceRoot), err)
+		return state, true, fmt.Errorf("session: decode %s: %w", path, err)
 	}
 
 	state.CurrentAgent = raw.CurrentAgent
