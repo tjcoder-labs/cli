@@ -22,7 +22,7 @@ var buildMethod string
 
 func init() { tui.BuildMethod = buildMethod }
 
-// cmdUpdate implements `coder update [--check] [-y] [check-on|check-off]`.
+// cmdUpdate implements `coder update [--check] [-y] [check-on|check-off|auto [on|off]]`.
 func cmdUpdate(args []string) {
 	fs := flag.NewFlagSet("update", flag.ExitOnError)
 	checkOnly := fs.Bool("check", false, "only report whether an update is available")
@@ -35,6 +35,31 @@ func cmdUpdate(args []string) {
 			fatal("update: %v", err)
 		}
 		fmt.Printf("Background update check %s.\n", map[bool]string{true: "enabled", false: "disabled"}[on])
+		return
+	}
+
+	// `coder update auto on|off` toggles automatic background installs.
+	if fs.Arg(0) == "auto" {
+		switch fs.Arg(1) {
+		case "on", "off":
+			on := fs.Arg(1) == "on"
+			if _, err := appdir.Update(func(s *appdir.Settings) { s.AutoUpdate = &on }); err != nil {
+				fatal("update: %v", err)
+			}
+			fmt.Printf("Automatic updates %s.\n", map[bool]string{true: "enabled", false: "disabled"}[on])
+			if ok, why := update.AutoUpdateEnabled(); on && !ok && why == update.AutoUpdateEnv {
+				fmt.Println("Note: " + update.AutoUpdateEnv + "=0 is set and still keeps them off.")
+			}
+		case "":
+			ok, why := update.AutoUpdateEnabled()
+			state := map[bool]string{true: "on", false: "off"}[ok]
+			if why != "" {
+				state += " (" + why + ")"
+			}
+			fmt.Println("Automatic updates: " + state)
+		default:
+			fatal("usage: coder update auto [on|off]")
+		}
 		return
 	}
 

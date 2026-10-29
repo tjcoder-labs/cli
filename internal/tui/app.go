@@ -16,6 +16,7 @@ import (
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 	"github.com/tjcoder-labs/cli/internal/agent"
+	"github.com/tjcoder-labs/cli/internal/appdir"
 	"github.com/tjcoder-labs/cli/internal/client"
 	ctxpkg "github.com/tjcoder-labs/cli/internal/context"
 	"github.com/tjcoder-labs/cli/internal/mcp"
@@ -26,6 +27,7 @@ import (
 	"github.com/tjcoder-labs/cli/internal/tooling"
 	"github.com/tjcoder-labs/cli/internal/tools"
 	"github.com/tjcoder-labs/cli/internal/tracking"
+	"github.com/tjcoder-labs/cli/internal/update"
 
 	"unicode"
 )
@@ -123,6 +125,44 @@ const panelGutter = 1
 // panels above it.
 // NOTE: kept as 3 to match the conversation panel's left padding.
 const marginX = 3
+
+// mainLeftProportion / mainRightProportion are the flex proportions of
+// the two main columns (left: conversation or /about splash, right: the
+// stacked Cognition/Activity column or the /about intro). Every main
+// layout goes through newMainSplit so the right column has exactly the
+// same width in every mode.
+const (
+	mainLeftProportion  = 5
+	mainRightProportion = 3
+)
+
+// newMainSplit lays out left | gutter | right using the shared column
+// proportions. Use it for every main-area layout (normal and /about) so
+// the right-hand pane cannot drift between modes.
+func (a *App) newMainSplit(left, right tview.Primitive) *tview.Flex {
+	main := tview.NewFlex().
+		AddItem(left, 0, mainLeftProportion, false).
+		AddItem(spacerBox(a.palette.BgRoot), panelGutter, 0, false).
+		AddItem(right, 0, mainRightProportion, false)
+	main.SetBackgroundColor(a.palette.BgRoot)
+	return main
+}
+
+// buildAboutLeft returns the left side of the /about layout: the
+// startup splash (rendered into the bare transcript, so there is no
+// "Conversation" title) plus the optional ergo-ascii.txt art beside it.
+// It fills whatever the shared right column leaves over; the intro
+// (a.aboutBody) is the right column.
+func (a *App) buildAboutLeft() tview.Primitive {
+	left := tview.NewFlex().
+		AddItem(a.transcript, 0, 1, false)
+	if a.aboutAscii != nil && strings.TrimSpace(a.aboutAscii.GetText(true)) != "" {
+		left.AddItem(spacerBox(a.palette.BgRoot), panelGutter, 0, false).
+			AddItem(a.aboutAscii, 0, 1, false)
+	}
+	left.SetBackgroundColor(a.palette.BgRoot)
+	return left
+}
 
 // inputRowHeight is the prompt surface's full height: the 3-row input
 // plus the 3-row hint line. Sizing the row to the whole surface keeps
@@ -344,9 +384,21 @@ type App struct {
 	inputRow tview.Primitive
 
 	mu sync.Mutex
+	// uiq is the ordered, non-blocking UI post queue behind postUI /
+	// postUIWait (see uiqueue.go). Never call tv.QueueUpdate* directly.
+	uiq uiQueue
 	// contextWindows caches context-window lookups (per provider) for the
-	// status bar and the /compact hint (guarded by mu). 0 = unknown / in
-	// flight.
+	// status bar and the /compact hint. 0 = unknown / in flight. Guarded
+	// by ctxWinMu — NOT mu — because the lookup runs inside saveSession
+	// and refreshContextBar, which callers (submit, submitScheduled) invoke
+	// while already holding the non-reentrant mu. ctxWinMu is a leaf lock:
+	// it may be taken while holding mu, never the other way round, and
+	// nothing blocking (no network, no UI post) happens under it.
+	ctxWinMu sync.Mutex
+	// ctxWinGen is bumped (under ctxWinMu) whenever the cache is reset on
+	// a provider switch, so an in-flight lookup for the old provider
+	// never writes into the new provider's cache.
+	ctxWinGen      uint64
 	contextWindows map[string]int
 
 	// config holds the persisted user-tunable settings loaded from
@@ -534,13 +586,13 @@ func (a *App) Run() error {
 	bgCtx, stopBackground := context.WithCancel(context.Background())
 	defer stopBackground()
 	a.startBackground(bgCtx)
-	return a.tv.Run()
+	return a.runUI()
 }
 
 // focusOrQueue moves keyboard focus to p. tview's SetFocus is
 // safe to call from any goroutine (it acquires a lock and sets a
 // field; the next Draw picks it up). We do not route focus through
-// QueueUpdate/QueueUpdateDraw because those send on a channel that
+// QueueUpdate/QueueUpdateDraw (nor postUIWait) because those send on a channel that
 // the event loop drains — and when the caller is already executing
 // inside a QueueUpdate closure, the inner send would block forever
 // and stall the event loop. That channel-send pattern was the
@@ -743,6 +795,12 @@ func (a *App) build() {
 			return nil
 		case tcell.KeyEnter:
 			typed := strings.ToLower(strings.TrimPrefix(strings.TrimSpace(a.input.GetText()), "/"))
+			// Compare the command token only, so "/telemetry off" runs
+			// with its argument instead of being completed back to
+			// "/telemetry " (which silently dropped the argument).
+			if i := strings.IndexAny(typed, " \t"); i != -1 {
+				typed = typed[:i]
+			}
 			// Exact match already typed: let submit run it.
 			for _, c := range a.hintMatches {
 				if c.cmd == typed {
@@ -776,10 +834,10 @@ func (a *App) build() {
 		SetWrap(true)
 	a.aboutBody.SetBackgroundColor(a.palette.BgRoot)
 	a.aboutBody.SetTextColor(a.palette.TextMain)
-	a.aboutBody.SetBorderPadding(2, 1, 4, 2)
+	// Left padding 3 matches newPanel's body padding so the intro text
+	// starts in the same column as the Cognition/Activity text.
+	a.aboutBody.SetBorderPadding(2, 1, 3, 2)
 	a.aboutBody.SetText(a.renderAboutIntro())
-
-	vGutter := spacerBox(a.palette.BgRoot)
 
 	// Stack reasoning and activity directly so their backgrounds connect.
 	// Activity gets priority over Cognition (2:3 ratio) so longer event
@@ -793,34 +851,16 @@ func (a *App) build() {
 		AddItem(activityPanel, 0, 3, false)
 	right.SetBackgroundColor(a.palette.BgReasoning)
 
-	// About layout: ASCII on the left, intro on the right. Pre-built
-	// so toggling aboutMode is just a layout swap rather than a
-	// rebuild of the underlying TextViews.
-	aboutRow := tview.NewFlex().
-		AddItem(a.aboutAscii, 0, 1, false).
-		AddItem(vGutter, panelGutter, 0, false).
-		AddItem(a.aboutBody, 0, 1, false)
-	aboutRow.SetBackgroundColor(a.palette.BgRoot)
-
 	// In aboutMode the "Conversation" title is hidden by using the
 	// bare transcript TextView in place of the full panel, so the
-	// ASCII art reads from the very top of the surface.
+	// ASCII art reads from the very top of the surface. The intro
+	// takes the right column at exactly the normal right-column width.
 	var main *tview.Flex
 	if a.aboutMode {
-		left := tview.NewFlex().
-			AddItem(a.transcript, 0, 1, false)
-		left.SetBackgroundColor(a.palette.BgRoot)
-		main = tview.NewFlex().
-			AddItem(left, 0, 5, false).
-			AddItem(vGutter, panelGutter, 0, false).
-			AddItem(aboutRow, 0, 3, false)
+		main = a.newMainSplit(a.buildAboutLeft(), a.aboutBody)
 	} else {
-		main = tview.NewFlex().
-			AddItem(transcriptPanel, 0, 5, false).
-			AddItem(vGutter, panelGutter, 0, false).
-			AddItem(right, 0, 3, false)
+		main = a.newMainSplit(transcriptPanel, right)
 	}
-	main.SetBackgroundColor(a.palette.BgRoot)
 
 	inputRow := a.newInputRow()
 	a.inputRow = inputRow
@@ -1679,7 +1719,7 @@ func (a *App) startSpinner() {
 		for {
 			select {
 			case <-ticker.C:
-				a.tv.QueueUpdateDraw(func() {
+				a.postUIWait(func() {
 					if !a.busy {
 						return
 					}
@@ -1911,13 +1951,13 @@ func (a *App) handleSlashCommand(cmd string) {
 
 // InvokeCLICommand implements the tools.CLICommandSink interface,
 // allowing tools to proactively invoke slash commands on behalf of the agent.
-// This is called from a background goroutine (the runner), so we queue the
-// command invocation through the event loop for thread safety.
+// It is normally called from the runner goroutine. The command runs on
+// the UI goroutine via postUIWait: inline when already there, otherwise
+// queued in order behind earlier runner events and waited for. Slash
+// handlers may themselves post (e.g. /telemetry → Record); those run
+// inline on the event loop, so this can no longer deadlock.
 func (a *App) InvokeCLICommand(command string) error {
-	// Queue the command handler in the TUI event loop for thread safety.
-	// This ensures the command is executed in the correct context without
-	// race conditions or deadlocks.
-	a.tv.QueueUpdateDraw(func() {
+	a.postUIWait(func() {
 		a.handleSlashCommand("/" + command)
 	})
 	return nil
@@ -2156,11 +2196,34 @@ func (a *App) openConfigModal() {
 			}
 		})
 
+	// --- Automatic updates (user-level settings.json, not AppConfig) ---
+	autoWas := update.AutoUpdateSetting()
+	autoUpdate := autoWas
+	autoIdx := 0
+	if !autoUpdate {
+		autoIdx = 1
+	}
+	form.AddDropDown("Automatic updates", []string{"On", "Off"}, autoIdx, func(option string, _ int) {
+		autoUpdate = option == "On"
+	})
+
 	// --- Actions ---
 	save := func() {
 		if err := a.saveConfig(work); err != nil {
 			a.appendActivity(fmt.Sprintf("["+a.palette.HexOrchid+"::b]config save failed[-:-:-]: %v", err))
 			return
+		}
+		if autoUpdate != autoWas {
+			on := autoUpdate
+			if _, err := appdir.Update(func(s *appdir.Settings) { s.AutoUpdate = &on }); err != nil {
+				a.appendActivity(fmt.Sprintf("["+a.palette.HexOrchid+"::b]config save failed[-:-:-]: automatic updates: %v", err))
+				return
+			}
+			state := map[bool]string{true: "on", false: "off"}[on]
+			a.appendActivity("Automatic updates " + state)
+			if ok, why := update.AutoUpdateEnabled(); on && !ok && why == update.AutoUpdateEnv {
+				a.appendActivity(update.AutoUpdateEnv + "=0 is set in the environment and still keeps automatic updates off")
+			}
 		}
 		a.config = work
 		a.runner.MaxSteps = work.ToolMax
@@ -2181,7 +2244,6 @@ func (a *App) openConfigModal() {
 		AddItem(infoView, 7, 0, false).
 		AddItem(spacerBox(bg), 1, 0, false).
 		AddItem(form, 0, 1, true).
-		AddItem(spacerBox(bg), 1, 0, false).
 		AddItem(help, 1, 0, false)
 	body.SetBackgroundColor(bg)
 
@@ -2335,7 +2397,7 @@ func (a *App) runCognitionRecap() {
 	// We disable tools for the recap to ensure it's a plain text summary.
 	newHistory, err := a.runner.Run(ctx, a.history, prompt, a.currentAgent, a.currentModel, nil, nil)
 	if err != nil {
-		a.tv.QueueUpdateDraw(func() {
+		a.postUI(func() {
 			fmt.Fprintf(a.reasoning, "\n[%s::b]cognition recap failed[-:-:-] %v[-]\n", a.palette.HexOrchid, err)
 			a.reasoning.ScrollToEnd()
 		})
@@ -2351,7 +2413,7 @@ func (a *App) runCognitionRecap() {
 	}
 	recapped = strings.TrimSpace(recapped)
 
-	a.tv.QueueUpdateDraw(func() {
+	a.postUI(func() {
 		fmt.Fprintf(a.reasoning, "\n\n%s\n", a.highlightTranscriptText(recapped))
 		a.reasoning.ScrollToEnd()
 	})
@@ -2862,7 +2924,7 @@ func (a *App) compactHistory(parts []string) {
 
 		newHistory, err := a.runner.Run(ctx, history, prompt, agentCfg, model, nil, nil)
 
-		a.tv.QueueUpdateDraw(func() {
+		a.postUI(func() {
 			a.mu.Lock()
 			a.busy = false
 			a.mu.Unlock()
@@ -3134,7 +3196,7 @@ func (a *App) launchTurnWithContext(prompt, agentNameOverride, turnContext strin
 		defer cancel()
 		ctx = tooling.WithTurnContext(ctx, turnContext)
 		nextHistory, err := a.runner.Run(ctx, history, prompt, agentCfg, model, enabled, a.handleEvent)
-		a.tv.QueueUpdateDraw(func() {
+		a.postUI(func() {
 			if err != nil {
 				errText := fmt.Sprintf("error: %v", err)
 				if isReasoningRelated(errText) {
@@ -3183,7 +3245,7 @@ func (a *App) launchTurnWithContext(prompt, agentNameOverride, turnContext strin
 // turn (single-flight), and the in-flight agent receives the
 // schedule's instruction as user steering.
 func (a *App) submitScheduled(agentName, prompt string) {
-	a.tv.QueueUpdateDraw(func() {
+	a.postUIWait(func() {
 		a.mu.Lock()
 		if a.busy {
 			select {
@@ -3243,7 +3305,7 @@ func (a *App) appendScheduledMessage(agentName, prompt string) {
 }
 
 func (a *App) handleEvent(event tooling.Event) {
-	a.tv.QueueUpdateDraw(func() {
+	a.postUIWait(func() {
 		switch event.Type {
 		case tooling.EventReasoning:
 			a.assistantState = "thinking"
@@ -3902,7 +3964,6 @@ func (a *App) rebuildLayout() {
 	if a.tv == nil || a.pages == nil {
 		return
 	}
-	vGutter := spacerBox(a.palette.BgRoot)
 	var mainFlex *tview.Flex
 	if a.fullscreen {
 		// Fullscreen: hide the right column, the gutter, AND the
@@ -3924,20 +3985,10 @@ func (a *App) rebuildLayout() {
 		// recomputes from scratch the next time it is called.
 		a.right = nil
 	} else if a.aboutMode {
-		// About mode: ASCII on the left, intro on the right, no
-		// "Conversation" title bar.
-		aboutRow := tview.NewFlex().
-			AddItem(a.aboutAscii, 0, 1, false).
-			AddItem(vGutter, panelGutter, 0, false).
-			AddItem(a.aboutBody, 0, 1, false)
-		aboutRow.SetBackgroundColor(a.palette.BgRoot)
-		left := tview.NewFlex().
-			AddItem(a.transcript, 0, 1, false)
-		left.SetBackgroundColor(a.palette.BgRoot)
-		mainFlex = tview.NewFlex().
-			AddItem(left, 0, 5, false).
-			AddItem(vGutter, panelGutter, 0, false).
-			AddItem(aboutRow, 0, 3, false)
+		// About mode: splash (and optional ASCII art) on the left,
+		// intro on the right at exactly the normal right-column
+		// width, no "Conversation" title bar.
+		mainFlex = a.newMainSplit(a.buildAboutLeft(), a.aboutBody)
 	} else {
 		// Delegate to buildRightColumn so the active body primitive
 		// tracks a.activePanel (tasks, articles, code, activity)
@@ -3950,10 +4001,7 @@ func (a *App) rebuildLayout() {
 		if a.leftPane != nil {
 			leftPrim = a.leftPane
 		}
-		mainFlex = tview.NewFlex().
-			AddItem(leftPrim, 0, 5, false).
-			AddItem(vGutter, panelGutter, 0, false).
-			AddItem(right, 0, 3, false)
+		mainFlex = a.newMainSplit(leftPrim, right)
 	}
 	mainFlex.SetBackgroundColor(a.palette.BgRoot)
 
@@ -4147,8 +4195,11 @@ func (a *App) switchProvider(cfg providers.Config) {
 		return
 	}
 	a.mu.Lock()
+	a.ctxWinMu.Lock()
 	a.provider = p
 	a.contextWindows = nil // windows are per provider
+	a.ctxWinGen++
+	a.ctxWinMu.Unlock()
 	a.mu.Unlock()
 	a.runner.Provider = p
 	// Clear stale model list so openModelModal triggers a fresh fetch.
@@ -4219,7 +4270,7 @@ func (a *App) loadModelsAsync() {
 		ctx, cancel := context.WithTimeout(context.Background(), modelLoadTimeout)
 		defer cancel()
 		models, err := a.listModels(ctx)
-		a.tv.QueueUpdateDraw(func() {
+		a.postUI(func() {
 			if err != nil {
 				a.appendActivity(fmt.Sprintf("["+a.palette.HexViolet+"]model load deferred[-]: %v", err))
 				return
@@ -4288,7 +4339,7 @@ func (a *App) openModelModal() {
 			ctx, cancel := context.WithTimeout(context.Background(), modelLoadTimeout)
 			defer cancel()
 			models, err := a.listModels(ctx)
-			a.tv.QueueUpdateDraw(func() {
+			a.postUI(func() {
 				if err != nil {
 					a.appendActivity(fmt.Sprintf("["+a.palette.HexOrchid+"::b]model load failed[-:-:-]: %v", err))
 					a.closeModal()

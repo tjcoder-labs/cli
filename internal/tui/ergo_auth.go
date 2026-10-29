@@ -124,7 +124,7 @@ func (a *App) beginDeviceLogin(email string) {
 	go func() {
 		fail := func(err error) {
 			emit("login_result", map[string]any{"ok": false, "method": "device"})
-			a.tv.QueueUpdateDraw(func() {
+			a.postUI(func() {
 				if ctx.Err() != nil {
 					return
 				}
@@ -147,7 +147,7 @@ func (a *App) beginDeviceLogin(email string) {
 		}
 		opened := openBrowser(uri) == nil
 		expires := time.Now().Add(time.Duration(st.ExpiresIn) * time.Second)
-		a.tv.QueueUpdateDraw(func() {
+		a.postUI(func() {
 			view.SetText(loginCodeView(a.palette, email, st, time.Until(expires), opened))
 			a.appendActivity("Sign-in code " + st.UserCode + " — check " + email + " for the approval link")
 		})
@@ -164,7 +164,7 @@ func (a *App) beginDeviceLogin(email string) {
 					if rem < 0 {
 						return
 					}
-					a.tv.QueueUpdateDraw(func() {
+					a.postUI(func() {
 						if ctx.Err() == nil {
 							view.SetText(loginCodeView(a.palette, email, st, rem, opened))
 						}
@@ -182,7 +182,7 @@ func (a *App) beginDeviceLogin(email string) {
 		}
 		saveErr := auth.SaveErgoToken(res.APIKey)
 		emit("login_result", map[string]any{"ok": saveErr == nil, "method": "device"})
-		a.tv.QueueUpdateDraw(func() {
+		a.postUI(func() {
 			finish()
 			if saveErr != nil {
 				a.appendActivity(fmt.Sprintf("[%s]ergo sign-in failed[-]: could not store the key: %v", a.palette.HexOrchid, saveErr))
@@ -243,7 +243,7 @@ func (a *App) handleLogoutCommand() {
 			cancel()
 		}
 		clearErr := auth.ClearErgoToken()
-		a.tv.QueueUpdateDraw(func() {
+		a.postUI(func() {
 			if clearErr != nil {
 				a.appendActivity(fmt.Sprintf("[red]ergo sign-out failed[-]: %v", clearErr))
 				return
@@ -274,7 +274,7 @@ func (a *App) handleBalanceCommand() {
 		ctx, cancel := context.WithTimeout(context.Background(), ergoAuthTimeout)
 		defer cancel()
 		cents, err := fetchErgoBalanceCents(ctx, key)
-		a.tv.QueueUpdateDraw(func() {
+		a.postUI(func() {
 			if err != nil {
 				a.appendActivity(fmt.Sprintf("[red]ergo balance unavailable[-]: %v", err))
 				return
@@ -303,7 +303,7 @@ func (a *App) refreshErgoBalanceAsync() {
 		if err != nil {
 			return
 		}
-		a.tv.QueueUpdateDraw(func() { a.setErgoBalanceCents(cents) })
+		a.postUI(func() { a.setErgoBalanceCents(cents) })
 	}()
 }
 
@@ -366,8 +366,11 @@ func ergoBaseURL() string {
 // on the next chat).
 func (a *App) swapErgoProvider(key string) {
 	a.mu.Lock()
+	a.ctxWinMu.Lock()
 	a.provider = client.NewErgo(ergoBaseURL(), key, 0)
 	a.contextWindows = nil
+	a.ctxWinGen++
+	a.ctxWinMu.Unlock()
 	a.mu.Unlock()
 	if a.runner != nil {
 		// The runner holds its own provider reference; keep it in sync so

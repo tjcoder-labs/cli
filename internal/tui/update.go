@@ -2,9 +2,12 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/tjcoder-labs/cli/internal/tools"
@@ -24,6 +27,22 @@ func OnBackground(h BackgroundHook) { backgroundHooks = append(backgroundHooks, 
 // UpdateChecker is the checker used by the TUI; tests may replace it.
 var UpdateChecker = update.NewChecker
 
+// Seams for tests: how the running executable was installed, and the
+// prepare/apply steps of an install. Production uses the real ones.
+var (
+	currentExecutable = os.Executable
+	prepareUpdate     = func(ctx context.Context, c *update.Checker, m update.Method, current, latest, exe string) (update.Plan, error) {
+		return c.Prepare(ctx, m, current, latest, exe)
+	}
+	applyUpdate = func(ctx context.Context, c *update.Checker, p update.Plan, out io.Writer) error {
+		return c.Apply(ctx, p, out)
+	}
+)
+
+// installing is set while an update is being installed (automatic or
+// /update) so two installs never run at once.
+var installing atomic.Bool
+
 // BuildMethod is stamped by main from its ldflags ("binary" for
 // release builds); see update.DetectMethod.
 var BuildMethod string
@@ -39,31 +58,95 @@ func (a *App) startBackground(ctx context.Context) {
 }
 
 // backgroundUpdateCheck runs at most once per 24h (cached) with a short
-// timeout. Failure is silent; success with a newer version shows a
-// one-line notice.
+// timeout. Failure is silent. With a newer version available it either
+// installs it in the background (automatic updates on, npm or release
+// binary) or shows a one-line notice. It only runs from the interactive
+// TUI, and startBackground skips it entirely in CI or with
+// CODER_NO_UPDATE_CHECK=1 / update_check=false.
 func (a *App) backgroundUpdateCheck(ctx context.Context) {
 	select {
 	case <-ctx.Done():
 		return
 	case <-time.After(1500 * time.Millisecond): // let the first frame settle
 	}
+	a.checkAndMaybeAutoUpdate(ctx)
+}
+
+func (a *App) checkAndMaybeAutoUpdate(ctx context.Context) {
+	c := UpdateChecker()
 	cctx, cancel := context.WithTimeout(ctx, update.DefaultTimeout)
-	defer cancel()
-	res, err := UpdateChecker().CheckCached(cctx, a.appVersion)
+	res, err := c.CheckCached(cctx, a.appVersion)
+	cancel()
 	if TelemetryEvent != nil {
 		TelemetryEvent("update_check", map[string]any{"ok": err == nil, "available": err == nil && res.Available()})
 	}
-	if err != nil || !res.Available() || ctx.Err() != nil {
+	if err != nil || ctx.Err() != nil {
 		return
 	}
-	a.Notice(fmt.Sprintf("Update available: v%s → v%s · run /update", a.appVersion, res.Latest))
+	exe, _ := currentExecutable()
+	method := update.DetectMethod(exe, BuildMethod)
+	auto, _ := update.AutoUpdateEnabled()
+	switch update.Decide(res, method, auto) {
+	case update.ActionNotify:
+		a.notifyUpdateAvailable(res.Latest)
+	case update.ActionSourceNotice:
+		a.Notice(fmt.Sprintf("Update available: v%s → v%s · source build; update with: %s", a.appVersion, res.Latest, update.SourceInstructions))
+	case update.ActionInstall:
+		a.autoInstall(ctx, c, method, res.Latest, exe)
+	}
+}
+
+func (a *App) notifyUpdateAvailable(latest string) {
+	a.Notice(fmt.Sprintf("Update available: v%s → v%s · run /update", a.appVersion, latest))
+}
+
+// autoInstall installs latest without prompting (background goroutine
+// only). It never overlaps another install, and reports exactly one
+// line: success, or a short failure pointing at /update.
+func (a *App) autoInstall(ctx context.Context, c *update.Checker, method update.Method, latest, exe string) {
+	if !installing.CompareAndSwap(false, true) {
+		return
+	}
+	defer installing.Store(false)
+	ictx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	defer cancel()
+	report := func(ok bool) {
+		if TelemetryEvent != nil {
+			TelemetryEvent("update_auto", map[string]any{"ok": ok, "method": string(method)})
+		}
+	}
+	plan, err := prepareUpdate(ictx, c, method, a.appVersion, latest, exe)
+	if err != nil {
+		if ctx.Err() != nil {
+			return
+		}
+		if errors.Is(err, update.ErrNoBinaryRelease) {
+			// main is ahead of the newest release; nothing to install yet.
+			a.notifyUpdateAvailable(latest)
+			return
+		}
+		report(false)
+		a.Notice(fmt.Sprintf("Automatic update to v%s failed: %s · run /update", latest, firstLine(err.Error())))
+		return
+	}
+	var out strings.Builder
+	if err := applyUpdate(ictx, c, plan, &out); err != nil {
+		if ctx.Err() != nil {
+			return // coder is exiting; npm/the download was cancelled
+		}
+		report(false)
+		a.Notice(fmt.Sprintf("Automatic update to v%s failed: %s · run /update", plan.Version, firstLine(err.Error())))
+		return
+	}
+	report(true)
+	a.Notice(fmt.Sprintf("Updated to v%s · restart coder to use it", plan.Version))
 }
 
 // TelemetryEvent is set by main to forward anonymous events; nil = off.
 var TelemetryEvent func(name string, props map[string]any)
 
 // Notice prints a one-line dim notice into the conversation. Safe from
-// any goroutine except inside a QueueUpdate closure.
+// any goroutine, including the UI event loop (see postUI).
 func (a *App) Notice(text string) { a.Record(text) }
 
 // runUpdate implements /update (always on its own goroutine). It
@@ -84,9 +167,9 @@ func (a *App) runUpdate(parts []string) {
 		a.Notice(fmt.Sprintf("coder v%s is up to date", a.appVersion))
 		return
 	}
-	exe, _ := os.Executable()
+	exe, _ := currentExecutable()
 	method := update.DetectMethod(exe, BuildMethod)
-	plan, err := c.Prepare(ctx, method, a.appVersion, res.Latest, exe)
+	plan, err := prepareUpdate(ctx, c, method, a.appVersion, res.Latest, exe)
 	if err != nil {
 		a.Notice("Update unavailable: " + err.Error())
 		return
@@ -109,9 +192,14 @@ func (a *App) runUpdate(parts []string) {
 	if err != nil || ans.Index != 0 {
 		return
 	}
+	if !installing.CompareAndSwap(false, true) {
+		a.Notice("An update is already being installed; wait for it to finish.")
+		return
+	}
+	defer installing.Store(false)
 	a.Notice(fmt.Sprintf("Updating to v%s…", plan.Version))
 	var out strings.Builder
-	if err := c.Apply(ctx, plan, &out); err != nil {
+	if err := applyUpdate(ctx, c, plan, &out); err != nil {
 		a.Notice("Update failed: " + firstLine(err.Error()) + lastLine(out.String()))
 		return
 	}

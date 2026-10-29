@@ -83,6 +83,67 @@ func Disabled(headless bool) string {
 	return ""
 }
 
+// AutoUpdateEnv names the environment switch that forces automatic
+// updates off when set to 0, false, or no.
+const AutoUpdateEnv = "CODER_AUTO_UPDATE"
+
+// AutoUpdateEnabled reports whether the TUI may install a newer version
+// in the background without asking, and why not ("" when enabled).
+// It defaults to on: only CODER_AUTO_UPDATE=0 (or false/no) or an
+// explicit auto_update=false in settings.json turn it off. It does not
+// cover the background-check gates (headless, CI,
+// CODER_NO_UPDATE_CHECK, update_check=false); those stop the check, and
+// with it any automatic install, before this is consulted.
+func AutoUpdateEnabled() (bool, string) {
+	if v, ok := os.LookupEnv(AutoUpdateEnv); ok && strings.TrimSpace(v) != "" && !truthy(v) {
+		return false, AutoUpdateEnv
+	}
+	if s := appdir.Load(); s.AutoUpdate != nil && !*s.AutoUpdate {
+		return false, "config"
+	}
+	return true, ""
+}
+
+// AutoUpdateSetting reports the persisted auto-update choice (nil = on).
+func AutoUpdateSetting() bool {
+	s := appdir.Load()
+	return s.AutoUpdate == nil || *s.AutoUpdate
+}
+
+// Action is what the TUI does with a completed background check.
+type Action string
+
+const (
+	// ActionNone: nothing newer is available.
+	ActionNone Action = "none"
+	// ActionNotify: show "Update available … run /update" (the
+	// behaviour with automatic updates off).
+	ActionNotify Action = "notify"
+	// ActionInstall: install in the background without prompting.
+	ActionInstall Action = "install"
+	// ActionSourceNotice: a source build; never installed automatically,
+	// show the git pull instructions instead.
+	ActionSourceNotice Action = "source"
+)
+
+// Decide picks the action for a background check result. Automatic
+// installs only ever happen for npm and release-binary installs.
+func Decide(res Result, method Method, auto bool) Action {
+	if !res.Available() {
+		return ActionNone
+	}
+	if !auto {
+		return ActionNotify
+	}
+	switch method {
+	case MethodNPM, MethodBinary:
+		return ActionInstall
+	case MethodSource:
+		return ActionSourceNotice
+	}
+	return ActionNotify
+}
+
 func truthy(v string) bool {
 	v = strings.ToLower(strings.TrimSpace(v))
 	return v != "" && v != "0" && v != "false" && v != "no"
