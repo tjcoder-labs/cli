@@ -36,7 +36,7 @@ for t in "${targets[@]}"; do
   echo "==> building ${GOOS}/${GOARCH}"
   CGO_ENABLED=0 GOOS=$GOOS GOARCH=$GOARCH \
     go build -trimpath \
-      -ldflags "-X 'main.version=${VERSION}' -X 'main.productName=${PRODUCT}' -X 'main.author=${AUTHOR}'" \
+      -ldflags "-X 'main.version=${VERSION}' -X 'main.productName=${PRODUCT}' -X 'main.author=${AUTHOR}' -X 'main.buildMethod=binary'" \
       -o "$OUT/$bin" ./cmd/coder
 
   a1="coder-${GOOS}-${GOARCH}${ext}"

@@ -170,6 +170,7 @@ var slashCommands = []slashCommand{
 	{"about", "Open the about / welcome screen"},
 	{"mcp", "Manage MCP integrations"},
 	{"providers", "Manage model providers"},
+	{"update", "Check for and install a coder update"},
 }
 
 type App struct {
@@ -513,6 +514,9 @@ func (a *App) Run() error {
 	// arrives as KeyEnter and triggers submit(), splitting the paste at
 	// the first line break and dropping the remainder.
 	a.tv.EnablePaste(true)
+	bgCtx, stopBackground := context.WithCancel(context.Background())
+	defer stopBackground()
+	a.startBackground(bgCtx)
 	return a.tv.Run()
 }
 
@@ -1872,6 +1876,8 @@ func (a *App) handleSlashCommand(cmd string) {
 		a.clearSession()
 	case "compact":
 		a.compactHistory(parts)
+	case "update":
+		go a.runUpdate(parts)
 	case "quit":
 		a.tv.Stop()
 	case "agentinfo":

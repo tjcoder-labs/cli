@@ -154,6 +154,9 @@ func main() {
 			fmt.Printf("%s %s\n", productName, version)
 			fmt.Printf("Developed by %s\n", author)
 			return
+		case "update":
+			cmdUpdate(flag.Args()[1:])
+			return
 		case "models":
 			cmdModels(flag.Args()[1:], *providerName, *host, *geminiKey, *timeout)
 			return
