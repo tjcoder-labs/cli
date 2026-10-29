@@ -63,7 +63,7 @@ func (a *App) backgroundUpdateCheck(ctx context.Context) {
 var TelemetryEvent func(name string, props map[string]any)
 
 // Notice prints a one-line dim notice into the conversation. Safe from
-// any goroutine except inside a QueueUpdate closure.
+// any goroutine, including the UI event loop (see postUI).
 func (a *App) Notice(text string) { a.Record(text) }
 
 // runUpdate implements /update (always on its own goroutine). It

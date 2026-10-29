@@ -130,7 +130,7 @@ func (a *App) contextWindowFor(model string) int {
 		}
 		a.mu.Unlock()
 		if a.tv != nil {
-			a.tv.QueueUpdateDraw(func() { a.refreshContextBar() })
+			a.postUI(func() { a.refreshContextBar() })
 		}
 	}()
 	return 0

@@ -344,6 +344,9 @@ type App struct {
 	inputRow tview.Primitive
 
 	mu sync.Mutex
+	// uiq is the ordered, non-blocking UI post queue behind postUI /
+	// postUIWait (see uiqueue.go). Never call tv.QueueUpdate* directly.
+	uiq uiQueue
 	// contextWindows caches context-window lookups (per provider) for the
 	// status bar and the /compact hint (guarded by mu). 0 = unknown / in
 	// flight.
@@ -534,13 +537,13 @@ func (a *App) Run() error {
 	bgCtx, stopBackground := context.WithCancel(context.Background())
 	defer stopBackground()
 	a.startBackground(bgCtx)
-	return a.tv.Run()
+	return a.runUI()
 }
 
 // focusOrQueue moves keyboard focus to p. tview's SetFocus is
 // safe to call from any goroutine (it acquires a lock and sets a
 // field; the next Draw picks it up). We do not route focus through
-// QueueUpdate/QueueUpdateDraw because those send on a channel that
+// QueueUpdate/QueueUpdateDraw (nor postUIWait) because those send on a channel that
 // the event loop drains — and when the caller is already executing
 // inside a QueueUpdate closure, the inner send would block forever
 // and stall the event loop. That channel-send pattern was the
@@ -743,6 +746,12 @@ func (a *App) build() {
 			return nil
 		case tcell.KeyEnter:
 			typed := strings.ToLower(strings.TrimPrefix(strings.TrimSpace(a.input.GetText()), "/"))
+			// Compare the command token only, so "/telemetry off" runs
+			// with its argument instead of being completed back to
+			// "/telemetry " (which silently dropped the argument).
+			if i := strings.IndexAny(typed, " \t"); i != -1 {
+				typed = typed[:i]
+			}
 			// Exact match already typed: let submit run it.
 			for _, c := range a.hintMatches {
 				if c.cmd == typed {
@@ -1679,7 +1688,7 @@ func (a *App) startSpinner() {
 		for {
 			select {
 			case <-ticker.C:
-				a.tv.QueueUpdateDraw(func() {
+				a.postUIWait(func() {
 					if !a.busy {
 						return
 					}
@@ -1911,13 +1920,13 @@ func (a *App) handleSlashCommand(cmd string) {
 
 // InvokeCLICommand implements the tools.CLICommandSink interface,
 // allowing tools to proactively invoke slash commands on behalf of the agent.
-// This is called from a background goroutine (the runner), so we queue the
-// command invocation through the event loop for thread safety.
+// It is normally called from the runner goroutine. The command runs on
+// the UI goroutine via postUIWait: inline when already there, otherwise
+// queued in order behind earlier runner events and waited for. Slash
+// handlers may themselves post (e.g. /telemetry → Record); those run
+// inline on the event loop, so this can no longer deadlock.
 func (a *App) InvokeCLICommand(command string) error {
-	// Queue the command handler in the TUI event loop for thread safety.
-	// This ensures the command is executed in the correct context without
-	// race conditions or deadlocks.
-	a.tv.QueueUpdateDraw(func() {
+	a.postUIWait(func() {
 		a.handleSlashCommand("/" + command)
 	})
 	return nil
@@ -2335,7 +2344,7 @@ func (a *App) runCognitionRecap() {
 	// We disable tools for the recap to ensure it's a plain text summary.
 	newHistory, err := a.runner.Run(ctx, a.history, prompt, a.currentAgent, a.currentModel, nil, nil)
 	if err != nil {
-		a.tv.QueueUpdateDraw(func() {
+		a.postUI(func() {
 			fmt.Fprintf(a.reasoning, "\n[%s::b]cognition recap failed[-:-:-] %v[-]\n", a.palette.HexOrchid, err)
 			a.reasoning.ScrollToEnd()
 		})
@@ -2351,7 +2360,7 @@ func (a *App) runCognitionRecap() {
 	}
 	recapped = strings.TrimSpace(recapped)
 
-	a.tv.QueueUpdateDraw(func() {
+	a.postUI(func() {
 		fmt.Fprintf(a.reasoning, "\n\n%s\n", a.highlightTranscriptText(recapped))
 		a.reasoning.ScrollToEnd()
 	})
@@ -2862,7 +2871,7 @@ func (a *App) compactHistory(parts []string) {
 
 		newHistory, err := a.runner.Run(ctx, history, prompt, agentCfg, model, nil, nil)
 
-		a.tv.QueueUpdateDraw(func() {
+		a.postUI(func() {
 			a.mu.Lock()
 			a.busy = false
 			a.mu.Unlock()
@@ -3134,7 +3143,7 @@ func (a *App) launchTurnWithContext(prompt, agentNameOverride, turnContext strin
 		defer cancel()
 		ctx = tooling.WithTurnContext(ctx, turnContext)
 		nextHistory, err := a.runner.Run(ctx, history, prompt, agentCfg, model, enabled, a.handleEvent)
-		a.tv.QueueUpdateDraw(func() {
+		a.postUI(func() {
 			if err != nil {
 				errText := fmt.Sprintf("error: %v", err)
 				if isReasoningRelated(errText) {
@@ -3183,7 +3192,7 @@ func (a *App) launchTurnWithContext(prompt, agentNameOverride, turnContext strin
 // turn (single-flight), and the in-flight agent receives the
 // schedule's instruction as user steering.
 func (a *App) submitScheduled(agentName, prompt string) {
-	a.tv.QueueUpdateDraw(func() {
+	a.postUIWait(func() {
 		a.mu.Lock()
 		if a.busy {
 			select {
@@ -3243,7 +3252,7 @@ func (a *App) appendScheduledMessage(agentName, prompt string) {
 }
 
 func (a *App) handleEvent(event tooling.Event) {
-	a.tv.QueueUpdateDraw(func() {
+	a.postUIWait(func() {
 		switch event.Type {
 		case tooling.EventReasoning:
 			a.assistantState = "thinking"
@@ -4219,7 +4228,7 @@ func (a *App) loadModelsAsync() {
 		ctx, cancel := context.WithTimeout(context.Background(), modelLoadTimeout)
 		defer cancel()
 		models, err := a.listModels(ctx)
-		a.tv.QueueUpdateDraw(func() {
+		a.postUI(func() {
 			if err != nil {
 				a.appendActivity(fmt.Sprintf("["+a.palette.HexViolet+"]model load deferred[-]: %v", err))
 				return
@@ -4288,7 +4297,7 @@ func (a *App) openModelModal() {
 			ctx, cancel := context.WithTimeout(context.Background(), modelLoadTimeout)
 			defer cancel()
 			models, err := a.listModels(ctx)
-			a.tv.QueueUpdateDraw(func() {
+			a.postUI(func() {
 				if err != nil {
 					a.appendActivity(fmt.Sprintf("["+a.palette.HexOrchid+"::b]model load failed[-:-:-]: %v", err))
 					a.closeModal()

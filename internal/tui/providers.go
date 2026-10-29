@@ -220,7 +220,7 @@ func modelFromProviderModels(current string, models []client.ModelInfo) (string,
 func (a *App) checkProviderIntegration(cfg providers.Config) {
 	go func() {
 		count, err := validateProviderIntegration(cfg)
-		a.tv.QueueUpdateDraw(func() {
+		a.postUI(func() {
 			if err != nil {
 				a.appendActivity(fmt.Sprintf("[yellow]Provider %s saved, but integration check failed: %v[-]", cfg.Name, err))
 				return

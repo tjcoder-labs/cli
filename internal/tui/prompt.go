@@ -230,6 +230,11 @@ func (a *App) runPrompt(ctx context.Context, st *promptState) (tools.PromptAnswe
 	if a.tv == nil || a.transcriptPanel == nil {
 		return tools.PromptAnswer{Index: -1, Cancelled: true}, fmt.Errorf("interactive prompt unavailable")
 	}
+	if a.onUIGoroutine() {
+		// Waiting for an answer here would block the very loop that
+		// delivers the keystrokes. Fail fast instead of freezing.
+		return tools.PromptAnswer{Index: -1, Cancelled: true}, fmt.Errorf("interactive prompt requested on the UI goroutine")
+	}
 	result := make(chan tools.PromptAnswer, 1)
 	view := tview.NewTextView().SetDynamicColors(true).SetWrap(true)
 	view.SetBackgroundColor(a.palette.BgInput)
@@ -261,7 +266,7 @@ func (a *App) runPrompt(ctx context.Context, st *promptState) (tools.PromptAnswe
 		redraw()
 		return nil
 	})
-	a.tv.QueueUpdateDraw(func() {
+	a.postUI(func() {
 		prevFocus = a.tv.GetFocus()
 		a.transcriptPanel.AddItem(view, 3, 0, true)
 		redraw()
@@ -272,7 +277,7 @@ func (a *App) runPrompt(ctx context.Context, st *promptState) (tools.PromptAnswe
 	case ans := <-result:
 		return ans, nil
 	case <-ctx.Done():
-		a.tv.QueueUpdateDraw(func() {
+		a.postUI(func() {
 			if !finished {
 				finished = true
 				st.zeroSecret()
@@ -317,11 +322,16 @@ func (a *App) AskSecret(ctx context.Context, title, label string) ([]byte, error
 }
 
 // Record implements tools.Prompter: a dim one-line transcript note.
+// Safe from any goroutine: on the UI event loop (slash commands, key
+// and form handlers) it writes inline; elsewhere it is queued in order
+// without blocking. It must never call tv.QueueUpdate* directly — that
+// blocks until the event loop runs it and deadlocks when the caller is
+// the event loop (the /telemetry freeze).
 func (a *App) Record(text string) {
 	if a.tv == nil || a.transcript == nil {
 		return
 	}
-	a.tv.QueueUpdateDraw(func() {
+	a.postUI(func() {
 		fmt.Fprintf(a.transcript, "\n[%s]◆ %s[-]\n", a.palette.HexDim, tview.Escape(text))
 		a.transcript.ScrollToEnd()
 		if a.activity != nil {
