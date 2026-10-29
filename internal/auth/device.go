@@ -55,6 +55,7 @@ type DeviceStart struct {
 type DeviceResult struct {
 	APIKey         string `json:"api_key"`
 	Email          string `json:"email"`
+	Name           string `json:"name,omitempty"`
 	ExpiresAt      string `json:"expires_at"`
 	BalanceCents   int64  `json:"balance_cents"`
 	WelcomeGranted bool   `json:"welcome_granted"`

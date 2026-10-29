@@ -194,6 +194,8 @@ func (a *App) beginDeviceLogin(email string) {
 				a.showLoginResult("Sign-in didn't complete", loginFailureView(a.palette, f), "Close", nil)
 				return
 			}
+			// Non-secret profile for the per-turn metadata block.
+			_ = auth.SaveErgoIdentity(auth.Identity{Email: res.Email, Name: res.Name})
 			a.swapErgoProvider(res.APIKey)
 			a.setErgoBalanceCents(res.BalanceCents)
 			a.afterErgoLogin()

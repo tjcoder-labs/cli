@@ -279,6 +279,16 @@ type App struct {
 	hintMatches  []slashCommand
 	hintSelected int
 
+	// "@" file-mention picker state (attachments.go). refMatches holds
+	// the filtered workspace files for the trailing "@query" token;
+	// refDismissed is the token text the user cancelled with Esc, so the
+	// palette stays hidden until that token changes. fileIndex caches the
+	// workspace listing for fileIndexTTL.
+	refMatches   []string
+	refDismissed string
+	fileIndex    []string
+	fileIndexAt  time.Time
+
 	// multiLineInput is true while the input field contains a newline
 	// (e.g. a pasted multi-line block). It suppresses the command /
 	// reference palette so the hint line can show a "multi-line" cue.
@@ -707,6 +717,10 @@ func (a *App) build() {
 		// When hintMode is "command" (slash palette), Up/Down still
 		// navigate history rather than the palette — Tab/Shift+Tab
 		// remain the palette navigation keys.
+		// "@" file picker: Up/Down move, Tab/Enter select, Esc cancels.
+		if ev, handled := a.handleReferenceKey(event); handled {
+			return ev
+		}
 		switch event.Key() {
 		case tcell.KeyUp:
 			a.navigateInputHistory(-1)
@@ -1403,14 +1417,13 @@ func (a *App) updateInputHint(text string) {
 		if a.hintSelected >= len(matches) {
 			a.hintSelected = 0
 		}
-	case strings.HasPrefix(text, "@"):
-		a.hintMode = "reference"
-		a.hintMatches = nil
-		a.hintSelected = 0
+	case a.updateReferenceHint(text):
+		// "@query" being typed: reference palette (state set inside).
 	default:
 		a.hintMode = ""
 		a.hintMatches = nil
 		a.hintSelected = 0
+		a.refMatches = nil
 	}
 }
 
@@ -1504,13 +1517,6 @@ func (a *App) renderCommandPalette() string {
 	}
 	b.WriteString(" ")
 	return b.String()
-}
-
-// renderReferencePalette is a placeholder for the forthcoming "@" file
-// reference picker. Until a workspace file index is wired up, it simply
-// advertises the feature so the mode is discoverable.
-func (a *App) renderReferencePalette() string {
-	return fmt.Sprintf(" [%s]@ file references — coming soon[-] ", a.palette.HexFaint)
 }
 
 // renderMultiLineHint renders the hint line while the input field holds a
@@ -3033,12 +3039,22 @@ func (a *App) submit() {
 	a.assistantStamp = ""
 	a.mu.Unlock()
 
+	// "@path" mentions become attachments (persisted with the message so
+	// follow-ups still see the file). The <tui_context> block is built now,
+	// from the live layout, and is ephemeral: it rides on the request only.
+	atts := loadAttachments(a.workspaceRoot, mentionedPaths(prompt), attachMaxFileBytes, attachMaxTotalBytes)
+	turnCtx := a.buildTurnContext(atts)
+	modelPrompt := prompt
+	if block := formatAttachmentsBlock(atts); block != "" {
+		modelPrompt = prompt + "\n\n" + block
+	}
+
 	a.startSpinner()
 	a.input.SetText("")
 	a.setInputPlaceholder()
 	a.refreshFooter()
 	a.refreshContextBar()
-	a.appendUserMessage(prompt)
+	a.appendUserMessage(modelPrompt)
 	a.appendAssistantTurnLabel()
 	a.transcript.ScrollToEnd()
 	a.clearReasoningSplash()
@@ -3061,7 +3077,7 @@ func (a *App) submit() {
 		a.mu.Unlock()
 	}
 
-	a.launchTurn(prompt, "")
+	a.launchTurnWithContext(modelPrompt, "", turnCtx)
 }
 
 // launchTurn runs one agent turn as a background goroutine against a
@@ -3073,6 +3089,13 @@ func (a *App) submit() {
 // scheduled turn does is visible to (and remembered by) the main
 // agent on subsequent turns — the user never has to restate context.
 func (a *App) launchTurn(prompt, agentNameOverride string) {
+	a.launchTurnWithContext(prompt, agentNameOverride, "")
+}
+
+// launchTurnWithContext is launchTurn plus an ephemeral <tui_context>
+// block that the runner attaches to the latest user message of each
+// request (never to stored history). "" sends no block.
+func (a *App) launchTurnWithContext(prompt, agentNameOverride, turnContext string) {
 	enabled := a.enabledToolList()
 	history := append([]client.Message(nil), a.history...)
 	agentCfg := a.currentAgent
@@ -3109,6 +3132,7 @@ func (a *App) launchTurn(prompt, agentNameOverride string) {
 		// infinite hangs that require shell termination.
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 		defer cancel()
+		ctx = tooling.WithTurnContext(ctx, turnContext)
 		nextHistory, err := a.runner.Run(ctx, history, prompt, agentCfg, model, enabled, a.handleEvent)
 		a.tv.QueueUpdateDraw(func() {
 			if err != nil {
@@ -3692,7 +3716,7 @@ func (a *App) appendUserMessage(prompt string) {
 	a.clearStartupSplash()
 	// Timestamp above the user attribution, matching the assistant label style.
 	fmt.Fprintf(a.transcript, "[%s]%s[-]\n", a.palette.HexDim, formatTimestamp(time.Now()))
-	fmt.Fprint(a.transcript, a.renderUserMessage(prompt))
+	fmt.Fprint(a.transcript, a.renderUserTurn(prompt))
 }
 
 func (a *App) clearStartupSplash() {

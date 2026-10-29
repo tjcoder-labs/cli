@@ -556,6 +556,11 @@ func (r *Runner) runChatTurn(ctx context.Context, model, systemPrompt string, hi
 		m.Thinking = ""
 		sanitized[i] = m
 	}
+	// Ephemeral turn metadata (WithTurnContext) rides only on the latest
+	// user message of this request copy; stored history stays clean.
+	if block := TurnContextFrom(ctx); block != "" {
+		sanitized = ApplyTurnContext(sanitized, block)
+	}
 	req := client.ChatRequest{
 		Model: model,
 		Messages: append([]client.Message{

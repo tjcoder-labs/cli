@@ -120,7 +120,7 @@ func (a *App) renderTranscriptFromEntries(entries []session.TranscriptEntry) {
 		role := strings.ToLower(e.Role)
 		switch role {
 		case "user", "you":
-			b.WriteString(a.renderUserMessage(e.Content))
+			b.WriteString(a.renderUserTurn(e.Content))
 		case "assistant":
 			content := stripThinkBlocks(e.Content)
 			if content == "" {
