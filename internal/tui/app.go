@@ -277,6 +277,7 @@ type App struct {
 	previousAgentDefaultModel string   // tracks the last agent's default model so switching agents can swap models
 	models                    []client.ModelInfo
 	enabledTools              map[string]bool
+	livePrompt                *livePrompt // mounted prompt card, UI goroutine only
 	history                   []client.Message
 	busy                      bool
 	ctxUsage                  client.ContextUsage
@@ -2844,6 +2845,7 @@ func (a *App) afterDraw(tcell.Screen) {
 	// fullscreen toggle). The re-render is queued, never run inside
 	// the draw pass.
 	a.checkCanvasWidth()
+	a.checkPromptWidth()
 }
 
 // checkCanvasWidth runs after every draw. When the canvas is showing a

@@ -38,7 +38,7 @@ func TestPromptStateArrowsWrapAndEnter(t *testing.T) {
 
 func TestPromptStateEscCancels(t *testing.T) {
 	s := newChoicePrompt(tools.PromptRequest{Kind: tools.PromptAuthorization, Options: []string{"Allow", "Deny"}})
-	if !strings.Contains(s.render(darkPalette()), "Esc to deny") {
+	if !strings.Contains(s.render(darkPalette(), 80), "Esc to deny") {
 		t.Fatal("authorization prompt should say Esc denies")
 	}
 	done, ans := s.handleKey(key(tcell.KeyEscape))
@@ -79,7 +79,7 @@ func TestPromptStateSecretMaskedAndZeroed(t *testing.T) {
 		s.handleKey(ch(r))
 	}
 	s.handleKey(key(tcell.KeyBackspace2))
-	out := s.render(darkPalette())
+	out := s.render(darkPalette(), 80)
 	if strings.Contains(out, "pä5") || !strings.Contains(out, "•••") || strings.Contains(out, "••••") {
 		t.Fatalf("secret must render as one bullet per rune: %q", out)
 	}

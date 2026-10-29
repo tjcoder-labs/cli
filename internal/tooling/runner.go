@@ -284,7 +284,14 @@ func (r *Runner) run(ctx context.Context, history []client.Message, prompt strin
 	}
 	history = append(history, client.Message{Role: "user", Content: prompt})
 	defs := r.Registry.Definitions(enabledTools)
+	offered := make(map[string]bool, len(defs))
+	for _, d := range defs {
+		offered[d.Function.Name] = true
+	}
 	systemPrompt := agentCfg.Prompt
+	if offered["ask_user"] {
+		systemPrompt += "\n\n" + tools.AskUserGuidance
+	}
 	if injected := loadAgentsPrompt(r.WorkspaceRoot); injected != "" {
 		systemPrompt += "\n\nRepository instructions from AGENTS.md (auto-injected):\n" + injected
 	}
@@ -417,16 +424,34 @@ func (r *Runner) run(ctx context.Context, history []client.Message, prompt strin
 				})
 			}
 			toolStart := time.Now()
-			result, err := r.Registry.Execute(ctx, call.Function.Name, call.Function.Arguments, tools.ExecEnv{
-				WorkspaceRoot:  r.WorkspaceRoot,
-				Provider:       r.Provider,
-				Sink:           r.HighlightSink,
-				CommandSink:    r.CLICommandSink,
-				SessionState:   r.SessionState,
-				PersistSession: r.PersistSession,
-				Prompter:       r.Prompter,
-				Sudo:           r.Sudo,
-			})
+			// Only tools offered this turn may run: a model (or the
+			// fallback parser) naming a disabled tool gets an error
+			// result instead of executing it. Tool-less runs (the
+			// cognition recap, compaction) offer none, so they can
+			// never pop an ask_user card or run a command.
+			toolCtx, stopWatch := ctx, func() {}
+			if call.Function.Name == "ask_user" {
+				// A question blocks on the user; a steering message
+				// sent instead of an answer must unblock it.
+				toolCtx, stopWatch = r.watchSteering(ctx)
+			}
+			var result tools.Result
+			var err error
+			if !offered[call.Function.Name] {
+				err = fmt.Errorf("tool %q is not enabled for this turn", call.Function.Name)
+			} else {
+				result, err = r.Registry.Execute(toolCtx, call.Function.Name, call.Function.Arguments, tools.ExecEnv{
+					WorkspaceRoot:  r.WorkspaceRoot,
+					Provider:       r.Provider,
+					Sink:           r.HighlightSink,
+					CommandSink:    r.CLICommandSink,
+					SessionState:   r.SessionState,
+					PersistSession: r.PersistSession,
+					Prompter:       r.Prompter,
+					Sudo:           r.Sudo,
+				})
+			}
+			stopWatch()
 			if r.Observer != nil {
 				r.Observer.ToolDone(call.Function.Name, err, time.Since(toolStart))
 			}
@@ -504,6 +529,36 @@ func (r *Runner) run(ctx context.Context, history []client.Message, prompt strin
 		onEvent(contextEvent(ctxTrack.assistant(history)))
 	}
 	return history, nil
+}
+
+// watchSteering returns a child of ctx that is cancelled with cause
+// tools.ErrSteered when a steering message arrives (the message is kept
+// in r.pendingSteering for the next loop iteration). stop must be
+// called when the tool returns; it waits for the watcher to exit, so
+// no goroutine outlives the tool and pendingSteering is never written
+// concurrently with the main loop.
+func (r *Runner) watchSteering(ctx context.Context) (context.Context, func()) {
+	if r.Steering == nil {
+		return ctx, func() {}
+	}
+	cctx, cancel := context.WithCancelCause(ctx)
+	done := make(chan struct{})
+	exited := make(chan struct{})
+	go func() {
+		defer close(exited)
+		select {
+		case s := <-r.Steering:
+			r.pendingSteering = s
+			cancel(tools.ErrSteered)
+		case <-done:
+		case <-cctx.Done():
+		}
+	}()
+	return cctx, func() {
+		close(done)
+		<-exited
+		cancel(nil)
+	}
 }
 
 func (r *Runner) runChatTurn(ctx context.Context, model, systemPrompt string, history []client.Message, defs []client.ToolDefinition, onEvent func(Event)) (client.Message, error) {

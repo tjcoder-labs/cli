@@ -1,0 +1,54 @@
+== sudo_live
+▎
+▎  SUDO
+▎  The agent wants to run a command with sudo.
+▎    $ apt-get install -y ripgrep
+▎
+▎  › 1. Allow once
+▎    2. Allow sudo for this session
+▎    3. Deny
+▎
+▎  1-9 or ↑↓ Enter to choose · Esc to deny
+▎
+== ask_live
+▎
+▎  DEPLOY TARGET
+▎  Which environment should I deploy to?
+▎
+▎  › 1. staging
+▎    2. production
+▎        live traffic
+▎    3. Other…
+▎
+▎  1-9 or ↑↓ Enter to choose · Esc to dismiss
+▎
+== sudo_answered
+▎
+▎  SUDO
+▎  The agent wants to run a command with sudo.
+▎    $ apt-get install -y ripgrep
+▎
+▎  ✓ Allow once
+▎
+== ask_answered
+▎
+▎  DEPLOY TARGET
+▎  Which environment should I deploy to?
+▎
+▎  ✓ “staging first”
+▎
+== ask_dismissed
+▎
+▎  DEPLOY TARGET
+▎  Which environment should I deploy to?
+▎
+▎  • dismissed · the agent will proceed without an answer
+▎
+== sudo_denied
+▎
+▎  SUDO
+▎  The agent wants to run a command with sudo.
+▎    $ apt-get install -y ripgrep
+▎
+▎  ✗ denied · dismissed with Esc
+▎
