@@ -413,6 +413,8 @@ func New(provider client.Provider, registry *tools.Registry, workspaceRoot, mode
 	}
 	// Set up sinks for tool integration (highlight_code, invoke_cli_command, etc.)
 	app.runner.CLICommandSink = app
+	app.runner.Prompter = app
+	app.runner.Sudo = &tools.SudoPolicy{}
 	trackReg := tracking.NewRegistry()
 	trackReg.Register(tracking.NewTaskTracker())
 	trackReg.Register(tracking.NewMemoryTracker())

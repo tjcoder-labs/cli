@@ -70,6 +70,11 @@ type Runner struct {
 	CLICommandSink tools.CLICommandSink
 	SessionState   *session.State
 	PersistSession func() error
+	// Prompter lets tools ask the user inline questions (TUI only);
+	// Sudo carries the sudo authorization policy. Both nil headless
+	// unless --allow-sudo sets Sudo.
+	Prompter tools.Prompter
+	Sudo     *tools.SudoPolicy
 
 	// Steering, if non-nil, is a buffered channel of user
 	// mid-turn steering messages. The runner drains it at two
@@ -390,6 +395,8 @@ func (r *Runner) Run(ctx context.Context, history []client.Message, prompt strin
 				CommandSink:    r.CLICommandSink,
 				SessionState:   r.SessionState,
 				PersistSession: r.PersistSession,
+				Prompter:       r.Prompter,
+				Sudo:           r.Sudo,
 			})
 			if err != nil {
 				errText := fmt.Sprintf("tool %s failed: %v", call.Function.Name, err)

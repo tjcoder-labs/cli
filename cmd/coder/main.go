@@ -116,6 +116,7 @@ func main() {
 	askToolMax := flag.Int("tool-max", 0, "headless ask mode: maximum number of tool calls (persisted in session)")
 	askFormat := flag.String("format", "text", "headless ask mode: coerce model output — one of {text, json, xml}. For json/xml the response is extracted, validated, and pretty-printed; tool activity remains enabled unless --no-tools is also set.")
 	flag.StringVar(askFormat, "output-format", "", "alias for --format (overrides --format when set)")
+	askAllowSudo := flag.Bool("allow-sudo", false, "headless ask mode: let run_command use sudo non-interactively (sudo -n; never prompts for a password)")
 
 	flag.Parse()
 
@@ -193,6 +194,7 @@ func main() {
 				Session:       *askSession,
 				ToolMax:       askToolMax,
 				Format:        resolveFormatFlag(*askFormat),
+				AllowSudo:     *askAllowSudo,
 				ExplicitAgent: explicitAgent,
 				ExplicitModel: explicitModel,
 				ExplicitTools: explicitNoTools || explicitAllTools,
@@ -235,6 +237,7 @@ func main() {
 			Session:       *askSession,
 			ToolMax:       askToolMax,
 			Format:        resolveFormatFlag(*askFormat),
+			AllowSudo:     *askAllowSudo,
 			ExplicitAgent: explicitAgent,
 			ExplicitModel: explicitModel,
 			ExplicitTools: explicitNoTools || explicitAllTools,
@@ -560,6 +563,9 @@ type askOptions struct {
 	// per-provider "format" parameters so it works uniformly across
 	// Ollama, Gemini, and any future provider.
 	Format string
+	// AllowSudo lets run_command use sudo non-interactively (sudo -n).
+	// Without it, headless sudo commands are denied.
+	AllowSudo bool
 }
 
 // cmdAsk runs a single prompt end-to-end without launching the tview TUI.
@@ -756,6 +762,7 @@ func cmdAsk(opts askOptions) {
 		Registry:      registry,
 		WorkspaceRoot: filepath.Clean(opts.WorkspaceRoot),
 		MaxSteps:      8,
+		Sudo:          &tools.SudoPolicy{AllowNonInteractive: opts.AllowSudo},
 	}
 
 	// Override default MaxSteps if provided in session or via flag.

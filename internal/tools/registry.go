@@ -32,6 +32,13 @@ type ExecEnv struct {
 	// other session-scoped metadata outside the active turn.
 	SessionState   *session.State
 	PersistSession func() error
+	// Prompter, when non-nil, lets tools ask the user numbered-choice
+	// questions and authorizations inline in the transcript (ask_user,
+	// the sudo gate). nil means headless: tools must not block on a user.
+	Prompter Prompter
+	// Sudo is the process-wide sudo policy (session approval state and
+	// the headless --allow-sudo opt-in). nil denies sudo.
+	Sudo *SudoPolicy
 }
 
 // HighlightSink returns the /code panel sink wired to this env, or
@@ -87,6 +94,7 @@ func NewRegistry(provider client.Provider) *Registry {
 		researchNoteTool{},
 		cloudflareTool{},
 		resendTool{},
+		askUserTool{},
 	} {
 		r.tools[tool.Definition().Function.Name] = tool
 	}

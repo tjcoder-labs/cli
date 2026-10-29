@@ -40,10 +40,11 @@ func truncateOutput(text string) string {
 	return head + "\n...[truncated]...\n" + tail
 }
 
+// safeCommand rejects obviously destructive patterns. sudo is not in
+// this list: it is routed through the sudo gate (sudo.go) instead.
 func safeCommand(command string) error {
 	lower := strings.ToLower(command)
 	for _, banned := range []string{
-		"sudo ",
 		" rm -rf /",
 		"rm -rf /",
 		"shutdown",
@@ -105,6 +106,26 @@ func (runCommandTool) Execute(ctx context.Context, raw json.RawMessage, env Exec
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	shellCmd := args.Command
+	var sudoGrantEnv []string
+	sudoNote := ""
+	if IsSudoCommand(args.Command) {
+		if args.Background {
+			return Result{}, fmt.Errorf("%w: sudo is not supported for background commands; run it in the foreground", errSudoDenied)
+		}
+		grant, err := authorizeSudo(ctx, args.Command, env)
+		if err != nil {
+			return Result{Content: err.Error(), Preview: "sudo denied"}, err
+		}
+		defer grant.Close()
+		sudoGrantEnv = grant.Env
+		sudoNote = grant.Note
+		shellCmd = sudoPrelude + args.Command
+	}
+	// While a gate-primed sudo ticket may be live, run anything that was
+	// not authorized for sudo in its own session (no controlling tty) so
+	// it cannot reuse the ticket.
+	detach := sudoGrantEnv == nil && env.Sudo.TicketMayBeLive()
 	if args.Background {
 		if env.SessionState == nil || env.PersistSession == nil {
 			return Result{Content: "Background execution unavailable: session persistence is not configured.", Preview: "background unavailable"}, nil
@@ -140,6 +161,9 @@ func (runCommandTool) Execute(ctx context.Context, raw json.RawMessage, env Exec
 		}
 		runCtx, cancel := context.WithTimeout(context.Background(), bgTimeout)
 		cmd := exec.CommandContext(runCtx, "bash", "-lc", args.Command)
+		if detach {
+			detachFromTerminal(cmd, false)
+		}
 		if args.Cwd != "" {
 			cmd.Dir = resolvePath(env.WorkspaceRoot, args.Cwd)
 		} else {
@@ -184,11 +208,17 @@ func (runCommandTool) Execute(ctx context.Context, raw json.RawMessage, env Exec
 
 	runCtx, cancel := context.WithTimeout(ctx, time.Duration(args.TimeoutSeconds)*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(runCtx, "bash", "-lc", args.Command)
+	cmd := exec.CommandContext(runCtx, "bash", "-lc", shellCmd)
 	if args.Cwd != "" {
 		cmd.Dir = resolvePath(env.WorkspaceRoot, args.Cwd)
 	} else {
 		cmd.Dir = filepath.Clean(env.WorkspaceRoot)
+	}
+	if sudoGrantEnv != nil {
+		cmd.Env = append(os.Environ(), sudoGrantEnv...)
+	}
+	if detach {
+		detachFromTerminal(cmd, args.UsePty)
 	}
 
 	if args.UsePty {
@@ -233,7 +263,7 @@ func (runCommandTool) Execute(ctx context.Context, raw json.RawMessage, env Exec
 			<-done
 		}
 
-		text := truncateOutput(buf.String())
+		text := withSudoNote(sudoNote, truncateOutput(buf.String()))
 		if cmd.ProcessState != nil && !cmd.ProcessState.Success() {
 			return Result{Content: text, Preview: preview(text)}, fmt.Errorf("command failed: exit code %d", cmd.ProcessState.ExitCode())
 		}
@@ -241,11 +271,20 @@ func (runCommandTool) Execute(ctx context.Context, raw json.RawMessage, env Exec
 	}
 
 	out, err := cmd.CombinedOutput()
-	text := truncateOutput(string(out))
+	text := withSudoNote(sudoNote, truncateOutput(string(out)))
 	if err != nil {
 		return Result{Content: text, Preview: preview(text)}, fmt.Errorf("command failed: %w", err)
 	}
 	return Result{Content: text, Preview: preview(text)}, nil
+}
+
+// withSudoNote prefixes command output with the recorded sudo decision
+// (never any credential) so the model and session history see it.
+func withSudoNote(note, text string) string {
+	if note == "" {
+		return text
+	}
+	return note + "\n" + text
 }
 
 type backgroundJobTool struct{}
