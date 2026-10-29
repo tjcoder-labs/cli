@@ -2244,7 +2244,6 @@ func (a *App) openConfigModal() {
 		AddItem(infoView, 7, 0, false).
 		AddItem(spacerBox(bg), 1, 0, false).
 		AddItem(form, 0, 1, true).
-		AddItem(spacerBox(bg), 1, 0, false).
 		AddItem(help, 1, 0, false)
 	body.SetBackgroundColor(bg)
 
