@@ -32,6 +32,7 @@ func (a *App) startBackground(ctx context.Context) {
 	for _, h := range backgroundHooks {
 		go h(ctx, a)
 	}
+	go a.startTelemetry(ctx)
 	if reason := update.Disabled(false); reason == "" {
 		go a.backgroundUpdateCheck(ctx)
 	}

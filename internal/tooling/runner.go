@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
+
 	"github.com/tjcoder-labs/cli/internal/agent"
 	"github.com/tjcoder-labs/cli/internal/client"
 	"github.com/tjcoder-labs/cli/internal/memories"
@@ -59,8 +61,17 @@ type Event struct {
 	Text     string
 }
 
+// Observer receives anonymous timing/outcome signals (telemetry). It
+// never sees prompts, arguments, or tool output.
+type Observer interface {
+	ToolDone(name string, err error, d time.Duration)
+	TurnDone(d time.Duration, promptTokens, outputTokens int, err error)
+}
+
 type Runner struct {
 	Provider      client.Provider
+	// Observer, when non-nil, is told about each tool call and turn.
+	Observer Observer
 	Registry      *tools.Registry
 	WorkspaceRoot string
 	MaxSteps      int
@@ -249,6 +260,23 @@ func (p *thoughtParser) Flush() (reasoning, commentary string) {
 }
 
 func (r *Runner) Run(ctx context.Context, history []client.Message, prompt string, agentCfg agent.Config, model string, enabledTools []string, onEvent func(Event)) ([]client.Message, error) {
+	if r.Observer == nil {
+		return r.run(ctx, history, prompt, agentCfg, model, enabledTools, onEvent)
+	}
+	start := time.Now()
+	out, err := r.run(ctx, history, prompt, agentCfg, model, enabledTools, onEvent)
+	var in, gen int
+	for i := len(out) - 1; i >= len(history); i-- {
+		if out[i].Role == "assistant" {
+			in, gen = out[i].PromptEvalCount, out[i].EvalCount
+			break
+		}
+	}
+	r.Observer.TurnDone(time.Since(start), in, gen, err)
+	return out, err
+}
+
+func (r *Runner) run(ctx context.Context, history []client.Message, prompt string, agentCfg agent.Config, model string, enabledTools []string, onEvent func(Event)) ([]client.Message, error) {
 	if r.MaxSteps <= 0 {
 		r.MaxSteps = defaultMaxToolSteps
 	}
@@ -388,6 +416,7 @@ func (r *Runner) Run(ctx context.Context, history []client.Message, prompt strin
 					Text:     strings.TrimSpace(string(call.Function.Arguments)),
 				})
 			}
+			toolStart := time.Now()
 			result, err := r.Registry.Execute(ctx, call.Function.Name, call.Function.Arguments, tools.ExecEnv{
 				WorkspaceRoot:  r.WorkspaceRoot,
 				Provider:       r.Provider,
@@ -398,6 +427,9 @@ func (r *Runner) Run(ctx context.Context, history []client.Message, prompt strin
 				Prompter:       r.Prompter,
 				Sudo:           r.Sudo,
 			})
+			if r.Observer != nil {
+				r.Observer.ToolDone(call.Function.Name, err, time.Since(toolStart))
+			}
 			if err != nil {
 				errText := fmt.Sprintf("tool %s failed: %v", call.Function.Name, err)
 				if onEvent != nil {

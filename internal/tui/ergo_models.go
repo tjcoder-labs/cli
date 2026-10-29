@@ -69,6 +69,7 @@ func (a *App) applyErgoModels(names []string) string {
 func (a *App) selectModel(name string) {
 	a.currentModel = name
 	a.modelChosen = true
+	emit("model_selected", map[string]any{"model": name, "provider_type": ProviderType(a.provider)})
 	if !a.isErgoProvider() || client.ErgoModelAllowed(name, a.ergoAvailable()) {
 		_ = session.SetModelForProvider(client.ProviderKey(a.provider), name)
 	}

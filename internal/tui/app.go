@@ -171,6 +171,7 @@ var slashCommands = []slashCommand{
 	{"mcp", "Manage MCP integrations"},
 	{"providers", "Manage model providers"},
 	{"update", "Check for and install a coder update"},
+	{"telemetry", "Anonymous usage stats: on, off or status"},
 }
 
 type App struct {
@@ -1838,6 +1839,12 @@ func (a *App) handleSlashCommand(cmd string) {
 		return
 	}
 	command := strings.ToLower(parts[0])
+	for _, sc := range slashCommands {
+		if sc.cmd == command {
+			emit("command_used", map[string]any{"command": command})
+			break
+		}
+	}
 	switch command {
 	case "agent":
 		a.openAgentModal()
@@ -1876,6 +1883,8 @@ func (a *App) handleSlashCommand(cmd string) {
 		a.clearSession()
 	case "compact":
 		a.compactHistory(parts)
+	case "telemetry":
+		a.handleTelemetryCommand(parts)
 	case "update":
 		go a.runUpdate(parts)
 	case "quit":

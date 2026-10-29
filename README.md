@@ -233,6 +233,14 @@ The `/environment` editor controls the context block injected ahead of every tur
 
 Unknown tokens are left untouched so typos are easy to spot. Save to persist to `.ergo-cli-go/environment.tmpl`; saving the built-in default removes the file so you always track upstream changes.
 
+### Telemetry
+
+Coder sends anonymous usage stats (PostHog), crash reports (Sentry) and an install/usage heartbeat to the ergo gateway (`POST /cli/heartbeat`) so we can see what breaks and how many installs are active. Every event is keyed by a random install id stored in `~/.config/tjcoder/coder-cli/settings.json`. Prompts, code, file paths, tool arguments, emails and keys are never sent. Error messages are scrubbed of paths, URLs, emails and tokens.
+
+- `coder telemetry status|off|on` or `/telemetry` in the TUI. Turning it off stops all three, including a running TUI's heartbeat.
+- `DO_NOT_TRACK=1` or `CODER_TELEMETRY=0` disables everything. Telemetry is always off in CI.
+- The heartbeat (`install` once, `session_start`, then every 2 minutes) only runs in the interactive TUI. Headless `-p`/`ask` runs only send usage stats after you have seen the first-run notice in the TUI.
+
 ## How It Works
 
 1. **Context injection** — runtime environment, repository instructions (`AGENTS.md` / `CODER.md`), and memories are composed into the system prompt.

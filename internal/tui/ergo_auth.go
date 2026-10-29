@@ -123,6 +123,7 @@ func (a *App) beginDeviceLogin(email string) {
 	dc := deviceClient()
 	go func() {
 		fail := func(err error) {
+			emit("login_result", map[string]any{"ok": false, "method": "device"})
 			a.tv.QueueUpdateDraw(func() {
 				if ctx.Err() != nil {
 					return
@@ -180,6 +181,7 @@ func (a *App) beginDeviceLogin(email string) {
 			return
 		}
 		saveErr := auth.SaveErgoToken(res.APIKey)
+		emit("login_result", map[string]any{"ok": saveErr == nil, "method": "device"})
 		a.tv.QueueUpdateDraw(func() {
 			finish()
 			if saveErr != nil {

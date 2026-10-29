@@ -8,6 +8,9 @@ set -euo pipefail
 VERSION=$(python3 -c 'import json; print(json.load(open("package.json"))["version"])')
 PRODUCT=$(python3 -c 'import json; d=json.load(open("package.json")); print(d.get("productName") or d.get("name") or "Coder CLI")')
 AUTHOR=$(python3 -c 'import json; print(json.load(open("package.json"))["author"])')
+# Telemetry keys come from the environment; empty = telemetry no-op.
+POSTHOG_HOST="${POSTHOG_HOST:-https://us.i.posthog.com}"
+TELEMETRY_LDFLAGS="-X 'main.sentryDSN=${SENTRY_DSN:-}' -X 'main.posthogKey=${POSTHOG_KEY:-}' -X 'main.posthogHost=${POSTHOG_HOST}'"
 LDFLAGS="-X main.version=${VERSION} -X main.productName=${PRODUCT} -X main.author=${AUTHOR}"
 
 # go:embed staging (mirrors Makefile)
@@ -36,7 +39,7 @@ for t in "${targets[@]}"; do
   echo "==> building ${GOOS}/${GOARCH}"
   CGO_ENABLED=0 GOOS=$GOOS GOARCH=$GOARCH \
     go build -trimpath \
-      -ldflags "-X 'main.version=${VERSION}' -X 'main.productName=${PRODUCT}' -X 'main.author=${AUTHOR}' -X 'main.buildMethod=binary'" \
+      -ldflags "-X 'main.version=${VERSION}' -X 'main.productName=${PRODUCT}' -X 'main.author=${AUTHOR}' -X 'main.buildMethod=binary' ${TELEMETRY_LDFLAGS}" \
       -o "$OUT/$bin" ./cmd/coder
 
   a1="coder-${GOOS}-${GOARCH}${ext}"

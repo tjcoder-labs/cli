@@ -21,6 +21,7 @@ import (
 	ctxpkg "github.com/tjcoder-labs/cli/internal/context"
 	"github.com/tjcoder-labs/cli/internal/reminders"
 	"github.com/tjcoder-labs/cli/internal/session"
+	"github.com/tjcoder-labs/cli/internal/telemetry"
 	"github.com/tjcoder-labs/cli/internal/tooling"
 	"github.com/tjcoder-labs/cli/internal/tools"
 	"github.com/tjcoder-labs/cli/internal/tracking"
@@ -148,6 +149,10 @@ func main() {
 	savedProvider, _ := session.GetProvider()
 	*providerName = resolveProvider(autoProviderInputs(*providerName, savedProvider, *host, !headless))
 
+	tel := startTelemetry(headless)
+	defer tel.Close()
+	defer tel.Recover()
+
 	if flag.NArg() > 0 {
 		switch flag.Arg(0) {
 		case "version", "-v", "--version":
@@ -156,6 +161,9 @@ func main() {
 			return
 		case "update":
 			cmdUpdate(flag.Args()[1:])
+			return
+		case "telemetry":
+			cmdTelemetry(flag.Args()[1:])
 			return
 		case "models":
 			cmdModels(flag.Args()[1:], *providerName, *host, *geminiKey, *timeout)
@@ -266,6 +274,8 @@ func main() {
 
 	registry := tools.NewRegistry(provider)
 	app := tui.New(provider, registry, filepath.Clean(*workspaceRoot), modelOverride, productName, author, version)
+	app.SetObserver(telemetry.RunnerObserver{})
+	telemetry.Track("session_started", map[string]any{"provider_type": tui.ProviderType(provider), "mode": "tui"})
 	if err := app.Run(); err != nil {
 		fatal("%v", err)
 	}
@@ -766,7 +776,9 @@ func cmdAsk(opts askOptions) {
 		WorkspaceRoot: filepath.Clean(opts.WorkspaceRoot),
 		MaxSteps:      8,
 		Sudo:          &tools.SudoPolicy{AllowNonInteractive: opts.AllowSudo},
+		Observer:      telemetry.RunnerObserver{},
 	}
+	telemetry.Track("session_started", map[string]any{"provider_type": tui.ProviderType(provider), "mode": "headless"})
 
 	// Override default MaxSteps if provided in session or via flag.
 	maxSteps := 8
