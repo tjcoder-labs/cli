@@ -808,17 +808,7 @@ func (a *App) build() {
 	}
 	main.SetBackgroundColor(a.palette.BgRoot)
 
-	// Treat the entire prompt shell as a single bgInput-backed component so
-	// the input field and its status line read as one cohesive surface.
-	inputSurface := a.newInputSurface()
-
-	// Inset the prompt bar horizontally using the same standard margin as
-	// the panels above (marginX), matching the earlier stable layout.
-	inputRow := tview.NewFlex().
-		AddItem(spacerBox(a.palette.BgRoot), marginX-1, 0, false).
-		AddItem(inputSurface, 0, 1, true).
-		AddItem(spacerBox(a.palette.BgRoot), marginX, 0, false)
-	inputRow.SetBackgroundColor(a.palette.BgRoot)
+	inputRow := a.newInputRow()
 	a.inputRow = inputRow
 
 	headerRow := tview.NewFlex().
@@ -1155,6 +1145,24 @@ func spacerBox(bg tcell.Color) *tview.Box {
 	return b
 }
 
+// newInputRow insets the prompt surface horizontally. The left beam sits
+// in the last column of the standard marginX inset, and the right inset
+// mirrors the left one (marginX-1 BgRoot columns) so both ends of every
+// surface row carry the same number of edge columns.
+func (a *App) newInputRow() *tview.Flex {
+	// Treat the entire prompt shell as a single bgInput-backed component so
+	// the input field and its status line read as one cohesive surface.
+	row := tview.NewFlex().
+		AddItem(spacerBox(a.palette.BgRoot), marginX-1, 0, false).
+		AddItem(a.newInputSurface(), 0, 1, true).
+		AddItem(spacerBox(a.palette.BgRoot), marginX-1, 0, false)
+	row.SetBackgroundColor(a.palette.BgRoot)
+	return row
+}
+
+// newInputSurface builds the bgInput-backed prompt surface. Its edges are
+// symmetric on every row: the beam plus marginX-1 bgInput columns on the
+// left, marginX bgInput columns on the right.
 func (a *App) newInputSurface() *tview.Flex {
 	inner := tview.NewFlex().SetDirection(tview.FlexRow).
 		AddItem(a.input, 3, 0, true).

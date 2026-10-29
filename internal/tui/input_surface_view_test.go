@@ -21,10 +21,7 @@ func renderInputRowMask(t *testing.T, width int) []string {
 	a.contextBar.SetBackgroundColor(a.palette.BgInput)
 	a.contextBar.SetBorderPadding(1, 1, 2, 2)
 	a.contextBar.SetText("● ~/src/coder  ctx 12K / 128K")
-	row := tview.NewFlex().
-		AddItem(spacerBox(a.palette.BgRoot), marginX-1, 0, false).
-		AddItem(a.newInputSurface(), 0, 1, true).
-		AddItem(spacerBox(a.palette.BgRoot), marginX, 0, false)
+	row := a.newInputRow()
 	layout := tview.NewFlex().SetDirection(tview.FlexRow).
 		AddItem(row, inputRowHeight, 0, true).
 		AddItem(spacerBox(a.palette.BgRoot), 1, 0, false)
@@ -69,12 +66,12 @@ func renderInputRowMask(t *testing.T, width int) []string {
 func TestInputSurfaceGolden(t *testing.T) {
 	got := strings.Join(renderInputRowMask(t, 40), "\n")
 	want := strings.Join([]string{
-		"..│░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░...",
-		"..│░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░...",
-		"..│░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░...",
-		"..│░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░...",
-		"..│░░░░x░xxxxxxxxxxx░░xxx░xxx░x░░░░░░...",
-		"..│░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░...",
+		"..│░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░..",
+		"..│░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░..",
+		"..│░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░..",
+		"..│░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░..",
+		"..│░░░░x░xxxxxxxxxxx░░xxx░xxx░x░x░░░░░..",
+		"..│░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░..",
 		"........................................",
 	}, "\n")
 	if got != want {
