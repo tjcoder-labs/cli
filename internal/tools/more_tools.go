@@ -347,8 +347,7 @@ func (reminderTool) Execute(_ context.Context, raw json.RawMessage, env ExecEnv)
 		args.Agent = "social-researcher"
 	}
 
-	store := reminders.NewStore()
-	_, entry, err := store.Create(env.WorkspaceRoot, reminders.CreateInput{
+	entry, err := CreateReminder(env, reminders.CreateInput{
 		CronExpr:    args.CronExpr,
 		Message:     args.Message,
 		InstallCron: args.InstallCron,
@@ -359,12 +358,6 @@ func (reminderTool) Execute(_ context.Context, raw json.RawMessage, env ExecEnv)
 	})
 	if err != nil {
 		return Result{}, err
-	}
-
-	if args.InstallCron {
-		if err := installCron(env, entry); err != nil {
-			return Result{}, err
-		}
 	}
 
 	path := filepath.Join(env.WorkspaceRoot, ".ergo-cli-go", "reminders.json")
@@ -382,45 +375,69 @@ func (reminderTool) Execute(_ context.Context, raw json.RawMessage, env ExecEnv)
 	return Result{Content: msg, Preview: msg}, nil
 }
 
-// installCron appends a crontab line for the given reminder/schedule.
-// For a passive reminder it echoes the message into reminders.log (the
-// legacy behavior). For a schedule it re-invokes the binary headlessly
-// via `coder schedule run <id>`. The binary path is resolved from the
-// running process so the cron line is correct regardless of how the
-// program was launched.
+// ValidateCronExpr is validateCronExpr for callers outside the tools
+// package (the /reminder form), so every path that can write a
+// crontab line applies the same injection check.
+func ValidateCronExpr(expr string) error { return validateCronExpr(expr) }
+
+// crontabRunner is swapped by tests.
+var crontabRunner reminders.CrontabRunner = reminders.SystemCrontab{}
+
+// CreateReminder validates and stores a reminder/schedule exactly as
+// set_reminder does and, when in.InstallCron is set, installs its
+// crontab line. It is shared by the set_reminder tool and the TUI
+// /reminder form. If the crontab install fails the entry is kept but
+// its Installed flag is cleared, and the error is returned alongside
+// the saved entry (entry.ID != "").
+func CreateReminder(env ExecEnv, in reminders.CreateInput) (reminders.Entry, error) {
+	in.CronExpr = strings.Join(strings.Fields(in.CronExpr), " ")
+	if err := validateCronExpr(in.CronExpr); err != nil {
+		return reminders.Entry{}, err
+	}
+	if _, err := reminders.ParseCron(in.CronExpr); err != nil {
+		return reminders.Entry{}, fmt.Errorf("cron_expr: %v", err)
+	}
+	if strings.ContainsAny(in.Prompt, "\n\r") {
+		return reminders.Entry{}, fmt.Errorf("prompt must not contain newlines when used in a schedule")
+	}
+	if in.InstallCron && strings.ContainsAny(in.Message, "\n\r") {
+		return reminders.Entry{}, fmt.Errorf("reminder message must not contain newlines when installing cron")
+	}
+	store := reminders.NewStore()
+	_, entry, err := store.Create(env.WorkspaceRoot, in)
+	if err != nil {
+		return reminders.Entry{}, err
+	}
+	if in.InstallCron {
+		if err := installCron(env, entry); err != nil {
+			entry.Installed = false
+			_ = store.SetInstalled(env.WorkspaceRoot, entry.ID, false)
+			return entry, err
+		}
+	}
+	return entry, nil
+}
+
+// installCron appends a crontab line for the given reminder/schedule
+// (see reminders.CronLine for the line shapes). The binary path is
+// resolved from the running process so the cron line is correct
+// regardless of how the program was launched.
 func installCron(env ExecEnv, entry reminders.Entry) error {
 	dir := filepath.Join(env.WorkspaceRoot, ".ergo-cli-go")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
-
-	var cronLine string
-	if entry.Prompt != "" {
-		bin, err := os.Executable()
+	bin := ""
+	if entry.Prompt != "" || entry.OneShot {
+		b, err := os.Executable()
 		if err != nil {
 			return fmt.Errorf("resolve executable path: %w", err)
 		}
-		// Quote the workspace root for safe shell interpolation.
-		ws := strings.ReplaceAll(env.WorkspaceRoot, "'", "'\\''")
-		cronLine = fmt.Sprintf("%s cd '%s' && '%s' schedule run %s >> '%s/schedule.log' 2>&1",
-			entry.CronExpr, ws, bin, entry.ID, dir)
-	} else {
-		if strings.ContainsAny(entry.Message, "\n\r") {
-			return fmt.Errorf("reminder message must not contain newlines when installing cron")
-		}
-		cronLine = fmt.Sprintf("%s echo '%s' >> %s/reminders.log", entry.CronExpr, strings.ReplaceAll(entry.Message, "'", "'\\''"), dir)
+		bin = b
 	}
-
-	cmd := exec.Command("crontab", "-l")
-	existing, err := cmd.Output()
+	line, err := reminders.CronLine(entry, bin, env.WorkspaceRoot)
 	if err != nil {
-		existing = []byte{}
+		return err
 	}
-	newCrontab := string(existing) + "\n" + cronLine + "\n"
-	set := exec.Command("crontab", "-")
-	set.Stdin = strings.NewReader(newCrontab)
-	if err := set.Run(); err != nil {
-		return fmt.Errorf("failed to install crontab: %v", err)
-	}
-	return nil
+	return reminders.InstallCronLine(crontabRunner, line)
 }

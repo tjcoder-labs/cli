@@ -321,11 +321,23 @@ func cmdSchedule(args []string, workspaceRoot, providerName, host, geminiKey str
 	if !ok {
 		fatal("schedule run: reminder %q not found", id)
 	}
-	if entry.Prompt == "" {
-		fatal("schedule run: reminder %q is a passive reminder, not a schedule", id)
-	}
-
 	now := time.Now()
+
+	if entry.Prompt == "" {
+		// Passive reminders only reach here when installed as a
+		// one-shot ("once at …"): log the message like the legacy
+		// echo line would, then retire the entry and its cron line.
+		if !entry.OneShot {
+			fatal("schedule run: reminder %q is a passive reminder, not a schedule", id)
+		}
+		dir := filepath.Join(workspaceRoot, ".ergo-cli-go")
+		if f, err := os.OpenFile(filepath.Join(dir, "reminders.log"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600); err == nil {
+			fmt.Fprintln(f, entry.Message)
+			f.Close()
+		}
+		retireOneShot(store, workspaceRoot, entry)
+		return
+	}
 
 	// Guardrail 0: tick dedup. The in-session TUI scheduler and this
 	// headless entrypoint can both be alive for the same workspace;
@@ -395,6 +407,11 @@ func cmdSchedule(args []string, workspaceRoot, providerName, host, geminiKey str
 	if err := store.MarkRun(workspaceRoot, id, now); err != nil {
 		fmt.Fprintf(os.Stderr, "schedule %s: warning: could not persist last-run marker: %v\n", id, err)
 	}
+	// A one-shot runs exactly once: retire it before the run so a
+	// failed/aborted run can't leave a line that refires next year.
+	if entry.OneShot {
+		retireOneShot(store, workspaceRoot, entry)
+	}
 
 	cmdAsk(askOptions{
 		Host:          host,
@@ -417,6 +434,19 @@ func cmdSchedule(args []string, workspaceRoot, providerName, host, geminiKey str
 		ExplicitModel: false,
 		ExplicitTools: false,
 	})
+}
+
+// retireOneShot removes a fired one-shot entry and its crontab line.
+func retireOneShot(store *reminders.Store, workspaceRoot string, entry reminders.Entry) {
+	res, _, err := store.Remove(workspaceRoot, entry.ID, reminders.SystemCrontab{})
+	switch {
+	case err != nil:
+		fmt.Fprintf(os.Stderr, "schedule %s: warning: could not remove one-shot entry: %v\n", entry.ID, err)
+	case res.CronErr != nil:
+		fmt.Fprintf(os.Stderr, "schedule %s: one-shot removed; crontab line not removed: %v\n", entry.ID, res.CronErr)
+	default:
+		fmt.Printf("schedule %s: one-shot fired and removed\n", entry.ID)
+	}
 }
 
 func cmdModels(args []string, providerName, host, geminiKey string, timeout time.Duration) {

@@ -2052,22 +2052,6 @@ func (a *App) openTriggerModal() {
 	a.showModal("Trigger Event", form)
 }
 
-func (a *App) openReminderModal() {
-	form := a.newModalForm(nil)
-	var cronExpr, message string
-	var install bool
-	form.AddInputField("Cron (5 fields)", "", 20, nil, func(s string) { cronExpr = s })
-	form.AddInputField("Message", "", 60, nil, func(s string) { message = s })
-	form.AddCheckbox("Install to crontab", false, func(checked bool) { install = checked })
-	form.AddButton("Save", func() {
-		// Call reminder tool asynchronously could be added here.
-		a.appendActivity(fmt.Sprintf("Scheduled reminder: %s -> %s (install=%v)", cronExpr, message, install))
-		a.closeModal()
-	})
-	form.AddButton("Cancel", func() { a.closeModal() })
-	a.showModal("Set Reminder", form)
-}
-
 func (a *App) openTaskModal() {
 	form := a.newModalForm(nil)
 	var title, due string

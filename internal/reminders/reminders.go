@@ -60,6 +60,20 @@ type Entry struct {
 	// (the in-session TUI scheduler or the headless `coder schedule
 	// run` entrypoint) so the other never re-fires the same tick.
 	LastRun string `json:"last_run,omitempty"`
+	// OneShot marks a "once at <date/time>" entry. Its cron
+	// expression (min hour dom month *) would repeat every year, so
+	// whichever runner fires it removes the entry (and its crontab
+	// line, when installed) right after the single run.
+	OneShot bool `json:"one_shot,omitempty"`
+}
+
+// Kind is "schedule" for an entry that re-runs the agent with Prompt
+// and "reminder" for a passive message.
+func (e Entry) Kind() string {
+	if e.Prompt != "" {
+		return "schedule"
+	}
+	return "reminder"
 }
 
 // Store is the mutation surface for reminders. The on-disk file is
@@ -128,6 +142,7 @@ type CreateInput struct {
 	Agent       string
 	Platform    string
 	DailyCap    int
+	OneShot     bool
 }
 
 // Create appends a new entry to the file and returns the updated
@@ -154,6 +169,7 @@ func (s *Store) Create(workspaceRoot string, in CreateInput) (*List, Entry, erro
 		Agent:     strings.TrimSpace(in.Agent),
 		Platform:  strings.ToLower(strings.TrimSpace(in.Platform)),
 		DailyCap:  in.DailyCap,
+		OneShot:   in.OneShot,
 	}
 	list, err := s.Load(workspaceRoot)
 	if err != nil {
@@ -190,6 +206,53 @@ func (s *Store) Delete(workspaceRoot, id string) (*List, bool, error) {
 		return nil, false, err
 	}
 	return list, true, nil
+}
+
+// SetInstalled updates entry id's Installed flag (e.g. after a
+// crontab install fails, so the list doesn't claim it is installed).
+func (s *Store) SetInstalled(workspaceRoot, id string, installed bool) error {
+	list, err := s.Load(workspaceRoot)
+	if err != nil {
+		return err
+	}
+	for i := range list.items {
+		if list.items[i].ID == id {
+			list.items[i].Installed = installed
+			return s.Save(workspaceRoot, list)
+		}
+	}
+	return nil
+}
+
+// RemoveResult reports what Remove did beyond deleting the entry.
+type RemoveResult struct {
+	Entry       Entry
+	CronRemoved int   // crontab lines removed
+	CronErr     error // crontab could not be read/written (entry still removed)
+}
+
+// Remove deletes entry id from reminders.json and, when the entry was
+// installed (or cron is non-nil and might hold a stale line), removes
+// its crontab line via cron. A crontab failure does not undo the file
+// removal; it is reported in RemoveResult.CronErr. found is false when
+// no entry has that id.
+func (s *Store) Remove(workspaceRoot, id string, cron CrontabRunner) (res RemoveResult, found bool, err error) {
+	list, err := s.Load(workspaceRoot)
+	if err != nil {
+		return res, false, err
+	}
+	e, ok := list.Get(id)
+	if !ok {
+		return res, false, nil
+	}
+	if _, _, err := s.Delete(workspaceRoot, id); err != nil {
+		return res, true, err
+	}
+	res.Entry = e
+	if cron != nil && e.Installed {
+		res.CronRemoved, res.CronErr = RemoveCronLines(cron, e, workspaceRoot)
+	}
+	return res, true, nil
 }
 
 // FilePath returns the canonical reminders.json path for a
