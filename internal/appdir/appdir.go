@@ -1,6 +1,6 @@
 // Package appdir owns the user-level (not per-workspace) state that
 // lives next to prefs.json: the anonymous install id, the update-check
-// cache, and the telemetry / update-check opt-out switches.
+// cache, and the telemetry / update-check / auto-update switches.
 package appdir
 
 import (
@@ -42,6 +42,10 @@ type Settings struct {
 	InstallReported bool `json:"install_reported,omitempty"`
 	// UpdateCheck disables the background update check when false.
 	UpdateCheck *bool `json:"update_check,omitempty"`
+	// AutoUpdate controls whether the TUI installs a newer version in
+	// the background (npm and release-binary installs only); nil means
+	// "never chosen" (on). CODER_AUTO_UPDATE=0 forces it off.
+	AutoUpdate *bool `json:"auto_update,omitempty"`
 }
 
 var mu sync.Mutex

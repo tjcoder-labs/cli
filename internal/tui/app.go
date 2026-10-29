@@ -16,6 +16,7 @@ import (
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 	"github.com/tjcoder-labs/cli/internal/agent"
+	"github.com/tjcoder-labs/cli/internal/appdir"
 	"github.com/tjcoder-labs/cli/internal/client"
 	ctxpkg "github.com/tjcoder-labs/cli/internal/context"
 	"github.com/tjcoder-labs/cli/internal/mcp"
@@ -26,6 +27,7 @@ import (
 	"github.com/tjcoder-labs/cli/internal/tooling"
 	"github.com/tjcoder-labs/cli/internal/tools"
 	"github.com/tjcoder-labs/cli/internal/tracking"
+	"github.com/tjcoder-labs/cli/internal/update"
 
 	"unicode"
 )
@@ -2194,11 +2196,34 @@ func (a *App) openConfigModal() {
 			}
 		})
 
+	// --- Automatic updates (user-level settings.json, not AppConfig) ---
+	autoWas := update.AutoUpdateSetting()
+	autoUpdate := autoWas
+	autoIdx := 0
+	if !autoUpdate {
+		autoIdx = 1
+	}
+	form.AddDropDown("Automatic updates", []string{"On", "Off"}, autoIdx, func(option string, _ int) {
+		autoUpdate = option == "On"
+	})
+
 	// --- Actions ---
 	save := func() {
 		if err := a.saveConfig(work); err != nil {
 			a.appendActivity(fmt.Sprintf("["+a.palette.HexOrchid+"::b]config save failed[-:-:-]: %v", err))
 			return
+		}
+		if autoUpdate != autoWas {
+			on := autoUpdate
+			if _, err := appdir.Update(func(s *appdir.Settings) { s.AutoUpdate = &on }); err != nil {
+				a.appendActivity(fmt.Sprintf("["+a.palette.HexOrchid+"::b]config save failed[-:-:-]: automatic updates: %v", err))
+				return
+			}
+			state := map[bool]string{true: "on", false: "off"}[on]
+			a.appendActivity("Automatic updates " + state)
+			if ok, why := update.AutoUpdateEnabled(); on && !ok && why == update.AutoUpdateEnv {
+				a.appendActivity(update.AutoUpdateEnv + "=0 is set in the environment and still keeps automatic updates off")
+			}
 		}
 		a.config = work
 		a.runner.MaxSteps = work.ToolMax
