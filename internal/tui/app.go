@@ -124,6 +124,15 @@ const panelGutter = 1
 // NOTE: kept as 3 to match the conversation panel's left padding.
 const marginX = 3
 
+// inputRowHeight is the prompt surface's full height: the 3-row input
+// plus the 3-row hint line. Sizing the row to the whole surface keeps
+// the bottom hint row inside the surface (left beam and full-width
+// bgInput) instead of spilling into the gutter below, which used to
+// leave that row 2 columns short on each end with no beam. The gutter
+// between the prompt and the footer is absorbed into this row so the
+// overall vertical layout is unchanged.
+const inputRowHeight = 6
+
 const modelLoadTimeout = 12 * time.Second
 
 // slashCommand describes a single "/" command for the inline command
@@ -818,8 +827,7 @@ func (a *App) build() {
 		AddItem(spacerBox(a.palette.BgRoot), panelGutter, 0, false).
 		AddItem(main, 0, 1, false).
 		AddItem(spacerBox(a.palette.BgRoot), panelGutter, 0, false).
-		AddItem(inputRow, 5, 0, true).
-		AddItem(spacerBox(a.palette.BgRoot), panelGutter, 0, false).
+		AddItem(inputRow, inputRowHeight, 0, true).
 		AddItem(footerRow, 3, 0, false)
 	layout.SetBackgroundColor(a.palette.BgRoot)
 
@@ -3957,8 +3965,7 @@ func (a *App) rebuildLayout() {
 		AddItem(spacerBox(a.palette.BgRoot), panelGutter, 0, false).
 		AddItem(mainFlex, 0, 1, false).
 		AddItem(spacerBox(a.palette.BgRoot), panelGutter, 0, false).
-		AddItem(a.inputRow, 5, 0, true).
-		AddItem(spacerBox(a.palette.BgRoot), panelGutter, 0, false).
+		AddItem(a.inputRow, inputRowHeight, 0, true).
 		AddItem(footerRow, 3, 0, false)
 	layout.SetBackgroundColor(a.palette.BgRoot)
 
