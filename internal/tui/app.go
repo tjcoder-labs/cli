@@ -774,6 +774,9 @@ func (a *App) build() {
 			return ev
 		}
 		switch event.Key() {
+		case tcell.KeyCtrlU:
+			a.killInputToLineStart()
+			return nil
 		case tcell.KeyUp:
 			a.navigateInputHistory(-1)
 			return nil
@@ -1785,6 +1788,12 @@ func (a *App) globalKeys(event *tcell.EventKey) *tcell.EventKey {
 		a.clearSession()
 		return nil
 	}
+	// Ctrl-U edits text (readline "kill to start of line") when a text
+	// field has focus; only scroll the transcript when it doesn't, so
+	// the chat input (and modal form fields) actually receive it.
+	if event.Key() == tcell.KeyCtrlU && a.textEntryFocused() {
+		return event
+	}
 	if event.Key() == tcell.KeyPgUp || event.Key() == tcell.KeyCtrlU {
 		a.scrollTranscript(-12)
 		return nil
@@ -1794,6 +1803,41 @@ func (a *App) globalKeys(event *tcell.EventKey) *tcell.EventKey {
 		return nil
 	}
 	return event
+}
+
+// textEntryFocused reports whether keyboard focus is on a widget that
+// edits text (the chat input or a modal form field), so editing keys
+// such as Ctrl-U reach it instead of a global shortcut.
+func (a *App) textEntryFocused() bool {
+	if a.tv == nil {
+		return false
+	}
+	switch a.tv.GetFocus().(type) {
+	case *tview.InputField, *tview.TextArea:
+		return true
+	}
+	return false
+}
+
+// killInputToLineStart implements readline's Ctrl-U on the chat input:
+// delete from the cursor back to the start of the current line, keeping
+// whatever follows the cursor. tview's own Ctrl-U deletes the whole line
+// and InputField exposes no cursor position, so this replays
+// Shift+Home (select back to the line start) and Backspace (delete the
+// selection) through the field's own handler. It runs synchronously on
+// the event loop and takes no locks.
+func (a *App) killInputToLineStart() {
+	if a.input == nil {
+		return
+	}
+	h := a.input.InputHandler()
+	setFocus := func(p tview.Primitive) {
+		if a.tv != nil {
+			a.tv.SetFocus(p)
+		}
+	}
+	h(tcell.NewEventKey(tcell.KeyHome, 0, tcell.ModShift), setFocus)
+	h(tcell.NewEventKey(tcell.KeyBackspace2, 0, tcell.ModNone), setFocus)
 }
 
 // handleProvidersCommand dispatches the /providers slash command:
@@ -1964,8 +2008,7 @@ func (a *App) InvokeCLICommand(command string) error {
 }
 
 func (a *App) openTriggerModal() {
-	form := tview.NewForm()
-	a.styleModalForm(form)
+	form := a.newModalForm(nil)
 	var name, payload string
 	form.AddInputField("Event name", "", 20, nil, func(s string) { name = s })
 	form.AddInputField("Payload (optional)", "", 40, nil, func(s string) { payload = s })
@@ -1978,8 +2021,7 @@ func (a *App) openTriggerModal() {
 }
 
 func (a *App) openReminderModal() {
-	form := tview.NewForm()
-	a.styleModalForm(form)
+	form := a.newModalForm(nil)
 	var cronExpr, message string
 	var install bool
 	form.AddInputField("Cron (5 fields)", "", 20, nil, func(s string) { cronExpr = s })
@@ -1995,8 +2037,7 @@ func (a *App) openReminderModal() {
 }
 
 func (a *App) openTaskModal() {
-	form := tview.NewForm()
-	a.styleModalForm(form)
+	form := a.newModalForm(nil)
 	var title, due string
 	form.AddInputField("Title", "", 40, nil, func(s string) { title = s })
 	form.AddInputField("Due (optional)", "", 20, nil, func(s string) { due = s })
@@ -2016,8 +2057,7 @@ func (a *App) openTaskModal() {
 }
 
 func (a *App) openMemoryModal() {
-	form := tview.NewForm()
-	a.styleModalForm(form)
+	form := a.newModalForm(nil)
 	var title, body, tags string
 	form.AddInputField("Title", "", 40, nil, func(s string) { title = s })
 	form.AddInputField("Body", "", 60, nil, func(s string) { body = s })
@@ -2098,8 +2138,7 @@ func (a *App) openConfigModal() {
 	// whole struct at once without re-reading individual fields.
 	work := a.config
 
-	form := tview.NewForm()
-	a.styleModalForm(form)
+	form := a.newModalForm(nil)
 	form.SetItemPadding(1)
 
 	// --- Agent ---
@@ -4503,6 +4542,53 @@ func (a *App) styleModalList(list *tview.List) {
 	list.SetSecondaryTextColor(a.palette.TextDim)
 	list.SetSelectedBackgroundColor(a.palette.BgSelect)
 	list.SetSelectedTextColor(a.palette.Lavender)
+}
+
+// newModalForm returns a form styled for the in-pane modal surface
+// whose Esc key cancels it. tview routes Esc from any form item
+// (input field, closed dropdown, checkbox, button) to the form's
+// cancel func, and without one Esc was silently ignored: the modal
+// stayed open and kept focus, so typing went into the form instead of
+// the chat input. onCancel should do whatever the form's Cancel button
+// does; nil means a.closeModal (close and refocus the chat input).
+// It runs on the event loop, so it must not call QueueUpdate(Draw);
+// tview redraws after the key handler returns.
+//
+// Esc while a dropdown's option list is open only closes that list:
+// tview reports that Esc to the form's cancel func too, so it is
+// filtered out here instead of discarding the whole form.
+func (a *App) newModalForm(onCancel func()) *tview.Form {
+	form := tview.NewForm()
+	a.styleModalForm(form)
+	if onCancel == nil {
+		onCancel = a.closeModal
+	}
+	dropDownOpen := false
+	form.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+		if event.Key() == tcell.KeyEscape {
+			dropDownOpen = formHasOpenDropDown(form)
+		}
+		return event
+	})
+	form.SetCancelFunc(func() {
+		if dropDownOpen {
+			dropDownOpen = false
+			return
+		}
+		onCancel()
+	})
+	return form
+}
+
+// formHasOpenDropDown reports whether any dropdown in form currently
+// shows its option list.
+func formHasOpenDropDown(form *tview.Form) bool {
+	for i := 0; i < form.GetFormItemCount(); i++ {
+		if dd, ok := form.GetFormItem(i).(*tview.DropDown); ok && dd.IsOpen() {
+			return true
+		}
+	}
+	return false
 }
 
 // styleModalForm applies the borderless modal surface palette to a form

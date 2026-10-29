@@ -179,10 +179,8 @@ func (a *App) showLoginResult(title, text, button string, onClose func()) {
 			onClose()
 		}
 	}
-	btns := tview.NewForm()
-	a.styleModalForm(btns)
+	btns := a.newModalForm(closeFn)
 	btns.AddButton(button, closeFn)
-	btns.SetCancelFunc(closeFn)
 	panel := tview.NewFlex().SetDirection(tview.FlexRow).
 		AddItem(view, 0, 1, false).
 		AddItem(btns, 3, 0, true)

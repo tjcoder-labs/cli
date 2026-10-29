@@ -77,8 +77,7 @@ func (a *App) handleLoginCommand() {
 		a.appendActivity("A sign-in is already in progress — press Esc in the sign-in panel to cancel it")
 		return
 	}
-	form := tview.NewForm()
-	a.styleModalForm(form)
+	form := a.newModalForm(nil)
 	var email string
 	form.AddInputField("Email", "", 44, nil, func(s string) { email = strings.TrimSpace(s) })
 	form.AddButton("Send sign-in link", func() {
@@ -89,7 +88,6 @@ func (a *App) handleLoginCommand() {
 		a.beginDeviceLogin(email)
 	})
 	form.AddButton("Cancel", func() { a.closeModal() })
-	form.SetCancelFunc(func() { a.closeModal() })
 	a.showModal("ergo Sign-in", form)
 }
 
@@ -105,15 +103,13 @@ func (a *App) beginDeviceLogin(email string) {
 	view.SetBackgroundColor(a.palette.BgInput)
 	view.SetTextColor(a.palette.TextMain)
 	view.SetText(fmt.Sprintf("\n  [%s]Contacting ergo…[-]", a.palette.HexDim))
-	btns := tview.NewForm()
-	a.styleModalForm(btns)
 	cancelLogin := func() {
 		finish()
 		a.appendActivity("Sign-in cancelled")
 		a.closeModal()
 	}
+	btns := a.newModalForm(cancelLogin)
 	btns.AddButton("Cancel", cancelLogin)
-	btns.SetCancelFunc(cancelLogin)
 	panel := tview.NewFlex().SetDirection(tview.FlexRow).
 		AddItem(view, 0, 1, false).
 		AddItem(btns, 3, 0, true)

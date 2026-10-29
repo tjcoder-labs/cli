@@ -109,8 +109,7 @@ func (a *App) openProviderDetail(name string) {
 // existing fields are pre-filled and the name field is read-only (renaming
 // would orphan credentials; users should remove + re-add instead).
 func (a *App) openProviderEditor(existing providers.Config) {
-	form := tview.NewForm()
-	a.styleModalForm(form)
+	form := a.newModalForm(a.openProvidersModal)
 
 	name := existing.Name
 	baseURL := existing.BaseURL
@@ -314,8 +313,7 @@ func (a *App) beginProviderLogin(cfg providers.Config) {
 
 // openAPIKeyLogin prompts for a Bearer API key and stores it in the registry.
 func (a *App) openAPIKeyLogin(cfg providers.Config) {
-	form := tview.NewForm()
-	a.styleModalForm(form)
+	form := a.newModalForm(nil)
 	var key string
 	form.AddInputField("API key", "", 60, nil, func(s string) { key = strings.TrimSpace(s) })
 	form.AddButton("Save", func() {
