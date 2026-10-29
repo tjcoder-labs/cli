@@ -4,7 +4,9 @@ EMBED_PKG   := cmd/coder/package.json
 VERSION     := $(shell python3 -c 'import json; print(json.load(open("$(PKG_JSON)"))["version"])' 2>/dev/null || echo dev)
 PRODUCT     := $(shell python3 -c 'import json,sys; d=json.load(open("$(PKG_JSON)")); print(d.get("productName") or d.get("name") or "Coder CLI")' 2>/dev/null || echo "Coder CLI")
 AUTHOR      := $(shell python3 -c 'import json; print(json.load(open("$(PKG_JSON)"))["author"])' 2>/dev/null || echo "TJ Coder AI Labs")
-LDFLAGS     := -X 'main.version=$(VERSION)' -X 'main.productName=$(PRODUCT)' -X 'main.author=$(AUTHOR)'
+POSTHOG_HOST ?= https://us.i.posthog.com
+LDFLAGS     := -X 'main.version=$(VERSION)' -X 'main.productName=$(PRODUCT)' -X 'main.author=$(AUTHOR)' \
+               -X 'main.sentryDSN=$(SENTRY_DSN)' -X 'main.posthogKey=$(POSTHOG_KEY)' -X 'main.posthogHost=$(POSTHOG_HOST)'
 
 .PHONY: build build-coder run run-coder fmt clean install uninstall
 

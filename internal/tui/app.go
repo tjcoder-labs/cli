@@ -124,6 +124,15 @@ const panelGutter = 1
 // NOTE: kept as 3 to match the conversation panel's left padding.
 const marginX = 3
 
+// inputRowHeight is the prompt surface's full height: the 3-row input
+// plus the 3-row hint line. Sizing the row to the whole surface keeps
+// the bottom hint row inside the surface (left beam and full-width
+// bgInput) instead of spilling into the gutter below, which used to
+// leave that row 2 columns short on each end with no beam. The gutter
+// between the prompt and the footer is absorbed into this row so the
+// overall vertical layout is unchanged.
+const inputRowHeight = 6
+
 const modelLoadTimeout = 12 * time.Second
 
 // slashCommand describes a single "/" command for the inline command
@@ -161,6 +170,8 @@ var slashCommands = []slashCommand{
 	{"about", "Open the about / welcome screen"},
 	{"mcp", "Manage MCP integrations"},
 	{"providers", "Manage model providers"},
+	{"update", "Check for and install a coder update"},
+	{"telemetry", "Anonymous usage stats: on, off or status"},
 }
 
 type App struct {
@@ -206,7 +217,7 @@ type App struct {
 	enabledTools              map[string]bool
 	history                   []client.Message
 	busy                      bool
-	contextInfo               string
+	ctxUsage                  client.ContextUsage
 	refSet                    map[string]struct{}
 	refOrder                  []string
 	spinIdx                   int
@@ -323,6 +334,10 @@ type App struct {
 	inputRow tview.Primitive
 
 	mu sync.Mutex
+	// contextWindows caches context-window lookups (per provider) for the
+	// status bar and the /compact hint (guarded by mu). 0 = unknown / in
+	// flight.
+	contextWindows map[string]int
 
 	// config holds the persisted user-tunable settings loaded from
 	// .ergo-cli-go/config.json. Mutated by /config and read by the
@@ -367,8 +382,14 @@ func New(provider client.Provider, registry *tools.Registry, workspaceRoot, mode
 	}
 	if isErgo {
 		// Gateway models only: ignore agent/Ollama defaults and stale
-		// saved values; default to "ergo". /v1/models refines this once the
-		// async model load completes (see applyErgoModels).
+		// saved values; default to ergo/pro. Legacy saved ids are migrated
+		// on disk. /v1/models refines this once the async model load
+		// completes (see applyErgoModels), restoring a saved xai/… pick.
+		if modelOverride == "" {
+			if s := savedErgoModel(); s != "" {
+				model = s
+			}
+		}
 		model = client.ResolveErgoModel(modelOverride, model, client.ErgoFallbackModels())
 	}
 	state, _, err := session.Load(workspaceRoot)
@@ -394,13 +415,14 @@ func New(provider client.Provider, registry *tools.Registry, workspaceRoot, mode
 		modelChosen:   modelOverride != "",
 		explicitModel: modelOverride,
 		enabledTools:  map[string]bool{},
-		contextInfo:   "ctx: unavailable",
 		refSet:        map[string]struct{}{},
 		palette:       darkPalette(),
 		config:        cfg,
 	}
 	// Set up sinks for tool integration (highlight_code, invoke_cli_command, etc.)
 	app.runner.CLICommandSink = app
+	app.runner.Prompter = app
+	app.runner.Sudo = &tools.SudoPolicy{}
 	trackReg := tracking.NewRegistry()
 	trackReg.Register(tracking.NewTaskTracker())
 	trackReg.Register(tracking.NewMemoryTracker())
@@ -499,6 +521,9 @@ func (a *App) Run() error {
 	// arrives as KeyEnter and triggers submit(), splitting the paste at
 	// the first line break and dropping the remainder.
 	a.tv.EnablePaste(true)
+	bgCtx, stopBackground := context.WithCancel(context.Background())
+	defer stopBackground()
+	a.startBackground(bgCtx)
 	return a.tv.Run()
 }
 
@@ -783,17 +808,7 @@ func (a *App) build() {
 	}
 	main.SetBackgroundColor(a.palette.BgRoot)
 
-	// Treat the entire prompt shell as a single bgInput-backed component so
-	// the input field and its status line read as one cohesive surface.
-	inputSurface := a.newInputSurface()
-
-	// Inset the prompt bar horizontally using the same standard margin as
-	// the panels above (marginX), matching the earlier stable layout.
-	inputRow := tview.NewFlex().
-		AddItem(spacerBox(a.palette.BgRoot), marginX-1, 0, false).
-		AddItem(inputSurface, 0, 1, true).
-		AddItem(spacerBox(a.palette.BgRoot), marginX, 0, false)
-	inputRow.SetBackgroundColor(a.palette.BgRoot)
+	inputRow := a.newInputRow()
 	a.inputRow = inputRow
 
 	headerRow := tview.NewFlex().
@@ -815,8 +830,7 @@ func (a *App) build() {
 		AddItem(spacerBox(a.palette.BgRoot), panelGutter, 0, false).
 		AddItem(main, 0, 1, false).
 		AddItem(spacerBox(a.palette.BgRoot), panelGutter, 0, false).
-		AddItem(inputRow, 5, 0, true).
-		AddItem(spacerBox(a.palette.BgRoot), panelGutter, 0, false).
+		AddItem(inputRow, inputRowHeight, 0, true).
 		AddItem(footerRow, 3, 0, false)
 	layout.SetBackgroundColor(a.palette.BgRoot)
 
@@ -1131,6 +1145,24 @@ func spacerBox(bg tcell.Color) *tview.Box {
 	return b
 }
 
+// newInputRow insets the prompt surface horizontally. The left beam sits
+// in the last column of the standard marginX inset, and the right inset
+// mirrors the left one (marginX-1 BgRoot columns) so both ends of every
+// surface row carry the same number of edge columns.
+func (a *App) newInputRow() *tview.Flex {
+	// Treat the entire prompt shell as a single bgInput-backed component so
+	// the input field and its status line read as one cohesive surface.
+	row := tview.NewFlex().
+		AddItem(spacerBox(a.palette.BgRoot), marginX-1, 0, false).
+		AddItem(a.newInputSurface(), 0, 1, true).
+		AddItem(spacerBox(a.palette.BgRoot), marginX-1, 0, false)
+	row.SetBackgroundColor(a.palette.BgRoot)
+	return row
+}
+
+// newInputSurface builds the bgInput-backed prompt surface. Its edges are
+// symmetric on every row: the beam plus marginX-1 bgInput columns on the
+// left, marginX bgInput columns on the right.
 func (a *App) newInputSurface() *tview.Flex {
 	inner := tview.NewFlex().SetDirection(tview.FlexRow).
 		AddItem(a.input, 3, 0, true).
@@ -1462,7 +1494,12 @@ func (a *App) renderCommandPalette() string {
 	// Append the highlighted command's description as a faint trailer
 	// when there's room, so the user knows what the selection does.
 	desc := a.hintMatches[a.hintSelected].desc
-	if desc != "" && used+len(desc)+3 <= budget {
+	if a.hintMatches[a.hintSelected].cmd == "compact" {
+		// /compact: show which model will summarise and how full the
+		// context is relative to that model's window.
+		desc = a.compactTip(strings.TrimPrefix(a.hintInput(), "/"))
+	}
+	if desc != "" && used+len([]rune(desc))+3 <= budget {
 		b.WriteString(fmt.Sprintf("   [%s]%s[-]", a.palette.HexFaint, desc))
 	}
 	b.WriteString(" ")
@@ -1495,29 +1532,9 @@ func (a *App) renderMetaBar() string {
 	if cwd == "" {
 		cwd = "."
 	}
-	contextText := strings.TrimSpace(strings.TrimPrefix(a.contextInfo, "ctx:"))
-	contextText = strings.TrimSpace(contextText)
+	contextText := a.contextStatusText()
 	if contextText == "" {
 		contextText = "unavailable"
-	}
-	// If contextText contains a numeric "used / total" pair, render a compact
-	// progress bar in the primary tint color and replace the numeric portion
-	// with the bar to keep the context line compact and live-updating.
-	if contextText != "unavailable" {
-		// Match numbers with optional K/M suffixes, e.g. "12K / 127K" or "3% / 2M"
-		re := regexp.MustCompile(`([\d.]+)\s*([KM]?)\s*/\s*([\d.]+)\s*([KM]?)`)
-		if m := re.FindStringSubmatchIndex(contextText); m != nil {
-			usedStr := contextText[m[2]:m[3]]
-			usedSuffix := contextText[m[4]:m[5]]
-			totalStr := contextText[m[6]:m[7]]
-			totalSuffix := contextText[m[8]:m[9]]
-			used := parseTokenCount(usedStr, usedSuffix)
-			total := parseTokenCount(totalStr, totalSuffix)
-			if total > 0 {
-				bar := a.renderProgressBar(used, total, 28)
-				contextText = bar
-			}
-		}
 	}
 
 	refsText := strings.TrimSpace(strings.TrimPrefix(a.referenceSummary(), "refs:"))
@@ -1565,21 +1582,14 @@ func (a *App) renderMetaBar() string {
 	return line
 }
 
-// (a *App) renderProgressBar builds a compact 12-segment progress bar with a highlighted current segment.
-// Output format: [--progress--] 3% of 126,980 tokens.
-func (a *App) renderProgressBar(used, total, _width int) string {
+// renderProgressBar builds a compact 12-segment bar with a highlighted
+// current segment; an over-full window fills every segment.
+func (a *App) renderProgressBar(used, total int) string {
 	const segments = 12
 	if total <= 0 {
 		return ""
 	}
 	pct := float64(used) / float64(total)
-	if pct < 0 {
-		pct = 0
-	}
-	if pct > 1 {
-		pct = 1
-	}
-	// number of fully consumed segments (left of the current highlight)
 	consumed := int(pct * float64(segments))
 	if consumed < 0 {
 		consumed = 0
@@ -1587,28 +1597,20 @@ func (a *App) renderProgressBar(used, total, _width int) string {
 	if consumed > segments-1 {
 		consumed = segments - 1
 	}
-	// current segment index (0..segments-1)
-	current := consumed
-
 	var b strings.Builder
 	b.WriteString("[")
 	for i := 0; i < segments; i++ {
-		if i < consumed {
-			// consumed segment (dim)
+		switch {
+		case i < consumed:
 			b.WriteString(fmt.Sprintf("[%s]%s[-]", a.palette.HexDim, "━"))
-		} else if i == current {
-			// current highlighted segment (primary tint)
+		case i == consumed:
 			b.WriteString(fmt.Sprintf("[%s]%s[-]", a.palette.HexPurple, "▮"))
-		} else {
-			// unconsumed segment (faint)
+		default:
 			b.WriteString(fmt.Sprintf("[%s]%s[-]", a.palette.HexDim, "·"))
 		}
 	}
 	b.WriteString("]")
-
-	percent := int(pct * 100)
-	formattedTotal := formatTokensCompactTUI(total)
-	return fmt.Sprintf("%s %d%% of %s tokens.", b.String(), percent, formattedTotal)
+	return b.String()
 }
 
 // formatWithCommas formats an integer with comma separators, e.g. 126980 -> "126,980"
@@ -1630,21 +1632,6 @@ func formatWithCommas(n int) string {
 		parts = append([]string{s}, parts...)
 	}
 	return strings.Join(parts, ",")
-}
-
-// parseTokenCount parses a numeric string with an optional K/M suffix
-// into an integer token count. Used by renderMetaBar to extract
-// used/total from context strings like "~12K / 127K used".
-func parseTokenCount(num, suffix string) int {
-	f := 0.0
-	fmt.Sscanf(num, "%f", &f)
-	switch strings.ToUpper(suffix) {
-	case "K":
-		f *= 1000
-	case "M":
-		f *= 1_000_000
-	}
-	return int(f)
 }
 
 // formatTokensCompactTUI renders a token count using K/M suffixes.
@@ -1816,6 +1803,12 @@ func (a *App) handleSlashCommand(cmd string) {
 		return
 	}
 	command := strings.ToLower(parts[0])
+	for _, sc := range slashCommands {
+		if sc.cmd == command {
+			emit("command_used", map[string]any{"command": command})
+			break
+		}
+	}
 	switch command {
 	case "agent":
 		a.openAgentModal()
@@ -1854,6 +1847,10 @@ func (a *App) handleSlashCommand(cmd string) {
 		a.clearSession()
 	case "compact":
 		a.compactHistory(parts)
+	case "telemetry":
+		a.handleTelemetryCommand(parts)
+	case "update":
+		go a.runUpdate(parts)
 	case "quit":
 		a.tv.Stop()
 	case "agentinfo":
@@ -2768,7 +2765,7 @@ func (a *App) clearSession() {
 	a.transcript.Clear()
 	a.reasoning.Clear()
 	a.activity.Clear()
-	a.contextInfo = "ctx: unavailable"
+	a.ctxUsage = client.ContextUsage{}
 	a.refSet = map[string]struct{}{}
 	a.refOrder = nil
 	a.setTranscriptSplash()
@@ -2810,18 +2807,9 @@ func (a *App) compactHistory(parts []string) {
 		return
 	}
 
-	model := a.currentModel
-	// Honor the CompactModel config override if set — lets the user
-	// use a cheaper / faster model for summarization while keeping
-	// a more capable model for the main conversation.
-	if a.config.CompactModel != "" {
-		if m := a.sanitizeModel(a.config.CompactModel); m != "" {
-			model = m
-		}
-	}
-	if len(parts) > 1 {
-		model = parts[1]
-	}
+	// Explicit arg > CompactModel config override (a cheaper / faster
+	// summariser) > the active model. Shared with the /compact hint.
+	model := a.compactionModel(parts)
 
 	preCount := len(a.history)
 	preChars := 0
@@ -2900,6 +2888,7 @@ func (a *App) compactHistory(parts []string) {
 				{Role: "user", Content: "[Compaction] The prior conversation has been summarized to free context. Treat the assistant's summary below as authoritative for any earlier decision, file change, or open question."},
 				{Role: "assistant", Content: summary},
 			}
+			a.resetContextUsage()
 
 			// Persist immediately.
 			if err := a.saveSession(); err != nil {
@@ -2924,7 +2913,6 @@ func (a *App) compactHistory(parts []string) {
 			a.transcript.ScrollToEnd()
 
 			// Refresh the context bar to reflect freed tokens.
-			a.contextInfo = "ctx: recalculating…"
 			a.refreshContextBar()
 		})
 	}()
@@ -3302,7 +3290,9 @@ func (a *App) handleEvent(event tooling.Event) {
 				a.appendActivity(fmt.Sprintf("["+a.palette.HexOrchid+"::b]✗ %s[-:-:-] %s", event.ToolName, event.Text))
 			}
 		case tooling.EventContext:
-			a.contextInfo = event.Text
+			if event.Usage != nil {
+				a.recordContextUsage(*event.Usage)
+			}
 			a.refreshContextBar()
 		case tooling.EventSteering:
 			// Mid-turn user steering. Render as a transcript line
@@ -3958,8 +3948,7 @@ func (a *App) rebuildLayout() {
 		AddItem(spacerBox(a.palette.BgRoot), panelGutter, 0, false).
 		AddItem(mainFlex, 0, 1, false).
 		AddItem(spacerBox(a.palette.BgRoot), panelGutter, 0, false).
-		AddItem(a.inputRow, 5, 0, true).
-		AddItem(spacerBox(a.palette.BgRoot), panelGutter, 0, false).
+		AddItem(a.inputRow, inputRowHeight, 0, true).
 		AddItem(footerRow, 3, 0, false)
 	layout.SetBackgroundColor(a.palette.BgRoot)
 
@@ -4133,7 +4122,10 @@ func (a *App) switchProvider(cfg providers.Config) {
 		a.appendActivity(fmt.Sprintf("[red]Provider build failed[-]: %v", err))
 		return
 	}
+	a.mu.Lock()
 	a.provider = p
+	a.contextWindows = nil // windows are per provider
+	a.mu.Unlock()
 	a.runner.Provider = p
 	// Clear stale model list so openModelModal triggers a fresh fetch.
 	a.models = nil
@@ -4142,6 +4134,7 @@ func (a *App) switchProvider(cfg providers.Config) {
 	a.currentModel = a.sanitizeModel(a.currentModel)
 	a.refreshHeader()
 	a.refreshFooter()
+	a.refreshContextForModel(a.currentModel)
 	a.appendActivity(fmt.Sprintf("Switched to provider %s (%s)", cfg.Name, cfg.BaseURL))
 	a.loadModelsAsync()
 }
@@ -4231,7 +4224,7 @@ func (a *App) openAgentModal() {
 			// to the right model family.
 			if agentCfg.DefaultModel != "" && !a.isErgoProvider() && (a.currentModel == "" || a.currentModel == a.previousAgentDefaultModel) {
 				// (Skipped for ergo: agent defaults are Ollama tags and
-				// the gateway only serves ergo / ergo-lite / ergo-genius.)
+				// the gateway serves ergo/* and provider-prefixed ids.)
 				if m := a.sanitizeModel(agentCfg.DefaultModel); m != "" {
 					a.currentModel = m
 				}
@@ -4291,8 +4284,7 @@ func (a *App) openModelModal() {
 		return
 	}
 
-	for _, model := range a.models {
-		item := model
+	addModel := func(item client.ModelInfo) {
 		label := item.Name
 		if item.ParameterSize != "" {
 			label = fmt.Sprintf("%s (%s)", item.Name, item.ParameterSize)
@@ -4320,55 +4312,24 @@ func (a *App) openModelModal() {
 			a.refreshContextForModel(item.Name)
 		})
 	}
+	if a.isErgoProvider() {
+		// Unified catalogue grouped by provider prefix, ergo tiers first.
+		// Group headers are inert rows.
+		for _, g := range groupErgoModels(a.models) {
+			list.AddItem(fmt.Sprintf("[%s::b]── %s ──[-:-:-]", a.palette.HexDim, g.Name), "", 0, nil)
+			for _, m := range g.Models {
+				addModel(m)
+			}
+		}
+	} else {
+		for _, m := range a.models {
+			addModel(m)
+		}
+	}
 	list.SetDoneFunc(func() {
 		a.closeModal()
 	})
 	a.showModal("Select Model", list)
-}
-
-// refreshContextForModel re-estimates the token consumption indicator
-// against the context window of `model` and re-renders the context bar
-// right away. Use this immediately after switching agent or model so
-// the bar reflects the new model's window without waiting for the
-// next model response. Each model family has a different context
-// window (e.g. 8K for some Gemini variants vs. 128K+ for others), so
-// the "X% of Y tokens" total genuinely changes on a switch. If the
-// provider can't resolve a window or there's no history yet, the bar
-// falls back to "ctx: unavailable" so the user sees a clear state.
-func (a *App) refreshContextForModel(model string) {
-	if a.provider == nil || model == "" {
-		return
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	window, err := a.provider.ContextWindow(ctx, model)
-	if err != nil || window <= 0 {
-		// Unknown window — keep the previous bar but mark it so the
-		// user at least sees the model name is in effect. We
-		// intentionally don't blank the indicator; the next model
-		// response will refresh it with authoritative counts.
-		a.appendActivity(fmt.Sprintf("[%s]token indicator[-]: context window unknown for %s", a.palette.HexDim, model))
-		return
-	}
-	estChars := 0
-	for _, m := range a.history {
-		estChars += len(m.Role) + len(m.Content) + len(m.Thinking) + len(m.ToolName)
-		for _, tc := range m.ToolCalls {
-			estChars += len(tc.Function.Name) + len(tc.Function.Arguments)
-		}
-	}
-	estTok := estChars / 4
-	if estTok > window {
-		estTok = window
-	}
-	remaining := window - estTok
-	if remaining < 0 {
-		remaining = 0
-	}
-	pctUsed := float64(estTok) / float64(window) * 100.0
-	a.contextInfo = fmt.Sprintf("ctx: ~%s / %s used (%.1f%%, est), remaining=%s",
-		formatTokensCompactTUI(estTok), formatTokensCompactTUI(window), pctUsed, formatTokensCompactTUI(remaining))
-	a.refreshContextBar()
 }
 
 func (a *App) openToolModal() {

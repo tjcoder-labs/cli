@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
+
 	"github.com/tjcoder-labs/cli/internal/agent"
 	"github.com/tjcoder-labs/cli/internal/client"
 	"github.com/tjcoder-labs/cli/internal/memories"
@@ -57,10 +59,21 @@ type Event struct {
 	Type     EventType
 	ToolName string
 	Text     string
+	// Usage is set on EventContext events.
+	Usage *client.ContextUsage
+}
+
+// Observer receives anonymous timing/outcome signals (telemetry). It
+// never sees prompts, arguments, or tool output.
+type Observer interface {
+	ToolDone(name string, err error, d time.Duration)
+	TurnDone(d time.Duration, promptTokens, outputTokens int, err error)
 }
 
 type Runner struct {
-	Provider      client.Provider
+	Provider client.Provider
+	// Observer, when non-nil, is told about each tool call and turn.
+	Observer      Observer
 	Registry      *tools.Registry
 	WorkspaceRoot string
 	MaxSteps      int
@@ -70,6 +83,11 @@ type Runner struct {
 	CLICommandSink tools.CLICommandSink
 	SessionState   *session.State
 	PersistSession func() error
+	// Prompter lets tools ask the user inline questions (TUI only);
+	// Sudo carries the sudo authorization policy. Both nil headless
+	// unless --allow-sudo sets Sudo.
+	Prompter tools.Prompter
+	Sudo     *tools.SudoPolicy
 
 	// Steering, if non-nil, is a buffered channel of user
 	// mid-turn steering messages. The runner drains it at two
@@ -244,6 +262,23 @@ func (p *thoughtParser) Flush() (reasoning, commentary string) {
 }
 
 func (r *Runner) Run(ctx context.Context, history []client.Message, prompt string, agentCfg agent.Config, model string, enabledTools []string, onEvent func(Event)) ([]client.Message, error) {
+	if r.Observer == nil {
+		return r.run(ctx, history, prompt, agentCfg, model, enabledTools, onEvent)
+	}
+	start := time.Now()
+	out, err := r.run(ctx, history, prompt, agentCfg, model, enabledTools, onEvent)
+	var in, gen int
+	for i := len(out) - 1; i >= len(history); i-- {
+		if out[i].Role == "assistant" {
+			in, gen = out[i].PromptEvalCount, out[i].EvalCount
+			break
+		}
+	}
+	r.Observer.TurnDone(time.Since(start), in, gen, err)
+	return out, err
+}
+
+func (r *Runner) run(ctx context.Context, history []client.Message, prompt string, agentCfg agent.Config, model string, enabledTools []string, onEvent func(Event)) ([]client.Message, error) {
 	if r.MaxSteps <= 0 {
 		r.MaxSteps = defaultMaxToolSteps
 	}
@@ -274,6 +309,7 @@ func (r *Runner) Run(ctx context.Context, history []client.Message, prompt strin
 		systemPrompt = "Repository instructions from CODER.md (auto-injected):\n" + coderPrompt + "\n\n" + systemPrompt
 	}
 
+	ctxTrack := newContextTracker(model, contextWindow, systemPrompt, defs)
 	for step := 0; step < r.MaxSteps; step++ {
 
 		// 0. Mid-turn steering drain. Before each model call, drain
@@ -303,9 +339,9 @@ func (r *Runner) Run(ctx context.Context, history []client.Message, prompt strin
 			if s = strings.TrimSpace(s); s != "" {
 				if onEvent != nil {
 					onEvent(Event{
-					Type:     EventSteering,
-					ToolName: "steering",
-					Text:     s,
+						Type:     EventSteering,
+						ToolName: "steering",
+						Text:     s,
 					})
 				}
 				history = append(history, client.Message{
@@ -347,10 +383,7 @@ func (r *Runner) Run(ctx context.Context, history []client.Message, prompt strin
 		// 2. The sanitized message is appended to the conversation history
 		history = append(history, msg)
 		if onEvent != nil {
-			onEvent(Event{
-				Type: EventContext,
-				Text: formatContextUsage(msg, contextWindow),
-			})
+			onEvent(contextEvent(ctxTrack.assistant(history)))
 		}
 
 		// 3. If no tools were called (natively or via fallback), the turn ends
@@ -383,6 +416,7 @@ func (r *Runner) Run(ctx context.Context, history []client.Message, prompt strin
 					Text:     strings.TrimSpace(string(call.Function.Arguments)),
 				})
 			}
+			toolStart := time.Now()
 			result, err := r.Registry.Execute(ctx, call.Function.Name, call.Function.Arguments, tools.ExecEnv{
 				WorkspaceRoot:  r.WorkspaceRoot,
 				Provider:       r.Provider,
@@ -390,7 +424,12 @@ func (r *Runner) Run(ctx context.Context, history []client.Message, prompt strin
 				CommandSink:    r.CLICommandSink,
 				SessionState:   r.SessionState,
 				PersistSession: r.PersistSession,
+				Prompter:       r.Prompter,
+				Sudo:           r.Sudo,
 			})
+			if r.Observer != nil {
+				r.Observer.ToolDone(call.Function.Name, err, time.Since(toolStart))
+			}
 			if err != nil {
 				errText := fmt.Sprintf("tool %s failed: %v", call.Function.Name, err)
 				if onEvent != nil {
@@ -421,19 +460,7 @@ func (r *Runner) Run(ctx context.Context, history []client.Message, prompt strin
 				// search results) can grow history by hundreds of KB in
 				// a single round. The user should see that spike
 				// immediately rather than after the next model call.
-				if contextWindow > 0 {
-					est := estimateContextChars(history)
-					estTok := est / 4 // chars-to-tokens approximation
-					if estTok > contextWindow {
-						estTok = contextWindow
-					}
-					remaining := contextWindow - estTok
-					pctUsed := float64(estTok) / float64(contextWindow) * 100.0
-					onEvent(Event{
-						Type: EventContext,
-						Text: fmt.Sprintf("ctx: ~%s / %s used (%.1f%%, est), remaining=%s", formatTokensCompact(estTok), formatTokensCompact(contextWindow), pctUsed, formatTokensCompact(remaining)),
-					})
-				}
+				onEvent(contextEvent(ctxTrack.estimate(history)))
 			}
 		}
 	}
@@ -474,10 +501,7 @@ func (r *Runner) Run(ctx context.Context, history []client.Message, prompt strin
 	}
 	history = append(history, msg)
 	if onEvent != nil {
-		onEvent(Event{
-			Type: EventContext,
-			Text: formatContextUsage(msg, contextWindow),
-		})
+		onEvent(contextEvent(ctxTrack.assistant(history)))
 	}
 	return history, nil
 }
@@ -664,42 +688,4 @@ func formatTokensCompact(n int) string {
 		return fmt.Sprintf("%dM", int(v))
 	}
 	return fmt.Sprintf("%.1fM", v)
-}
-
-// estimateContextChars approximates history size in characters (for use
-// with chars/4 = approximate tokens). We measure role + content + the
-// encoded tool_calls JSON so the estimate grows in step with what's
-// actually sent to the model on the next turn.
-func estimateContextChars(history []client.Message) int {
-	total := 0
-	for _, m := range history {
-		total += len(m.Content) + len(m.Role) + len(m.ToolName)
-		for _, tc := range m.ToolCalls {
-			total += len(tc.Function.Name) + len(tc.Function.Arguments)
-		}
-	}
-	return total
-}
-
-func formatContextUsage(msg client.Message, contextWindow int) string {
-	if msg.PromptEvalCount <= 0 && msg.EvalCount <= 0 {
-		if contextWindow > 0 {
-			return fmt.Sprintf("ctx: ? / %s (usage unavailable)", formatTokensCompact(contextWindow))
-		}
-		return "ctx: unavailable"
-	}
-	if contextWindow <= 0 {
-		return fmt.Sprintf("ctx: used≈%s tok, output=%s tok (window unknown)", formatTokensCompact(msg.PromptEvalCount), formatTokensCompact(msg.EvalCount))
-	}
-	used := msg.PromptEvalCount
-	remaining := contextWindow - used
-	if remaining < 0 {
-		remaining = 0
-	}
-	pctUsed := float64(used) / float64(contextWindow) * 100.0
-	// Provide a compact human-readable context string. The UI expects the
-	// leading numeric "used / total" pair so it can render a progress bar.
-	return fmt.Sprintf("ctx: %s / %s used (%.1f%%), remaining=%s, output=%s",
-		formatTokensCompact(used), formatTokensCompact(contextWindow),
-		pctUsed, formatTokensCompact(remaining), formatTokensCompact(msg.EvalCount))
 }

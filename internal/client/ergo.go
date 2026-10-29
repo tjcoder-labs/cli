@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -37,6 +38,15 @@ var ergoContextWindows = map[string]int{
 	// Google (via gateway models)
 	"gemini-2.5-pro":   1048576,
 	"gemini-2.5-flash": 1048576,
+	// Ergo tiers (fallback only; the gateway's /api/show is authoritative)
+	"ergo/flash":  131072,
+	"ergo/pro":    262144,
+	"ergo/genius": 262144,
+	// xAI via gateway
+	"xai/grok-4.7":   500000,
+	"xai/grok-4.5":   1000000,
+	"xai/grok-4.3":   1000000,
+	"xai/grok-build": 256000,
 }
 
 // ---- OpenAI-compatible wire types ----
@@ -163,13 +173,42 @@ func IsErgoAuthError(err error) bool {
 
 // ---- provider ----
 
-// Ergo is a Provider backed by the ergo AI gateway's OpenAI-compatible
-// /v1/chat/completions endpoint. Authentication uses a scoped ergo API key
-// (scope "ergo-chat"); every call is metered against the tenant's wallet.
+// Ergo is a Provider backed by the ergo AI gateway. By default it speaks
+// the OpenAI-compatible /v1/chat/completions endpoint; UseOllamaProtocol
+// switches chat and model listing to the gateway's Ollama-compatible API
+// (/api/chat, /api/tags, /api/show). Authentication uses an ergo API key
+// with the "ergo-cli" scope (issued by /login); dashboard "ergo-chat" keys
+// are rejected by /v1. Every call is metered against the tenant's wallet.
 type Ergo struct {
 	baseURL    string
 	apiKey     string
 	httpClient *http.Client
+	ollama     *Ollama // non-nil when speaking the Ollama protocol
+	showOnce   sync.Once
+	show       *Ollama // /api/show client for context windows (OpenAI mode)
+}
+
+// ErgoDefaultOllamaPath is the gateway's Ollama-compatible API prefix
+// (it is also served under /ollama/api).
+const ErgoDefaultOllamaPath = "/api"
+
+// UseOllamaProtocol routes chat, model listing and /show through the
+// gateway's Ollama-compatible API at apiPath ("" = /api).
+func (e *Ergo) UseOllamaProtocol(apiPath string) *Ergo {
+	if strings.TrimSpace(apiPath) == "" {
+		apiPath = ErgoDefaultOllamaPath
+	}
+	o := NewOllamaCloud(e.baseURL, e.apiKey, e.httpClient.Timeout).WithAPIPath(apiPath)
+	e.ollama = o
+	return e
+}
+
+// Protocol reports the wire protocol in use ("openai" or "ollama").
+func (e *Ergo) Protocol() string {
+	if e.ollama != nil {
+		return "ollama"
+	}
+	return "openai"
 }
 
 // NewErgo creates an ergo provider. baseURL should include no trailing
@@ -195,6 +234,9 @@ func (e *Ergo) Chat(ctx context.Context, request ChatRequest, onEvent func(Strea
 	}
 	if e.apiKey == "" {
 		return Message{}, &ErgoAuthError{Message: "no ergo API key configured — run /login to authenticate"}
+	}
+	if e.ollama != nil {
+		return e.ollama.Chat(ctx, request, onEvent)
 	}
 	req := ergoChatRequest{
 		Model:      request.Model,
@@ -356,6 +398,9 @@ func (e *Ergo) ListModels(ctx context.Context) ([]ModelInfo, error) {
 	if e.apiKey == "" {
 		return nil, &ErgoAuthError{Message: "no ergo API key configured"}
 	}
+	if e.ollama != nil {
+		return e.ollama.ListModels(ctx)
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, e.baseURL+"/v1/models", nil)
 	if err != nil {
 		return nil, err
@@ -374,7 +419,9 @@ func (e *Ergo) ListModels(ctx context.Context) ([]ModelInfo, error) {
 	}
 	var decoded struct {
 		Data []struct {
-			ID string `json:"id"`
+			ID       string `json:"id"`
+			OwnedBy  string `json:"owned_by"`
+			AliasFor string `json:"alias_for"`
 		} `json:"data"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&decoded); err != nil {
@@ -382,14 +429,29 @@ func (e *Ergo) ListModels(ctx context.Context) ([]ModelInfo, error) {
 	}
 	models := make([]ModelInfo, 0, len(decoded.Data))
 	for _, m := range decoded.Data {
-		models = append(models, ModelInfo{Name: m.ID, Family: "ergo"})
+		if m.AliasFor != "" || strings.TrimSpace(m.ID) == "" {
+			continue // legacy ids (ergo, ergo-lite, …) stay valid server-side but are hidden
+		}
+		family := m.OwnedBy
+		if family == "" {
+			family = ErgoModelGroup(m.ID)
+		}
+		models = append(models, ModelInfo{Name: m.ID, Family: family})
 	}
 	return models, nil
 }
 
-// ContextWindow returns a best-effort window from the static map; 0 when
-// the model is unknown (the TUI treats 0 as "unknown", never fatal).
-func (e *Ergo) ContextWindow(_ context.Context, model string) (int, error) {
+// ContextWindow asks the gateway for the model's real window (its
+// Ollama-compatible /api/show reports the upstream model's
+// context_length, so ergo/flash|pro|genius resolve to whatever they route
+// to today). When the gateway cannot say, it falls back to the static
+// table; 0 means unknown (the TUI shows "window unknown", never a guess).
+func (e *Ergo) ContextWindow(ctx context.Context, model string) (int, error) {
+	if e.apiKey != "" {
+		if n, err := e.showClient().ContextWindow(ctx, model); err == nil && n > 0 {
+			return n, nil
+		}
+	}
 	if n, ok := ergoContextWindows[model]; ok {
 		return n, nil
 	}
@@ -399,6 +461,17 @@ func (e *Ergo) ContextWindow(_ context.Context, model string) (int, error) {
 		}
 	}
 	return 0, nil
+}
+
+// showClient is the gateway's Ollama-compatible API, used for /show.
+func (e *Ergo) showClient() *Ollama {
+	if e.ollama != nil {
+		return e.ollama
+	}
+	e.showOnce.Do(func() {
+		e.show = NewOllamaCloud(e.baseURL, e.apiKey, 10*time.Second).WithAPIPath(ErgoDefaultOllamaPath)
+	})
+	return e.show
 }
 
 // ShowModel surfaces gateway/rate metadata in the ModelDetails shape used

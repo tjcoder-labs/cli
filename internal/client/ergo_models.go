@@ -10,10 +10,10 @@ import (
 	"strings"
 )
 
-// ErgoDefaultModel is the agent used when nothing valid is remembered.
-const ErgoDefaultModel = "ergo"
+// ErgoDefaultModel is the model used when nothing valid is remembered.
+const ErgoDefaultModel = "ergo/pro"
 
-// ErgoAgent describes one of the gateway's models ("agents").
+// ErgoAgent describes one of the gateway's public ergo tiers.
 type ErgoAgent struct {
 	Name string
 	Desc string
@@ -22,9 +22,58 @@ type ErgoAgent struct {
 // ErgoAgents is the hardcoded fallback set (and the source of the
 // one-line descriptions) used when /v1/models is unavailable.
 var ErgoAgents = []ErgoAgent{
-	{Name: "ergo", Desc: "balanced everyday agent (default)"},
-	{Name: "ergo-lite", Desc: "fast and economical"},
-	{Name: "ergo-genius", Desc: "deepest reasoning for hard problems"},
+	{Name: "ergo/flash", Desc: "fast and economical"},
+	{Name: "ergo/pro", Desc: "balanced everyday model (default)"},
+	{Name: "ergo/genius", Desc: "deepest reasoning for hard problems"},
+}
+
+// ergoLegacyAliases maps pre-0.9.182 tier ids to the public ids.
+var ergoLegacyAliases = map[string]string{
+	"ergo":          "ergo/pro",
+	"ergo-pro":      "ergo/pro",
+	"ergo-standard": "ergo/flash",
+	"ergo-lite":     "ergo/flash",
+	"ergo-flash":    "ergo/flash",
+	"ergo-genius":   "ergo/genius",
+	"ergo/lite":     "ergo/flash",
+	"ergo/ergo":     "ergo/pro",
+}
+
+// NormalizeErgoModel migrates a saved or typed ergo model id: legacy
+// tier names map to ergo/flash|pro|genius, an unknown ergo-ish id maps
+// to ergo/pro, and provider-prefixed ids (xai/…, ollama/…) pass through.
+func NormalizeErgoModel(id string) string {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return ""
+	}
+	lower := strings.ToLower(id)
+	if to, ok := ergoLegacyAliases[lower]; ok {
+		return to
+	}
+	switch lower {
+	case "ergo/flash", "ergo/pro", "ergo/genius":
+		return lower
+	}
+	if strings.HasPrefix(lower, "ergo") {
+		return ErgoDefaultModel
+	}
+	return id
+}
+
+// IsErgoTier reports whether id is (or aliases) an ergo gateway tier, i.e.
+// a name that must never be sent to a non-ergo provider.
+func IsErgoTier(id string) bool {
+	return strings.HasPrefix(NormalizeErgoModel(id), "ergo/")
+}
+
+// ErgoModelGroup returns the provider prefix used to group the picker
+// ("ergo", "xai", "ollama", …; "other" when unprefixed).
+func ErgoModelGroup(id string) string {
+	if i := strings.Index(id, "/"); i > 0 {
+		return strings.ToLower(id[:i])
+	}
+	return "other"
 }
 
 // ErgoFallbackModels returns the names of ErgoAgents.
@@ -63,13 +112,17 @@ func ErgoModelAllowed(name string, available []string) bool {
 // ResolveErgoModel picks the model to use for the ergo provider. Priority:
 // an explicit choice (returned as-is — the gateway is the authority and the
 // user asked for it), then the saved value if it is a gateway model, then
-// the default ("ergo", or the first available model if "ergo" is not served).
+// the default (ergo/pro, or the first available model if it is not served).
+// Legacy saved ids are migrated with NormalizeErgoModel first.
 func ResolveErgoModel(explicit, saved string, available []string) string {
 	if e := strings.TrimSpace(explicit); e != "" {
+		if to, ok := ergoLegacyAliases[strings.ToLower(e)]; ok {
+			return to
+		}
 		return e
 	}
-	if ErgoModelAllowed(saved, available) {
-		return strings.TrimSpace(saved)
+	if saved = NormalizeErgoModel(saved); ErgoModelAllowed(saved, available) {
+		return saved
 	}
 	if len(available) == 0 || ErgoModelAllowed(ErgoDefaultModel, available) {
 		return ErgoDefaultModel
@@ -77,15 +130,16 @@ func ResolveErgoModel(explicit, saved string, available []string) string {
 	return available[0]
 }
 
-// ErgoAvailableModels returns the gateway's model names, fetched from
-// GET /v1/models, falling back to the hardcoded set on any failure or an
+// ErgoAvailableModels returns the gateway's full unified model list
+// (ergo tiers plus xai/, ollama/, google/, openai/ ids) via ListAllModels,
+// falling back to the hardcoded set on any failure or an
 // empty/blank list. It never returns an empty slice.
 func ErgoAvailableModels(ctx context.Context, p Provider) []string {
 	e, ok := p.(*Ergo)
 	if !ok || e == nil || !e.Authenticated() {
 		return ErgoFallbackModels()
 	}
-	infos, err := e.ListModels(ctx)
+	infos, err := e.ListAllModels(ctx)
 	if err != nil {
 		return ErgoFallbackModels()
 	}
@@ -153,10 +207,11 @@ func parseErgoModelNotFound(status int, body []byte, requested string) *ErgoMode
 }
 
 // ListAllModels queries the gateway's GET /v1/providers, which enumerates
-// every model the ergo platform can route to (the three public tiers plus
-// ollama/*, xai/*, google/*). It returns a flattened []ModelInfo whose Family
-// is the provider id. On any failure — including a gateway that predates the
-// /v1/providers route (404) — it falls back to ListModels (the three tiers).
+// every model the ergo platform can route to (ergo/flash|pro|genius plus
+// xai/*, ollama/*, google/*, openai/*). It returns a flattened []ModelInfo
+// whose Family is the provider id. On a 404 or an empty result it falls
+// back to ListModels (/v1/models, the same unified catalogue on current
+// gateways).
 func (e *Ergo) ListAllModels(ctx context.Context) ([]ModelInfo, error) {
 	if ctx == nil {
 		ctx = context.Background()

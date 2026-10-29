@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"cmp"
 	"context"
 	"embed"
 	"encoding/json"
@@ -21,6 +22,7 @@ import (
 	ctxpkg "github.com/tjcoder-labs/cli/internal/context"
 	"github.com/tjcoder-labs/cli/internal/reminders"
 	"github.com/tjcoder-labs/cli/internal/session"
+	"github.com/tjcoder-labs/cli/internal/telemetry"
 	"github.com/tjcoder-labs/cli/internal/tooling"
 	"github.com/tjcoder-labs/cli/internal/tools"
 	"github.com/tjcoder-labs/cli/internal/tracking"
@@ -116,6 +118,7 @@ func main() {
 	askToolMax := flag.Int("tool-max", 0, "headless ask mode: maximum number of tool calls (persisted in session)")
 	askFormat := flag.String("format", "text", "headless ask mode: coerce model output — one of {text, json, xml}. For json/xml the response is extracted, validated, and pretty-printed; tool activity remains enabled unless --no-tools is also set.")
 	flag.StringVar(askFormat, "output-format", "", "alias for --format (overrides --format when set)")
+	askAllowSudo := flag.Bool("allow-sudo", false, "headless ask mode: let run_command use sudo non-interactively (sudo -n; never prompts for a password)")
 
 	flag.Parse()
 
@@ -147,11 +150,21 @@ func main() {
 	savedProvider, _ := session.GetProvider()
 	*providerName = resolveProvider(autoProviderInputs(*providerName, savedProvider, *host, !headless))
 
+	tel := startTelemetry(headless)
+	defer tel.Close()
+	defer tel.Recover()
+
 	if flag.NArg() > 0 {
 		switch flag.Arg(0) {
 		case "version", "-v", "--version":
 			fmt.Printf("%s %s\n", productName, version)
 			fmt.Printf("Developed by %s\n", author)
+			return
+		case "update":
+			cmdUpdate(flag.Args()[1:])
+			return
+		case "telemetry":
+			cmdTelemetry(flag.Args()[1:])
 			return
 		case "models":
 			cmdModels(flag.Args()[1:], *providerName, *host, *geminiKey, *timeout)
@@ -193,6 +206,7 @@ func main() {
 				Session:       *askSession,
 				ToolMax:       askToolMax,
 				Format:        resolveFormatFlag(*askFormat),
+				AllowSudo:     *askAllowSudo,
 				ExplicitAgent: explicitAgent,
 				ExplicitModel: explicitModel,
 				ExplicitTools: explicitNoTools || explicitAllTools,
@@ -235,6 +249,7 @@ func main() {
 			Session:       *askSession,
 			ToolMax:       askToolMax,
 			Format:        resolveFormatFlag(*askFormat),
+			AllowSudo:     *askAllowSudo,
 			ExplicitAgent: explicitAgent,
 			ExplicitModel: explicitModel,
 			ExplicitTools: explicitNoTools || explicitAllTools,
@@ -260,6 +275,8 @@ func main() {
 
 	registry := tools.NewRegistry(provider)
 	app := tui.New(provider, registry, filepath.Clean(*workspaceRoot), modelOverride, productName, author, version)
+	app.SetObserver(telemetry.RunnerObserver{})
+	telemetry.Track("session_started", map[string]any{"provider_type": tui.ProviderType(provider), "mode": "tui"})
 	if err := app.Run(); err != nil {
 		fatal("%v", err)
 	}
@@ -425,12 +442,18 @@ func cmdModelsList(providerName, host, geminiKey string, timeout time.Duration) 
 	if err != nil {
 		fatal("%v", err)
 	}
-	models, err := provider.ListModels(nil)
+	var models []client.ModelInfo
+	if e, ok := provider.(*client.Ergo); ok {
+		// Full unified catalogue (ergo tiers + xai/, ollama/, google/, …).
+		models, err = e.ListAllModels(context.Background())
+	} else {
+		models, err = provider.ListModels(nil)
+	}
 	if err != nil {
 		fatal("list models: %v", err)
 	}
 	for _, m := range models {
-		fmt.Printf("%-36s  %s\n", m.Name, m.ParameterSize)
+		fmt.Printf("%-36s  %s\n", m.Name, cmp.Or(m.ParameterSize, m.Family))
 	}
 }
 
@@ -560,6 +583,9 @@ type askOptions struct {
 	// per-provider "format" parameters so it works uniformly across
 	// Ollama, Gemini, and any future provider.
 	Format string
+	// AllowSudo lets run_command use sudo non-interactively (sudo -n).
+	// Without it, headless sudo commands are denied.
+	AllowSudo bool
 }
 
 // cmdAsk runs a single prompt end-to-end without launching the tview TUI.
@@ -598,9 +624,9 @@ func ergoModelNotFoundMessage(e *client.ErgoModelNotFoundError, avail []string, 
 // provider must not receive a gateway agent name.
 func modelFitsProvider(isErgo bool, model string, ergoAvail []string) bool {
 	if isErgo {
-		return client.ErgoModelAllowed(model, ergoAvail)
+		return client.ErgoModelAllowed(client.NormalizeErgoModel(model), ergoAvail)
 	}
-	return !client.ErgoModelAllowed(model, client.ErgoFallbackModels())
+	return !client.IsErgoTier(model)
 }
 
 func cmdAsk(opts askOptions) {
@@ -659,8 +685,8 @@ func cmdAsk(opts askOptions) {
 	_, isErgo := provider.(*client.Ergo)
 	var ergoAvail []string
 	if isErgo {
-		// Gateway model set: GET /v1/models once signed in, else the
-		// hardcoded ergo / ergo-lite / ergo-genius.
+		// Full unified gateway catalogue (/v1/providers or /v1/models) once
+		// signed in, else the hardcoded ergo/flash, ergo/pro, ergo/genius.
 		fctx, fcancel := context.WithTimeout(context.Background(), 10*time.Second)
 		ergoAvail = client.ErgoAvailableModels(fctx, provider)
 		fcancel()
@@ -677,6 +703,9 @@ func cmdAsk(opts askOptions) {
 		default:
 			if saved, ok := session.GetModelForProvider(provKey); ok && saved != "" && modelFitsProvider(isErgo, saved, ergoAvail) {
 				model = saved
+				if norm := client.NormalizeErgoModel(saved); isErgo && norm != saved {
+					_ = session.SetModelForProvider(provKey, norm) // migrate legacy id
+				}
 			}
 		}
 		if isErgo {
@@ -756,7 +785,10 @@ func cmdAsk(opts askOptions) {
 		Registry:      registry,
 		WorkspaceRoot: filepath.Clean(opts.WorkspaceRoot),
 		MaxSteps:      8,
+		Sudo:          &tools.SudoPolicy{AllowNonInteractive: opts.AllowSudo},
+		Observer:      telemetry.RunnerObserver{},
 	}
+	telemetry.Track("session_started", map[string]any{"provider_type": tui.ProviderType(provider), "mode": "headless"})
 
 	// Override default MaxSteps if provided in session or via flag.
 	maxSteps := 8
