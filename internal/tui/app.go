@@ -323,6 +323,9 @@ type App struct {
 	inputRow tview.Primitive
 
 	mu sync.Mutex
+	// compactWindows caches context-window lookups for the /compact
+	// hint (guarded by mu). 0 = unknown / in flight.
+	compactWindows map[string]int
 
 	// config holds the persisted user-tunable settings loaded from
 	// .ergo-cli-go/config.json. Mutated by /config and read by the
@@ -1462,7 +1465,12 @@ func (a *App) renderCommandPalette() string {
 	// Append the highlighted command's description as a faint trailer
 	// when there's room, so the user knows what the selection does.
 	desc := a.hintMatches[a.hintSelected].desc
-	if desc != "" && used+len(desc)+3 <= budget {
+	if a.hintMatches[a.hintSelected].cmd == "compact" {
+		// /compact: show which model will summarise and how full the
+		// context is relative to that model's window.
+		desc = a.compactTip(strings.TrimPrefix(a.hintInput(), "/"))
+	}
+	if desc != "" && used+len([]rune(desc))+3 <= budget {
 		b.WriteString(fmt.Sprintf("   [%s]%s[-]", a.palette.HexFaint, desc))
 	}
 	b.WriteString(" ")
@@ -2810,18 +2818,9 @@ func (a *App) compactHistory(parts []string) {
 		return
 	}
 
-	model := a.currentModel
-	// Honor the CompactModel config override if set — lets the user
-	// use a cheaper / faster model for summarization while keeping
-	// a more capable model for the main conversation.
-	if a.config.CompactModel != "" {
-		if m := a.sanitizeModel(a.config.CompactModel); m != "" {
-			model = m
-		}
-	}
-	if len(parts) > 1 {
-		model = parts[1]
-	}
+	// Explicit arg > CompactModel config override (a cheaper / faster
+	// summariser) > the active model. Shared with the /compact hint.
+	model := a.compactionModel(parts)
 
 	preCount := len(a.history)
 	preChars := 0
