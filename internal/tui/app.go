@@ -348,8 +348,17 @@ type App struct {
 	// postUIWait (see uiqueue.go). Never call tv.QueueUpdate* directly.
 	uiq uiQueue
 	// contextWindows caches context-window lookups (per provider) for the
-	// status bar and the /compact hint (guarded by mu). 0 = unknown / in
-	// flight.
+	// status bar and the /compact hint. 0 = unknown / in flight. Guarded
+	// by ctxWinMu — NOT mu — because the lookup runs inside saveSession
+	// and refreshContextBar, which callers (submit, submitScheduled) invoke
+	// while already holding the non-reentrant mu. ctxWinMu is a leaf lock:
+	// it may be taken while holding mu, never the other way round, and
+	// nothing blocking (no network, no UI post) happens under it.
+	ctxWinMu sync.Mutex
+	// ctxWinGen is bumped (under ctxWinMu) whenever the cache is reset on
+	// a provider switch, so an in-flight lookup for the old provider
+	// never writes into the new provider's cache.
+	ctxWinGen      uint64
 	contextWindows map[string]int
 
 	// config holds the persisted user-tunable settings loaded from
@@ -4156,8 +4165,11 @@ func (a *App) switchProvider(cfg providers.Config) {
 		return
 	}
 	a.mu.Lock()
+	a.ctxWinMu.Lock()
 	a.provider = p
 	a.contextWindows = nil // windows are per provider
+	a.ctxWinGen++
+	a.ctxWinMu.Unlock()
 	a.mu.Unlock()
 	a.runner.Provider = p
 	// Clear stale model list so openModelModal triggers a fresh fetch.

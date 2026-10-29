@@ -366,8 +366,11 @@ func ergoBaseURL() string {
 // on the next chat).
 func (a *App) swapErgoProvider(key string) {
 	a.mu.Lock()
+	a.ctxWinMu.Lock()
 	a.provider = client.NewErgo(ergoBaseURL(), key, 0)
 	a.contextWindows = nil
+	a.ctxWinGen++
+	a.ctxWinMu.Unlock()
 	a.mu.Unlock()
 	if a.runner != nil {
 		// The runner holds its own provider reference; keep it in sync so

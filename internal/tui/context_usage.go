@@ -87,12 +87,12 @@ func (a *App) resetContextUsage() {
 func (a *App) recordContextUsage(u client.ContextUsage) {
 	a.ctxUsage = u
 	if u.Model != "" && u.Window > 0 {
-		a.mu.Lock()
+		a.ctxWinMu.Lock()
 		if a.contextWindows == nil {
 			a.contextWindows = map[string]int{}
 		}
 		a.contextWindows[u.Model] = u.Window
-		a.mu.Unlock()
+		a.ctxWinMu.Unlock()
 	}
 }
 
@@ -100,11 +100,21 @@ func (a *App) recordContextUsage(u client.ContextUsage) {
 // unknown or not yet resolved). The first lookup for a model is done
 // off the UI goroutine because ContextWindow may hit the network
 // (Ollama/gateway /api/show); the bar re-renders when it lands.
+//
+// It only takes ctxWinMu (never mu), so it is safe to call while the
+// caller holds mu — saveSession and refreshContextBar reach it from
+// submit/submitScheduled with mu held. Using mu here self-deadlocked
+// every plain chat message.
 func (a *App) contextWindowFor(model string) int {
-	if model == "" || a.provider == nil {
+	if model == "" {
 		return 0
 	}
-	a.mu.Lock()
+	a.ctxWinMu.Lock()
+	provider := a.provider
+	if provider == nil {
+		a.ctxWinMu.Unlock()
+		return 0
+	}
 	if a.contextWindows == nil {
 		a.contextWindows = map[string]int{}
 	}
@@ -112,8 +122,8 @@ func (a *App) contextWindowFor(model string) int {
 	if !ok {
 		a.contextWindows[model] = 0 // mark in-flight; a miss stays 0
 	}
-	provider := a.provider
-	a.mu.Unlock()
+	gen := a.ctxWinGen
+	a.ctxWinMu.Unlock()
 	if ok {
 		return n
 	}
@@ -124,12 +134,16 @@ func (a *App) contextWindowFor(model string) int {
 		if err != nil || w <= 0 {
 			return
 		}
-		a.mu.Lock()
-		if a.provider == provider {
+		a.ctxWinMu.Lock()
+		stored := a.ctxWinGen == gen
+		if stored {
+			if a.contextWindows == nil {
+				a.contextWindows = map[string]int{}
+			}
 			a.contextWindows[model] = w
 		}
-		a.mu.Unlock()
-		if a.tv != nil {
+		a.ctxWinMu.Unlock()
+		if stored && a.tv != nil {
 			a.postUI(func() { a.refreshContextBar() })
 		}
 	}()
