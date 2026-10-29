@@ -693,6 +693,18 @@ func cmdAsk(opts askOptions) {
 		// this is the common case.
 		model = defaultGeminiModel
 	}
+	if _, openAICompatible := provider.(*client.OpenAICompatible); openAICompatible && !opts.ExplicitModel {
+		modelCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		available, listErr := provider.ListModels(modelCtx)
+		cancel()
+		if listErr != nil {
+			fatal("list models for provider %q: %v", opts.Provider, listErr)
+		}
+		model = resolveAvailableModel(model, agentCfg.DefaultModel, available)
+		if model == "" {
+			fatal("provider %q returned no available models; specify one with --model", opts.Provider)
+		}
+	}
 
 	// When the user explicitly selects a model on a headless run
 	// (-model), remember it as the shared cross-mode choice so the next
@@ -875,6 +887,29 @@ func cmdAsk(opts askOptions) {
 		return
 	}
 	emitFormatted(stdoutWriter, stderrWriter, opts.Format, final, opts.Quiet)
+}
+
+func resolveAvailableModel(preferred, fallback string, available []client.ModelInfo) string {
+	contains := func(name string) bool {
+		for _, model := range available {
+			if model.Name == name {
+				return true
+			}
+		}
+		return false
+	}
+	if preferred != "" && contains(preferred) {
+		return preferred
+	}
+	if fallback != "" && contains(fallback) {
+		return fallback
+	}
+	for _, model := range available {
+		if name := strings.TrimSpace(model.Name); name != "" {
+			return name
+		}
+	}
+	return ""
 }
 
 // emitFormatted writes the model's final assistant message to stdout

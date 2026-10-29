@@ -212,14 +212,19 @@ func (e *Ergo) ListAllModels(ctx context.Context) ([]ModelInfo, error) {
 	return models, nil
 }
 
-// ProviderKey returns the prefs key for a provider instance: "ergo",
-// "gemini", or "ollama" (local and hosted Ollama share Ollama-style names).
+// ProviderKey returns the prefs key for a provider instance. Registered
+// OpenAI-compatible gateways keep model choices under their registry name.
 func ProviderKey(p Provider) string {
 	switch p.(type) {
 	case *Ergo:
 		return "ergo"
 	case *Gemini:
 		return "gemini"
+	case *OpenAICompatible:
+		if openAI, ok := p.(*OpenAICompatible); ok && openAI.providerName != "" {
+			return openAI.providerName
+		}
+		return "openai-compatible"
 	default:
 		return "ollama"
 	}

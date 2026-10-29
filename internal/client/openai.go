@@ -21,9 +21,10 @@ import (
 // gateways (LM Studio, vLLM, Together, Groq, custom ergo-compatible
 // proxies, ...) without a bespoke client per vendor.
 type OpenAICompatible struct {
-	baseURL    string
-	apiKey     string
-	httpClient *http.Client
+	baseURL      string
+	apiKey       string
+	providerName string
+	httpClient   *http.Client
 	// ctxWindows is an optional static override; when a model is absent we
 	// report 0 (= "unknown") rather than guess.
 	ctxWindows map[string]int

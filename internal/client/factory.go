@@ -98,7 +98,9 @@ func NewProviderFromConfig(cfg providers.Config, timeout time.Duration) (Provide
 		return NewErgo(cfg.BaseURL, key, timeout), nil
 	default:
 		key := cfg.APIKey
-		return NewOpenAICompatible(cfg.BaseURL, key, timeout), nil
+		p := NewOpenAICompatible(cfg.BaseURL, key, timeout)
+		p.providerName = cfg.Name
+		return p, nil
 	}
 }
 

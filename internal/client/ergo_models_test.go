@@ -8,6 +8,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/tjcoder-labs/cli/internal/providers"
 )
 
 func TestResolveErgoModel(t *testing.T) {
@@ -98,6 +100,13 @@ func TestErgoChatOther404IsNotModelNotFound(t *testing.T) {
 func TestProviderKey(t *testing.T) {
 	if got := ProviderKey(NewErgo("http://x", "k", 0)); got != "ergo" {
 		t.Fatalf("got %q", got)
+	}
+	p, err := NewProviderFromConfig(providers.Config{Name: "my-gateway", BaseURL: "http://localhost"}, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := ProviderKey(p); got != "my-gateway" {
+		t.Fatalf("custom provider key = %q, want my-gateway", got)
 	}
 }
 

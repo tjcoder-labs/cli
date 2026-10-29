@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/tjcoder-labs/cli/internal/client"
+	"github.com/tjcoder-labs/cli/internal/providers"
 	"github.com/tjcoder-labs/cli/internal/session"
 )
 
@@ -156,6 +157,77 @@ func TestModelFitsProvider(t *testing.T) {
 	}
 	if !modelFitsProvider(false, "minimax-m3:cloud", avail) {
 		t.Error("ollama tag must fit ollama")
+	}
+}
+
+func TestResolveAvailableModel(t *testing.T) {
+	available := []client.ModelInfo{{Name: "custom-a"}, {Name: "custom-b"}}
+	for _, tt := range []struct {
+		name      string
+		preferred string
+		fallback  string
+		models    []client.ModelInfo
+		want      string
+	}{
+		{"remembered model wins", "custom-b", "custom-a", available, "custom-b"},
+		{"agent default is used when available", "stale", "custom-a", available, "custom-a"},
+		{"first provider model is fallback", "stale", "also-stale", available, "custom-a"},
+		{"empty catalog has no selection", "stale", "also-stale", nil, ""},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := resolveAvailableModel(tt.preferred, tt.fallback, tt.models); got != tt.want {
+				t.Fatalf("resolveAvailableModel() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestCmdAskRoutesToAvailableOpenAICompatibleModel(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	var requestedModel string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/models":
+			_, _ = w.Write([]byte(`{"data":[{"id":"served-model"}]}`))
+		case "/v1/chat/completions":
+			var request struct {
+				Model string `json:"model"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			requestedModel = request.Model
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\n"))
+			_, _ = w.Write([]byte("data: [DONE]\n\n"))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	if err := providers.Save(providers.Registry{
+		Active: "test-gateway",
+		Providers: []providers.Config{{
+			Name: "test-gateway", BaseURL: server.URL,
+		}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	workspace := t.TempDir()
+	cmdAsk(askOptions{
+		Provider:      "test-gateway",
+		WorkspaceRoot: workspace,
+		Timeout:       5 * time.Second,
+		Agent:         "software-engineer",
+		Quiet:         true,
+		Prompt:        "hello",
+		Session:       false,
+		ExplicitAgent: true,
+	})
+	if requestedModel != "served-model" {
+		t.Fatalf("chat used model %q, want served-model", requestedModel)
 	}
 }
 

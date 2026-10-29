@@ -1,11 +1,15 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/rivo/tview"
+	"github.com/tjcoder-labs/cli/internal/client"
 	"github.com/tjcoder-labs/cli/internal/providers"
+	"github.com/tjcoder-labs/cli/internal/session"
 )
 
 // openProvidersModal lists the global provider registry and lets the user
@@ -66,7 +70,13 @@ func (a *App) openProviderDetail(name string) {
 	a.styleModalList(list)
 	list.AddItem("Activate", "make this the default provider", 0, func() {
 		reg.Active = name
-		_ = providers.Save(reg)
+		if err := providers.Save(reg); err != nil {
+			a.appendActivity(fmt.Sprintf("[red]Provider activation failed[-]: %v", err))
+			return
+		}
+		if err := session.SetProvider(name); err != nil {
+			a.appendActivity(fmt.Sprintf("[red]Provider preference save failed[-]: %v", err))
+		}
 		// Rebuild the live client and reload models for the new provider.
 		a.switchProvider(cfg)
 		a.closeModal()
@@ -118,9 +128,7 @@ func (a *App) openProviderEditor(existing providers.Config) {
 	form.AddDropDown("Auth", []string{"none", "api_key", "device_code"}, authIndex(auth), func(option string, _ int) {
 		auth = option
 	})
-	if existing.Auth == providers.AuthAPIKey {
-		form.AddInputField("API key", existing.APIKey, 60, nil, func(s string) { existing.APIKey = strings.TrimSpace(s) })
-	}
+	form.AddInputField("API key (optional)", existing.APIKey, 60, nil, func(s string) { existing.APIKey = strings.TrimSpace(s) })
 
 	save := func() {
 		if name == "" || baseURL == "" {
@@ -131,6 +139,9 @@ func (a *App) openProviderEditor(existing providers.Config) {
 		cfg.Name = name
 		cfg.BaseURL = strings.TrimRight(baseURL, "/")
 		cfg.Auth = providers.AuthFlow(auth)
+		if cfg.Auth != providers.AuthAPIKey {
+			cfg.APIKey = ""
+		}
 		if !cfg.Valid() {
 			a.appendActivity("[red]Invalid provider config[-]")
 			return
@@ -157,13 +168,58 @@ func (a *App) openProviderEditor(existing providers.Config) {
 			a.appendActivity(fmt.Sprintf("[red]Provider save failed[-]: %v", err))
 			return
 		}
-		a.appendActivity(fmt.Sprintf("Saved provider %s", cfg.Name))
+		a.appendActivity(fmt.Sprintf("Saved provider %s; checking integration...", cfg.Name))
 		a.openProvidersModal()
+		a.checkProviderIntegration(cfg)
 	}
 	form.AddButton("Save", save)
 	form.AddButton("Cancel", func() { a.openProvidersModal() })
 
 	a.showModal("Provider", form)
+}
+
+func validateProviderIntegration(cfg providers.Config) (int, error) {
+	p, err := client.NewProviderFromConfig(cfg, 8*time.Second)
+	if err != nil {
+		return 0, err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+	models, err := p.ListModels(ctx)
+	if err != nil {
+		return 0, err
+	}
+	if len(models) == 0 {
+		return 0, fmt.Errorf("provider returned no models")
+	}
+	return len(models), nil
+}
+
+func modelFromProviderModels(current string, models []client.ModelInfo) (string, bool) {
+	for _, model := range models {
+		if model.Name == current {
+			return current, false
+		}
+	}
+	for _, model := range models {
+		if name := strings.TrimSpace(model.Name); name != "" {
+			return name, current != ""
+		}
+	}
+	return current, false
+}
+
+func (a *App) checkProviderIntegration(cfg providers.Config) {
+	go func() {
+		count, err := validateProviderIntegration(cfg)
+		a.tv.QueueUpdateDraw(func() {
+			if err != nil {
+				a.appendActivity(fmt.Sprintf("[yellow]Provider %s saved, but integration check failed: %v[-]", cfg.Name, err))
+				return
+			}
+			a.appendActivity(fmt.Sprintf("[green]Provider %s integration verified (%d models)[-]", cfg.Name, count))
+		})
+	}()
 }
 
 func authIndex(auth string) int {
@@ -181,6 +237,8 @@ func authIndex(auth string) int {
 // can be removed; Save re-selects the first remaining provider.
 func (a *App) removeProvider(name string) {
 	reg := providers.Load()
+	wasActive := reg.Active == name
+	savedProvider, _ := session.GetProvider()
 	out := reg.Providers[:0]
 	found := false
 	for _, p := range reg.Providers {
@@ -201,6 +259,12 @@ func (a *App) removeProvider(name string) {
 	if err := providers.Save(reg); err != nil {
 		a.appendActivity(fmt.Sprintf("[red]Provider remove failed[-]: %v", err))
 		return
+	}
+	if reg.Active != "" && (wasActive || savedProvider == name) {
+		if err := session.SetProvider(reg.Active); err != nil {
+			a.appendActivity(fmt.Sprintf("[red]Provider preference update failed[-]: %v", err))
+			return
+		}
 	}
 	a.appendActivity(fmt.Sprintf("Removed provider %s", name))
 	a.openProvidersModal()
@@ -243,6 +307,7 @@ func (a *App) openAPIKeyLogin(cfg providers.Config) {
 		}
 		a.appendActivity(fmt.Sprintf("Stored API key for %s", cfg.Name))
 		a.closeModal()
+		a.checkProviderIntegration(cfg)
 	})
 	form.AddButton("Cancel", func() { a.closeModal() })
 	a.showModal(fmt.Sprintf("Login: %s", cfg.Name), form)

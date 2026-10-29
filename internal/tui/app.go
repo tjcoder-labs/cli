@@ -4172,17 +4172,26 @@ func (a *App) loadModels() {
 	a.refreshHeader()
 }
 
-// afterModelsLoaded syncs the ergo gateway model set from a fresh model list.
+// afterModelsLoaded syncs provider-specific model state from a fresh list.
 func (a *App) afterModelsLoaded() {
-	if !a.isErgoProvider() {
+	if a.isErgoProvider() {
+		names := make([]string, 0, len(a.models))
+		for _, m := range a.models {
+			names = append(names, m.Name)
+		}
+		if note := a.applyErgoModels(names); note != "" {
+			a.appendActivity(fmt.Sprintf("[%s]%s[-]", a.palette.HexLavender, note))
+		}
 		return
 	}
-	names := make([]string, 0, len(a.models))
-	for _, m := range a.models {
-		names = append(names, m.Name)
+	if _, ok := a.provider.(*client.OpenAICompatible); !ok || a.modelChosen {
+		return
 	}
-	if note := a.applyErgoModels(names); note != "" {
-		a.appendActivity(fmt.Sprintf("[%s]%s[-]", a.palette.HexLavender, note))
+	model, changed := modelFromProviderModels(a.currentModel, a.models)
+	if changed {
+		old := a.currentModel
+		a.currentModel = model
+		a.appendActivity(fmt.Sprintf("[%s]model %q is not available from this provider — using %s[-]", a.palette.HexLavender, old, model))
 	}
 }
 
