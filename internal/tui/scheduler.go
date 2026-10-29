@@ -200,7 +200,7 @@ func (w *scheduleWorker) fire(e reminders.Entry, now time.Time) {
 	// Stamp last-run so a restart doesn't refire this tick and a
 	// concurrent headless runner sees the tick as claimed.
 	if err := reminders.MarkRun(a.workspaceRoot, e.ID, now); err != nil {
-		a.appendActivity(fmt.Sprintf("["+a.palette.HexOrchid+"::b]warning[-:-:-]: could not persist schedule last-run: %v", err))
+		a.appendActivity(fmt.Sprintf("["+a.palette.HexPurple+"::b]! warning[-:-:-]: could not persist schedule last-run: %v", err))
 	} else {
 		// Keep our in-memory cache consistent with what we wrote.
 		w.mu.Lock()

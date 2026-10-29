@@ -473,7 +473,7 @@ func (r *Runner) run(ctx context.Context, history []client.Message, prompt strin
 		})
 		onEvent(Event{
 			Type: EventCommentary,
-			Text: "\n[#C73CDC::b]Tool-call budget reached for this turn. Generating a checkpoint response without additional tools.[-:-:-]\n",
+			Text: "\n\n**! Tool-call budget reached for this turn.** Generating a checkpoint response without additional tools.\n\n",
 		})
 	}
 

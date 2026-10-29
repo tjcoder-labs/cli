@@ -1,0 +1,6 @@
+{
+  "name": "coder",
+  "version": "0.9.188",
+  "nested": {"list": [1, 2.5, -3], "flag": false, "nothing": null},
+  "text": "contains [red]tags[-] literally"
+}

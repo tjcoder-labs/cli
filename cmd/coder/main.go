@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/rivo/tview"
 	"github.com/tjcoder-labs/cli/internal/agent"
 	"github.com/tjcoder-labs/cli/internal/browser"
 	"github.com/tjcoder-labs/cli/internal/client"
@@ -23,6 +24,7 @@ import (
 	"github.com/tjcoder-labs/cli/internal/reminders"
 	"github.com/tjcoder-labs/cli/internal/session"
 	"github.com/tjcoder-labs/cli/internal/telemetry"
+	"github.com/tjcoder-labs/cli/internal/theme"
 	"github.com/tjcoder-labs/cli/internal/tooling"
 	"github.com/tjcoder-labs/cli/internal/tools"
 	"github.com/tjcoder-labs/cli/internal/tracking"
@@ -833,13 +835,14 @@ func cmdAsk(opts askOptions) {
 			// its content below from history.
 			commentaryBuf.WriteString(ev.Text)
 		case tooling.EventToolStart:
-			line := fmt.Sprintf("[#7C3AED]→ %s[-] %s\n", ev.ToolName, ev.Text)
+			th := theme.Current()
+			line := fmt.Sprintf("[%s]→ %s[-] %s\n", th.Deep, tview.Escape(ev.ToolName), tview.Escape(ev.Text))
 			activityBuf.WriteString(line)
 			if !opts.Quiet {
 				fmt.Fprintf(stderrWriter, "→ %s %s\n", ev.ToolName, strings.TrimSpace(ev.Text))
 			}
 		case tooling.EventToolResult:
-			line := fmt.Sprintf("[#C4A5FF::b]✓ %s[-:-:-] %s\n", ev.ToolName, ev.Text)
+			line := theme.Current().OK(ev.ToolName) + " " + tview.Escape(ev.Text) + "\n"
 			activityBuf.WriteString(line)
 			if !opts.Quiet {
 				fmt.Fprintf(stderrWriter, "✓ %s %s\n", ev.ToolName, ev.Text)
@@ -847,10 +850,10 @@ func cmdAsk(opts askOptions) {
 		case tooling.EventError:
 			var line string
 			if isReasoningRelated(ev.Text) {
-				line = fmt.Sprintf("\n[#C73CDC::b]✗ %s[-:-:-] %s\n", ev.ToolName, ev.Text)
+				line = "\n" + theme.Current().Err(ev.ToolName) + " " + tview.Escape(ev.Text) + "\n"
 				reasoningBuf.WriteString(line)
 			} else {
-				line = fmt.Sprintf("[#C73CDC::bu]✗ %s[-:-:-] %s\n", ev.ToolName, ev.Text)
+				line = theme.Current().Err(ev.ToolName) + " " + tview.Escape(ev.Text) + "\n"
 				activityBuf.WriteString(line)
 			}
 			if !opts.Quiet {

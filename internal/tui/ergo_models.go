@@ -130,7 +130,7 @@ func (a *App) handleModelNotFound(err error) (note string, ok bool) {
 func (a *App) selectErgoAgentByName(name string) {
 	name = strings.ToLower(strings.TrimSpace(name))
 	if !client.ErgoModelAllowed(name, a.ergoAvailable()) {
-		a.appendActivity(fmt.Sprintf("[%s]unknown ergo model %q — available: %s[-]", a.palette.HexOrchid, name, strings.Join(a.ergoAvailable(), ", ")))
+		a.appendActivity(fmt.Sprintf("[%s::b]✗ unknown ergo model %q — available: %s[-::B]", a.palette.HexAlert, name, strings.Join(a.ergoAvailable(), ", ")))
 		return
 	}
 	a.selectModel(name)

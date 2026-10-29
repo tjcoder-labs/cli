@@ -71,7 +71,7 @@ func (a *App) contextStatusText() string {
 	}
 	s := fmt.Sprintf("%s %s of %s tokens.", a.renderProgressBar(u.Used, u.Window), contextPercentText(u), formatTokensCompactTUI(u.Window))
 	if u.Over() {
-		s += fmt.Sprintf(" [%s::b]over limit[-:-:-]", a.palette.HexOrchid)
+		s += fmt.Sprintf(" [%s::b]! over limit[-:-:-]", a.palette.HexAlert)
 	}
 	return s
 }

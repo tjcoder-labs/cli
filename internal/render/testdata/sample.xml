@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- sample config -->
+<config version="2">
+  <server host="localhost" port="8080"/>
+  <message lang="en">Hello &amp; welcome [red]x[-]</message>
+</config>

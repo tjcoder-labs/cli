@@ -22,8 +22,10 @@ import (
 	"github.com/tjcoder-labs/cli/internal/mcp"
 	"github.com/tjcoder-labs/cli/internal/memories"
 	"github.com/tjcoder-labs/cli/internal/providers"
+	"github.com/tjcoder-labs/cli/internal/render"
 	"github.com/tjcoder-labs/cli/internal/session"
 	"github.com/tjcoder-labs/cli/internal/tasks"
+	"github.com/tjcoder-labs/cli/internal/theme"
 	"github.com/tjcoder-labs/cli/internal/tooling"
 	"github.com/tjcoder-labs/cli/internal/tools"
 	"github.com/tjcoder-labs/cli/internal/tracking"
@@ -32,9 +34,16 @@ import (
 	"unicode"
 )
 
-// Palette holds all color scheme values for the TUI (backgrounds, text, accents, hex tags).
-// Both dark and light theme variants are available via darkPalette() and lightPalette().
+// Palette holds every colour the TUI draws, as tcell colours and as
+// "#rrggbb" strings for tview markup. It is always derived from a
+// theme.Theme (see internal/theme), which in turn derives every shade
+// from ONE primary colour, so a palette swap (e.g. a future /theme
+// command) restyles the whole UI. Do not add hard-coded colours here or
+// anywhere else; status is conveyed by glyphs (✓ ✗ ! •), shade and
+// bold/dim, never by a different hue.
 type Palette struct {
+	Theme theme.Theme
+
 	BgRoot      tcell.Color
 	BgReasoning tcell.Color
 	BgActivity  tcell.Color
@@ -44,10 +53,11 @@ type Palette struct {
 	TextMain    tcell.Color
 	TextDim     tcell.Color
 	TextFaint   tcell.Color
-	Purple      tcell.Color
-	Lavender    tcell.Color
-	Violet      tcell.Color
-	Orchid      tcell.Color
+	Purple      tcell.Color // theme Primary
+	Lavender    tcell.Color // theme Bright
+	Violet      tcell.Color // theme Deep
+	Soft        tcell.Color // theme Soft
+	Muted       tcell.Color // theme Muted
 	HexMain     string
 	HexDim      string
 	HexFaint    string
@@ -55,60 +65,72 @@ type Palette struct {
 	HexPurple   string
 	HexLavender string
 	HexViolet   string
-	HexOrchid   string
+	HexSoft     string
+	HexMuted    string
+	// HexAlert is the emphasis shade used for errors and warnings. It
+	// is deliberately an on-scheme shade (Bright); callers must pair it
+	// with a glyph and bold (see errMark / warnMark).
+	HexAlert string
 }
 
-// darkPalette returns the original dark theme (monochromatic with a.palette.Purple accents).
-func darkPalette() Palette {
+func hexColor(hex string) tcell.Color {
+	r, g, b := theme.RGB(hex)
+	return tcell.NewRGBColor(r, g, b)
+}
+
+// paletteFromTheme maps theme roles onto the TUI palette.
+func paletteFromTheme(t theme.Theme) Palette {
 	return Palette{
-		BgRoot:      tcell.NewRGBColor(0, 0, 0),
-		BgReasoning: tcell.NewRGBColor(10, 7, 20),
-		BgActivity:  tcell.NewRGBColor(7, 5, 18),
-		BgInput:     tcell.NewRGBColor(20, 14, 36),
-		BgModal:     tcell.NewRGBColor(32, 23, 58),
-		BgSelect:    tcell.NewRGBColor(46, 32, 78),
-		TextMain:    tcell.NewRGBColor(232, 226, 245),
-		TextDim:     tcell.NewRGBColor(150, 140, 178),
-		TextFaint:   tcell.NewRGBColor(86, 74, 112),
-		Purple:      tcell.NewRGBColor(167, 124, 248),
-		Lavender:    tcell.NewRGBColor(196, 165, 255),
-		Violet:      tcell.NewRGBColor(124, 58, 237),
-		Orchid:      tcell.NewRGBColor(199, 60, 220),
-		HexMain:     "#E8E2F5",
-		HexDim:      "#968CB2",
-		HexFaint:    "#564A70",
-		HexRoot:     "#000000",
-		HexPurple:   "#A77CF8",
-		HexLavender: "#C4A5FF",
-		HexViolet:   "#7C3AED",
-		HexOrchid:   "#C73CDC",
+		Theme:       t,
+		BgRoot:      hexColor(t.BgRoot),
+		BgReasoning: hexColor(t.BgReasoning),
+		BgActivity:  hexColor(t.BgActivity),
+		BgInput:     hexColor(t.BgInput),
+		BgModal:     hexColor(t.BgModal),
+		BgSelect:    hexColor(t.BgSelect),
+		TextMain:    hexColor(t.Text),
+		TextDim:     hexColor(t.Dim),
+		TextFaint:   hexColor(t.Faint),
+		Purple:      hexColor(t.Primary),
+		Lavender:    hexColor(t.Bright),
+		Violet:      hexColor(t.Deep),
+		Soft:        hexColor(t.Soft),
+		Muted:       hexColor(t.Muted),
+		HexMain:     t.Text,
+		HexDim:      t.Dim,
+		HexFaint:    t.Faint,
+		HexRoot:     t.BgRoot,
+		HexPurple:   t.Primary,
+		HexLavender: t.Bright,
+		HexViolet:   t.Deep,
+		HexSoft:     t.Soft,
+		HexMuted:    t.Muted,
+		HexAlert:    t.Bright,
 	}
 }
 
-// lightPalette returns a light theme with white backgrounds and saturated a.palette.Purple accents.
-func lightPalette() Palette {
-	return Palette{
-		BgRoot:      tcell.NewRGBColor(255, 255, 255),
-		BgReasoning: tcell.NewRGBColor(248, 248, 250),
-		BgActivity:  tcell.NewRGBColor(245, 245, 248),
-		BgInput:     tcell.NewRGBColor(250, 250, 255),
-		BgModal:     tcell.NewRGBColor(240, 240, 248),
-		BgSelect:    tcell.NewRGBColor(225, 215, 245),
-		TextMain:    tcell.NewRGBColor(30, 25, 50),
-		TextDim:     tcell.NewRGBColor(120, 100, 150),
-		TextFaint:   tcell.NewRGBColor(170, 160, 190),
-		Purple:      tcell.NewRGBColor(110, 65, 200),
-		Lavender:    tcell.NewRGBColor(100, 50, 190),
-		Violet:      tcell.NewRGBColor(90, 30, 180),
-		Orchid:      tcell.NewRGBColor(180, 30, 170),
-		HexMain:     "#1E1932",
-		HexDim:      "#786496",
-		HexFaint:    "#AAA0BE",
-		HexRoot:     "#FFFFFF",
-		HexPurple:   "#6E41C8",
-		HexLavender: "#6432BE",
-		HexViolet:   "#5A1EB4",
-		HexOrchid:   "#B41EAA",
+// darkPalette returns the default dark palette (brand purple primary).
+func darkPalette() Palette { return paletteFromTheme(theme.MustNew(theme.Current().Primary, true)) }
+
+// lightPalette returns the light variant of the current primary.
+func lightPalette() Palette { return paletteFromTheme(theme.MustNew(theme.Current().Primary, false)) }
+
+// applyTviewStyles points tview's global defaults (used by forms,
+// lists, dropdowns, modals and anything else that does not set its own
+// colours) at the palette, so no stock green/yellow/blue can appear.
+func applyTviewStyles(p Palette) {
+	tview.Styles = tview.Theme{
+		PrimitiveBackgroundColor:    p.BgRoot,
+		ContrastBackgroundColor:     p.BgInput,
+		MoreContrastBackgroundColor: p.BgSelect,
+		BorderColor:                 p.TextFaint,
+		TitleColor:                  p.Purple,
+		GraphicsColor:               p.TextFaint,
+		PrimaryTextColor:            p.TextMain,
+		SecondaryTextColor:          p.Purple,
+		TertiaryTextColor:           p.Lavender,
+		InverseTextColor:            p.BgRoot,
+		ContrastSecondaryTextColor:  p.Lavender,
 	}
 }
 
@@ -357,6 +379,19 @@ type App struct {
 	canvasPath  string
 	canvasStart int
 	canvasEnd   int
+	// canvasWidth is the inner width the canvas was last wrapped to;
+	// canvasReflow is set while a re-render for a new width is queued.
+	canvasWidth  int
+	canvasReflow bool
+
+	// mdOut / mdCog render streamed assistant commentary (transcript)
+	// and reasoning (cognition pane) as markdown, one turn at a time.
+	mdOut *render.Stream
+	mdCog *render.Stream
+
+	// firstDrawTranscript is pendingTranscript handed to afterDraw by
+	// Run; it is rendered (once) on the first draw pass.
+	firstDrawTranscript []session.TranscriptEntry
 	// fullscreen hides the right column so the transcript can use the
 	// full terminal width (useful for copying long output).
 	fullscreen bool
@@ -481,6 +516,7 @@ func New(provider client.Provider, registry *tools.Registry, workspaceRoot, mode
 		palette:       darkPalette(),
 		config:        cfg,
 	}
+	applyTviewStyles(app.palette)
 	// Set up sinks for tool integration (highlight_code, invoke_cli_command, etc.)
 	app.runner.CLICommandSink = app
 	app.runner.Prompter = app
@@ -498,6 +534,7 @@ func New(provider client.Provider, registry *tools.Registry, workspaceRoot, mode
 	app.runner.Steering = app.steeringCh
 	app.scheduler = newScheduleWorker(app)
 	app.build()
+	app.tv.SetAfterDrawFunc(app.afterDraw)
 	app.loadSession()
 	app.loadModelsAsync()
 	app.loadMCPServers()
@@ -532,16 +569,16 @@ func (a *App) loadMCPServers() {
 			continue
 		}
 		if sc.Type != "" && sc.Type != "sse" {
-			a.appendActivity(fmt.Sprintf("[%s]MCP %s skipped[-]: transport %q not yet supported (only \"sse\")",
-				a.palette.HexOrchid, name, sc.Type))
+			a.appendActivity(fmt.Sprintf("[%s::b]✗ MCP %s skipped[-::B]: transport %q not yet supported (only \"sse\")",
+				a.palette.HexAlert, name, sc.Type))
 			continue
 		}
 		if sc.URL == "" {
-			a.appendActivity(fmt.Sprintf("[%s]MCP %s skipped[-]: missing url", a.palette.HexOrchid, name))
+			a.appendActivity(fmt.Sprintf("[%s::b]✗ MCP %s skipped[-::B]: missing url", a.palette.HexAlert, name))
 			continue
 		}
 		if err := a.mcpClient.AddServer(name, sc.URL); err != nil {
-			a.appendActivity(fmt.Sprintf("[%s]MCP %s failed[-]: %v", a.palette.HexOrchid, name, err))
+			a.appendActivity(fmt.Sprintf("[%s::b]✗ MCP %s failed[-::B]: %v", a.palette.HexAlert, name, err))
 			continue
 		}
 		tools.RegisterMCPClient(a.registry, a.mcpClient)
@@ -567,16 +604,10 @@ func (a *App) Run() error {
 	// real width, so user-message bubbles size to the pane instead of
 	// the fixed-width fallback. We install the callback lazily (on Run)
 	// rather than in New() so the app is always fully constructed first.
-	if len(a.pendingTranscript) > 0 {
-		pending := a.pendingTranscript
-		a.pendingTranscript = nil
-		a.tv.SetAfterDrawFunc(func(screen tcell.Screen) {
-			// Render once; then drop the callback so it doesn't
-			// re-run on every subsequent redraw.
-			a.tv.SetAfterDrawFunc(nil)
-			a.renderTranscriptFromEntries(pending)
-		})
-	}
+	// Persisted transcript entries render once, on the first draw
+	// pass (see afterDraw), so bubbles size to the real pane width.
+	a.firstDrawTranscript = a.pendingTranscript
+	a.pendingTranscript = nil
 	// Enable bracketed paste so terminals deliver a multi-line paste as
 	// a single unit to the focused primitive's PasteHandler instead of a
 	// stream of keystrokes. Without this, each newline in a pasted block
@@ -1235,7 +1266,7 @@ func (a *App) newInputSurface() *tview.Flex {
 		}
 		style := tcell.StyleDefault.Foreground(a.palette.Purple).Background(a.palette.BgInput)
 		if !focus {
-			style = tcell.StyleDefault.Foreground(tcell.NewRGBColor(84, 49, 124)).Background(a.palette.BgInput)
+			style = tcell.StyleDefault.Foreground(a.palette.Muted).Background(a.palette.BgInput)
 		}
 		for row := 0; row < height; row++ {
 			screen.SetContent(x, y+row, '│', nil, style)
@@ -1594,7 +1625,7 @@ func (a *App) renderMetaBar() string {
 	}
 	accent := a.palette.HexPurple
 	if !focus {
-		accent = "#564A70"
+		accent = a.palette.HexFaint
 	}
 	// Build context bar with conditional bullets:
 	// - No leading bullet before cwd
@@ -1876,7 +1907,7 @@ func (a *App) handleProvidersCommand(parts []string) {
 			reg := providers.Load()
 			reg.Active = name
 			if err := providers.Save(reg); err != nil {
-				a.appendActivity(fmt.Sprintf("[red]Provider activate failed[-]: %v", err))
+				a.appendActivity(fmt.Sprintf(a.palette.Theme.Err("Provider activate failed")+": %v", err))
 				return
 			}
 			// Rebuild the live client and reload models.
@@ -2249,13 +2280,13 @@ func (a *App) openConfigModal() {
 	// --- Actions ---
 	save := func() {
 		if err := a.saveConfig(work); err != nil {
-			a.appendActivity(fmt.Sprintf("["+a.palette.HexOrchid+"::b]config save failed[-:-:-]: %v", err))
+			a.appendActivity(fmt.Sprintf("["+a.palette.HexAlert+"::b]✗ config save failed[-:-:-]: %v", err))
 			return
 		}
 		if autoUpdate != autoWas {
 			on := autoUpdate
 			if _, err := appdir.Update(func(s *appdir.Settings) { s.AutoUpdate = &on }); err != nil {
-				a.appendActivity(fmt.Sprintf("["+a.palette.HexOrchid+"::b]config save failed[-:-:-]: automatic updates: %v", err))
+				a.appendActivity(fmt.Sprintf("["+a.palette.HexAlert+"::b]✗ config save failed[-:-:-]: automatic updates: %v", err))
 				return
 			}
 			state := map[bool]string{true: "on", false: "off"}[on]
@@ -2340,7 +2371,7 @@ func (a *App) openEnvironmentModal() {
 	closeEnv := func() { a.closeModal() }
 	save := func() {
 		if err := ctxpkg.SaveTemplate(a.workspaceRoot, editor.GetText()); err != nil {
-			a.appendActivity(fmt.Sprintf("["+a.palette.HexOrchid+"::b]environment save failed[-:-:-]: %v", err))
+			a.appendActivity(fmt.Sprintf("["+a.palette.HexAlert+"::b]✗ environment save failed[-:-:-]: %v", err))
 			return
 		}
 		a.appendActivity(fmt.Sprintf("Saved environment template to %s", ctxpkg.TemplatePath(a.workspaceRoot)))
@@ -2437,7 +2468,7 @@ func (a *App) runCognitionRecap() {
 	newHistory, err := a.runner.Run(ctx, a.history, prompt, a.currentAgent, a.currentModel, nil, nil)
 	if err != nil {
 		a.postUI(func() {
-			fmt.Fprintf(a.reasoning, "\n[%s::b]cognition recap failed[-:-:-] %v[-]\n", a.palette.HexOrchid, err)
+			fmt.Fprintf(a.reasoning, "\n[%s::b]✗ cognition recap failed[-:-:-] %s\n", a.palette.HexAlert, tview.Escape(err.Error()))
 			a.reasoning.ScrollToEnd()
 		})
 		return
@@ -2500,7 +2531,7 @@ func (a *App) showPanel(name string) {
 		a.setActivityTitle("ACTIVITY", "")
 		if state, ok, err := session.Load(a.workspaceRoot); err == nil && ok {
 			if state.Activity != "" {
-				a.activity.SetText(state.Activity)
+				a.activity.SetText(a.palette.Theme.Normalize(state.Activity))
 			}
 		}
 		a.rebuildLayout()
@@ -2664,7 +2695,7 @@ func (a *App) toggleTask(id string) {
 	store := tasks.NewStore()
 	state, t, ok, err := store.ToggleDone(a.sessionState, id)
 	if err != nil {
-		a.appendActivity(fmt.Sprintf("[%s]toggle failed[-]: %v", a.palette.HexOrchid, err))
+		a.appendActivity(fmt.Sprintf("[%s::b]✗ toggle failed[-::B]: %v", a.palette.HexAlert, err))
 		return
 	}
 	if !ok {
@@ -2740,8 +2771,10 @@ func (a *App) refreshCanvasPanel() {
 		}
 	}
 	a.setActivityTitle("CANVAS", a.canvasPath+rangeLabel)
-	a.activity.SetText(a.renderCanvasBody(a.canvasPath, a.canvasStart, a.canvasEnd))
-	a.activity.ScrollTo(a.canvasScrollTo(a.canvasStart), 0)
+	a.canvasWidth = innerWidth(a.activity)
+	body, row := a.renderCanvas(a.canvasPath, a.canvasStart, a.canvasEnd, a.canvasWidth)
+	a.activity.SetText(body)
+	a.activity.ScrollTo(a.canvasScrollTo(row+1), 0)
 }
 
 // canvasScrollTo returns the body row the canvas should scroll to so
@@ -2757,14 +2790,22 @@ func (a *App) canvasScrollTo(start int) int {
 // header, line numbers, and the [start,end] range highlighted. Reads are
 // capped so an accidental huge file cannot stall the UI.
 func (a *App) renderCanvasBody(path string, start, end int) string {
+	out, _ := a.renderCanvas(path, start, end, innerWidth(a.activity))
+	return out
+}
+
+// renderCanvas renders path by file type (markdown, JSON, XML/HTML,
+// YAML, source code, plain text) with a line-number gutter, the
+// [start,end] range marked, and every line wrapped to width. It also
+// returns the visual row where line `start` begins, for scrolling.
+func (a *App) renderCanvas(path string, start, end, width int) (string, int) {
 	full := path
 	if !filepath.IsAbs(full) {
 		full = filepath.Join(a.workspaceRoot, path)
 	}
 	data, err := os.ReadFile(full)
 	if err != nil {
-		return fmt.Sprintf("[%s]could not open %s: %v[-]",
-			a.palette.HexOrchid, tview.Escape(path), err)
+		return a.palette.Theme.Err("could not open "+path) + " " + tview.Escape(err.Error()), 0
 	}
 
 	const maxBytes = 512 * 1024
@@ -2773,30 +2814,57 @@ func (a *App) renderCanvasBody(path string, start, end int) string {
 		data = data[:maxBytes]
 		truncated = true
 	}
-
-	lines := strings.Split(string(data), "\n")
+	body := string(data)
 	const maxLines = 2000
-	if len(lines) > maxLines {
-		lines = lines[:maxLines]
+	if n := strings.Count(body, "\n"); n >= maxLines {
+		idx := 0
+		for k := 0; k < maxLines; k++ {
+			idx += strings.IndexByte(body[idx:], '\n') + 1
+		}
+		body = body[:idx-1]
 		truncated = true
 	}
-
-	var b strings.Builder
-	width := len(strconv.Itoa(len(lines)))
-	for i, ln := range lines {
-		n := i + 1
-		gutter := fmt.Sprintf("[%s]%*d[-]", a.palette.HexDim, width, n)
-		text := tview.Escape(ln)
-		if start > 0 && n >= start && n <= max(start, end) {
-			fmt.Fprintf(&b, "%s [%s]│[-] [%s]%s[-]\n", gutter, a.palette.HexPurple, a.palette.HexLavender, text)
-		} else {
-			fmt.Fprintf(&b, "%s [%s]│[-] %s\n", gutter, a.palette.HexDim, text)
-		}
-	}
+	lines := render.Source(path, body, a.palette.Theme)
+	out, row := render.Gutter(lines, start, end, width, a.palette.Theme)
+	out += "\n"
 	if truncated {
-		fmt.Fprintf(&b, "\n[%s]… output truncated[-]\n", a.palette.HexDim)
+		out += fmt.Sprintf("\n[%s]… output truncated[-]\n", a.palette.HexDim)
 	}
-	return b.String()
+	return out, row
+}
+
+// afterDraw runs on the event loop after every draw pass.
+func (a *App) afterDraw(tcell.Screen) {
+	if len(a.firstDrawTranscript) > 0 {
+		p := a.firstDrawTranscript
+		a.firstDrawTranscript = nil
+		a.renderTranscriptFromEntries(p)
+	}
+	// Re-wrap the canvas when its width changed (terminal resize,
+	// fullscreen toggle). The re-render is queued, never run inside
+	// the draw pass.
+	a.checkCanvasWidth()
+}
+
+// checkCanvasWidth runs after every draw. When the canvas is showing a
+// file and its pane width changed since the last render, it queues a
+// re-render (never inline: we are inside the draw pass).
+func (a *App) checkCanvasWidth() {
+	if a.activity == nil || a.canvasReflow || strings.TrimSpace(a.canvasPath) == "" {
+		return
+	}
+	switch a.activePanel {
+	case "canvas", "code", "reference":
+	default:
+		return
+	}
+	if w := innerWidth(a.activity); w > 0 && w != a.canvasWidth {
+		a.canvasReflow = true
+		a.enqueueUI(func() {
+			a.canvasReflow = false
+			a.refreshCanvasPanel()
+		})
+	}
 }
 
 // parseLineRange parses "12", "12-40" or "12:40" into (start, end).
@@ -2970,22 +3038,22 @@ func (a *App) compactHistory(parts []string) {
 			a.stopSpinner()
 
 			if err != nil {
-				a.appendActivity(fmt.Sprintf("[%s]compact failed[-]: %v", a.palette.HexOrchid, err))
-				fmt.Fprintf(a.transcript, "[%s]compact failed: %v[-]\n", a.palette.HexOrchid, err)
+				a.appendActivity(fmt.Sprintf("[%s::b]✗ compact failed[-::B]: %v", a.palette.HexAlert, err))
+				fmt.Fprintf(a.transcript, "[%s::b]✗ compact failed: %v[-::B]\n", a.palette.HexAlert, err)
 				a.transcript.ScrollToEnd()
 				return
 			}
 			if len(newHistory) <= len(history) {
-				a.appendActivity(fmt.Sprintf("[%s]compact failed[-]: runner produced no new messages", a.palette.HexOrchid))
-				fmt.Fprintf(a.transcript, "[%s]compact failed: no summary produced[-]\n", a.palette.HexOrchid)
+				a.appendActivity(fmt.Sprintf("[%s::b]✗ compact failed[-::B]: runner produced no new messages", a.palette.HexAlert))
+				fmt.Fprintf(a.transcript, "[%s::b]✗ compact failed: no summary produced[-::B]\n", a.palette.HexAlert)
 				a.transcript.ScrollToEnd()
 				return
 			}
 
 			summary := newHistory[len(newHistory)-1].Content
 			if strings.TrimSpace(summary) == "" {
-				a.appendActivity(fmt.Sprintf("[%s]compact failed[-]: model returned an empty summary", a.palette.HexOrchid))
-				fmt.Fprintf(a.transcript, "[%s]compact failed: empty summary[-]\n", a.palette.HexOrchid)
+				a.appendActivity(fmt.Sprintf("[%s::b]✗ compact failed[-::B]: model returned an empty summary", a.palette.HexAlert))
+				fmt.Fprintf(a.transcript, "[%s::b]✗ compact failed: empty summary[-::B]\n", a.palette.HexAlert)
 				a.transcript.ScrollToEnd()
 				return
 			}
@@ -2999,7 +3067,7 @@ func (a *App) compactHistory(parts []string) {
 
 			// Persist immediately.
 			if err := a.saveSession(); err != nil {
-				a.appendActivity(fmt.Sprintf("[%s]compact saved in-memory but session persist failed[-]: %v", a.palette.HexOrchid, err))
+				a.appendActivity(fmt.Sprintf("[%s::b]✗ compact saved in-memory but session persist failed[-::B]: %v", a.palette.HexAlert, err))
 			}
 
 			postChars := 0
@@ -3103,9 +3171,9 @@ func (a *App) submit() {
 		a.recordInputHistory(prompt)
 		select {
 		case a.steeringCh <- prompt:
-			a.appendActivity(fmt.Sprintf("[%s]steering[-]: queued %q for the in-flight turn", a.palette.HexOrchid, truncateForActivity(prompt)))
+			a.appendActivity(fmt.Sprintf("[%s::b]steering[-::B]: queued %q for the in-flight turn", a.palette.HexPurple, truncateForActivity(prompt)))
 		default:
-			a.appendActivity(fmt.Sprintf("[%s]steering[-]: queue full, message dropped; wait for the current turn to settle and try again", a.palette.HexOrchid))
+			a.appendActivity(fmt.Sprintf("[%s::b]! steering[-::B]: queue full, message dropped; wait for the current turn to settle and try again", a.palette.HexPurple))
 		}
 		a.input.SetText("")
 		a.setInputPlaceholder()
@@ -3173,7 +3241,7 @@ func (a *App) submit() {
 	a.mu.Lock()
 	if err := a.saveSession(); err != nil {
 		a.mu.Unlock()
-		a.appendActivity(fmt.Sprintf("["+a.palette.HexOrchid+"::b]warning[-:-:-]: failed to save session: %v", err))
+		a.appendActivity(fmt.Sprintf("["+a.palette.HexPurple+"::b]! warning[-:-:-]: failed to save session: %v", err))
 	} else {
 		a.mu.Unlock()
 	}
@@ -3204,7 +3272,7 @@ func (a *App) launchTurnWithContext(prompt, agentNameOverride, turnContext strin
 		if alt, ok := agent.FindWithWorkspace(agentNameOverride, a.workspaceRoot); ok {
 			agentCfg = alt
 		} else {
-			a.appendActivity(fmt.Sprintf("["+a.palette.HexOrchid+"::b]warning[-:-:-]: schedule agent %q not found; using %s", agentNameOverride, agentCfg.Name))
+			a.appendActivity(fmt.Sprintf("["+a.palette.HexPurple+"::b]! warning[-:-:-]: schedule agent %q not found; using %s", agentNameOverride, agentCfg.Name))
 		}
 	}
 	// Inject the (interpolated) environment/context block ahead of the
@@ -3227,6 +3295,7 @@ func (a *App) launchTurnWithContext(prompt, agentNameOverride, turnContext strin
 		model = a.currentModel
 	}
 
+	a.resetMarkdownStreams()
 	go func() {
 		// Use a timeout context to prevent indefinite hangs on API calls or tool execution.
 		// Timeout is set to 15 minutes to accommodate long-running tasks while preventing
@@ -3236,17 +3305,18 @@ func (a *App) launchTurnWithContext(prompt, agentNameOverride, turnContext strin
 		ctx = tooling.WithTurnContext(ctx, turnContext)
 		nextHistory, err := a.runner.Run(ctx, history, prompt, agentCfg, model, enabled, a.handleEvent)
 		a.postUI(func() {
+			a.flushMarkdownStreams()
 			if err != nil {
 				errText := fmt.Sprintf("error: %v", err)
 				if isReasoningRelated(errText) {
-					fmt.Fprintf(a.reasoning, "\n["+a.palette.HexOrchid+"::b]%s[-:-:-]\n", errText)
+					fmt.Fprintf(a.reasoning, "\n["+a.palette.HexAlert+"::b]✗ %s[-:-:-]\n", tview.Escape(errText))
 					a.reasoning.ScrollToEnd()
 				} else if note, ok := a.handleModelNotFound(err); ok {
-					a.appendActivity(fmt.Sprintf("[%s]%s[-]", a.palette.HexLavender, tview.Escape(note)))
-					fmt.Fprintf(a.transcript, "\n[%s::b]model[-:-:-] [%s]%s[-]\n", a.palette.HexOrchid, a.palette.HexLavender, tview.Escape(note))
+					a.appendActivity(fmt.Sprintf("[%s::b]! %s[-::B]", a.palette.HexPurple, tview.Escape(note)))
+					fmt.Fprintf(a.transcript, "\n[%s::b]! model[-:-:-] [%s]%s[-]\n", a.palette.HexPurple, a.palette.HexLavender, tview.Escape(note))
 				} else {
-					a.appendActivity(fmt.Sprintf("["+a.palette.HexOrchid+"::b]error[-:-:-]: %v", err))
-					fmt.Fprintf(a.transcript, "\n["+a.palette.HexOrchid+"::b]error[-:-:-]: %v\n", err)
+					a.appendActivity(fmt.Sprintf("["+a.palette.HexAlert+"::b]✗ error[-:-:-]: %s", tview.Escape(err.Error())))
+					fmt.Fprintf(a.transcript, "\n["+a.palette.HexAlert+"::b]✗ error[-:-:-]: %s\n", tview.Escape(err.Error()))
 					if note := a.ergoRunErrorNote(err); note != "" {
 						a.appendActivity(note)
 						fmt.Fprintf(a.transcript, "["+a.palette.HexLavender+"]%s[-]\n", tview.Escape(note))
@@ -3289,10 +3359,10 @@ func (a *App) submitScheduled(agentName, prompt string) {
 		if a.busy {
 			select {
 			case a.steeringCh <- prompt:
-				a.appendActivity(fmt.Sprintf("[%s]schedule[-]: turn in flight; prompt steered into the running turn",
-					a.palette.HexOrchid))
+				a.appendActivity(fmt.Sprintf("[%s::b]schedule[-::B]: turn in flight; prompt steered into the running turn",
+					a.palette.HexPurple))
 			default:
-				a.appendActivity("[" + a.palette.HexOrchid + "::b]warning[-:-:-]: schedule fired while busy and steering queue is full; prompt dropped")
+				a.appendActivity("[" + a.palette.HexPurple + "::b]! warning[-:-:-]: schedule fired while busy and steering queue is full; prompt dropped")
 			}
 			a.mu.Unlock()
 			return
@@ -3317,7 +3387,7 @@ func (a *App) submitScheduled(agentName, prompt string) {
 		a.mu.Lock()
 		if err := a.saveSession(); err != nil {
 			a.mu.Unlock()
-			a.appendActivity(fmt.Sprintf("["+a.palette.HexOrchid+"::b]warning[-:-:-]: failed to save session: %v", err))
+			a.appendActivity(fmt.Sprintf("["+a.palette.HexPurple+"::b]! warning[-:-:-]: failed to save session: %v", err))
 		} else {
 			a.mu.Unlock()
 		}
@@ -3340,7 +3410,7 @@ func (a *App) appendScheduledMessage(agentName, prompt string) {
 	}
 	fmt.Fprintf(a.transcript, "[%s]%s[-]\n", a.palette.HexDim, stamp)
 	fmt.Fprintf(a.transcript, "[%s::b]%s[-:-:-]\n", a.palette.HexViolet, label)
-	fmt.Fprintf(a.transcript, "[%s]%s[-]\n\n", a.palette.TextDim, prompt)
+	fmt.Fprintf(a.transcript, "[%s]%s[-]\n\n", a.palette.HexDim, tview.Escape(prompt))
 }
 
 func (a *App) handleEvent(event tooling.Event) {
@@ -3350,7 +3420,7 @@ func (a *App) handleEvent(event tooling.Event) {
 			a.assistantState = "thinking"
 			a.clearReasoningSplash()
 			a.cognitionActive = true
-			fmt.Fprint(a.reasoning, a.highlightTranscriptText(event.Text))
+			fmt.Fprint(a.reasoning, a.cogStream().Write(event.Text))
 			a.reasoning.ScrollToEnd()
 			a.addReferencesFromText(event.Text)
 		case tooling.EventCommentary:
@@ -3361,11 +3431,11 @@ func (a *App) handleEvent(event tooling.Event) {
 				a.assistantStamp = formatTimestamp(time.Now())
 				a.updateAssistantTurnLabel()
 			}
-			fmt.Fprint(a.transcript, a.highlightTranscriptText(event.Text))
+			fmt.Fprint(a.transcript, a.outStream().Write(event.Text))
 			a.transcript.ScrollToEnd()
 			a.addReferencesFromText(event.Text)
 		case tooling.EventToolStart:
-			a.appendActivity(fmt.Sprintf("["+a.palette.HexViolet+"]→ %s[-] %s", event.ToolName, event.Text))
+			a.appendActivity(fmt.Sprintf("["+a.palette.HexViolet+"]→ %s[-] %s", tview.Escape(event.ToolName), tview.Escape(event.Text)))
 			a.addReferencesFromText(event.Text)
 		case tooling.EventToolResult:
 			// ui_control tool: event.Text contains a marker 'panel:<name>:<action>'
@@ -3385,7 +3455,7 @@ func (a *App) handleEvent(event tooling.Event) {
 						// activity TextView, so logging after would
 						// append onto the rendered file and wreck
 						// the scroll position.
-						a.appendActivity(fmt.Sprintf("[%s]ui_control: canvas %s %s", a.palette.HexLavender, action, path))
+						a.appendActivity(fmt.Sprintf("[%s]ui_control: canvas %s %s[-]", a.palette.HexLavender, tview.Escape(action), tview.Escape(path)))
 						switch strings.ToLower(action) {
 						case "show", "toggle":
 							a.openCanvas(path, start, end)
@@ -3395,7 +3465,7 @@ func (a *App) handleEvent(event tooling.Event) {
 						return
 					}
 					// Log BEFORE switching panels for the same reason.
-					a.appendActivity(fmt.Sprintf("[%s]ui_control: %s %s", a.palette.HexLavender, panel, action))
+					a.appendActivity(fmt.Sprintf("[%s]ui_control: %s %s[-]", a.palette.HexLavender, tview.Escape(panel), tview.Escape(action)))
 					switch strings.ToLower(action) {
 					case "show", "toggle":
 						a.showPanel(panel)
@@ -3405,14 +3475,14 @@ func (a *App) handleEvent(event tooling.Event) {
 					return
 				}
 			}
-			a.appendActivity(fmt.Sprintf("["+a.palette.HexLavender+"::b]✓ %s[-:-:-] %s", event.ToolName, event.Text))
+			a.appendActivity(fmt.Sprintf("["+a.palette.HexLavender+"::b]✓ %s[-:-:-] %s", tview.Escape(event.ToolName), tview.Escape(event.Text)))
 			a.addReferencesFromText(event.Text)
 		case tooling.EventError:
 			if isReasoningRelated(event.Text) {
-				fmt.Fprintf(a.reasoning, "\n["+a.palette.HexOrchid+"::b]✗ %s[-:-:-] %s\n", event.ToolName, event.Text)
+				fmt.Fprintf(a.reasoning, "\n["+a.palette.HexAlert+"::b]✗ %s[-:-:-] %s\n", tview.Escape(event.ToolName), tview.Escape(event.Text))
 				a.reasoning.ScrollToEnd()
 			} else {
-				a.appendActivity(fmt.Sprintf("["+a.palette.HexOrchid+"::b]✗ %s[-:-:-] %s", event.ToolName, event.Text))
+				a.appendActivity(fmt.Sprintf("["+a.palette.HexAlert+"::b]✗ %s[-:-:-] %s", tview.Escape(event.ToolName), tview.Escape(event.Text)))
 			}
 		case tooling.EventContext:
 			if event.Usage != nil {
@@ -3429,7 +3499,7 @@ func (a *App) handleEvent(event tooling.Event) {
 			// submit(), so we don't double-log here.
 			stamp := formatTimestamp(time.Now())
 			fmt.Fprintf(a.transcript, "[%s]%s[-]\n", a.palette.HexDim, stamp)
-			fmt.Fprintf(a.transcript, "[%s::b]you steered[-:-:-] %s\n", a.palette.HexLavender, event.Text)
+			fmt.Fprintf(a.transcript, "[%s::b]you steered[-:-:-] %s\n", a.palette.HexLavender, tview.Escape(event.Text))
 			a.transcript.ScrollToEnd()
 		}
 	})
@@ -3533,30 +3603,60 @@ func (a *App) highlightTranscriptText(text string) string {
 	if text == "" {
 		return ""
 	}
-	// Expand markdown tables into box-drawn tables before line-level highlighting.
-	text = a.renderMarkdownTables(text)
-	lines := strings.Split(text, "\n")
-	for i, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "```") {
-			lines[i] = fmt.Sprintf("[%s]%s[-]", a.palette.HexPurple, line)
-			continue
-		}
-		if strings.HasPrefix(trimmed, "#") {
-			lines[i] = fmt.Sprintf("[%s::b]%s[-:-:-]", a.palette.HexPurple, line)
-			continue
-		}
-		if strings.HasPrefix(trimmed, "- ") || strings.HasPrefix(trimmed, "* ") || strings.HasPrefix(trimmed, "+ ") {
-			lines[i] = fmt.Sprintf("[%s]• %s[-]", a.palette.HexPurple, strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(strings.TrimPrefix(trimmed, "- "), "* "), "+ ")))
-			continue
-		}
-		if codeSpanRe.MatchString(line) {
-			lines[i] = codeSpanRe.ReplaceAllStringFunc(line, func(match string) string {
-				return fmt.Sprintf("[%s]%s[-]", a.palette.HexPurple, match)
-			})
+	return render.Markdown(text, a.palette.Theme, render.Options{Width: innerWidth(a.transcript)})
+}
+
+// innerWidth is the drawable width of a TextView (0 before first draw,
+// which disables wrapping).
+func innerWidth(tv *tview.TextView) int {
+	if tv == nil {
+		return 0
+	}
+	_, _, w, _ := tv.GetInnerRect()
+	return w
+}
+
+// outStream / cogStream return the per-turn markdown streams, sized to
+// the current pane width.
+func (a *App) outStream() *render.Stream {
+	if a.mdOut == nil {
+		a.mdOut = render.NewStream(a.palette.Theme, render.Options{})
+	}
+	a.mdOut.SetWidth(innerWidth(a.transcript))
+	return a.mdOut
+}
+
+func (a *App) cogStream() *render.Stream {
+	if a.mdCog == nil {
+		a.mdCog = render.NewStream(a.palette.Theme, render.Options{})
+	}
+	a.mdCog.SetWidth(innerWidth(a.reasoning))
+	return a.mdCog
+}
+
+// resetMarkdownStreams starts a fresh markdown context for a new turn.
+func (a *App) resetMarkdownStreams() {
+	if a.mdOut != nil {
+		a.mdOut.Reset()
+	}
+	if a.mdCog != nil {
+		a.mdCog.Reset()
+	}
+}
+
+// flushMarkdownStreams writes any held-back partial markdown (an open
+// fence, a pending table) at the end of a turn.
+func (a *App) flushMarkdownStreams() {
+	if a.mdOut != nil && a.transcript != nil {
+		if rest := a.mdOut.Flush(); rest != "" {
+			fmt.Fprint(a.transcript, rest)
 		}
 	}
-	return strings.Join(lines, "\n")
+	if a.mdCog != nil && a.reasoning != nil {
+		if rest := a.mdCog.Flush(); rest != "" {
+			fmt.Fprint(a.reasoning, rest)
+		}
+	}
 }
 
 // renderMarkdownTables finds GFM-style pipe tables in the input and
@@ -3988,9 +4088,17 @@ func (a *App) buildRightColumn() *tview.Flex {
 		// into that same TextView, so the body stays this primitive.
 		bodyPrim = a.activityPanel
 	}
-	right := tview.NewFlex().SetDirection(tview.FlexRow).
-		AddItem(a.reasoningPanel, 0, cogProp, false).
-		AddItem(bodyPrim, 0, bodyProp, false)
+	right := tview.NewFlex().SetDirection(tview.FlexRow)
+	switch a.activePanel {
+	case "canvas", "code", "reference":
+		// The canvas takes the full right-column height; the
+		// cognition pane returns when another panel is shown
+		// (showPanel -> rebuildLayout rebuilds this column).
+		right.AddItem(bodyPrim, 0, 1, false)
+	default:
+		right.AddItem(a.reasoningPanel, 0, cogProp, false).
+			AddItem(bodyPrim, 0, bodyProp, false)
+	}
 	right.SetBackgroundColor(a.palette.BgReasoning)
 	a.right = right
 	return right
@@ -4230,7 +4338,7 @@ func (a *App) enabledToolList() []string {
 func (a *App) switchProvider(cfg providers.Config) {
 	p, err := client.NewProviderFromConfig(cfg, client.DefaultRequestTimeout)
 	if err != nil {
-		a.appendActivity(fmt.Sprintf("[red]Provider build failed[-]: %v", err))
+		a.appendActivity(fmt.Sprintf(a.palette.Theme.Err("Provider build failed")+": %v", err))
 		return
 	}
 	a.mu.Lock()
@@ -4270,7 +4378,7 @@ func (a *App) loadModels() {
 	defer cancel()
 	models, err := a.listModels(ctx)
 	if err != nil {
-		a.appendActivity(fmt.Sprintf("["+a.palette.HexOrchid+"::b]model load failed[-:-:-]: %v", err))
+		a.appendActivity(fmt.Sprintf("["+a.palette.HexAlert+"::b]✗ model load failed[-:-:-]: %v", err))
 		return
 	}
 	a.models = models
@@ -4380,7 +4488,7 @@ func (a *App) openModelModal() {
 			models, err := a.listModels(ctx)
 			a.postUI(func() {
 				if err != nil {
-					a.appendActivity(fmt.Sprintf("["+a.palette.HexOrchid+"::b]model load failed[-:-:-]: %v", err))
+					a.appendActivity(fmt.Sprintf("["+a.palette.HexAlert+"::b]✗ model load failed[-:-:-]: %v", err))
 					a.closeModal()
 					return
 				}
@@ -4503,7 +4611,7 @@ func (a *App) showModal(title string, primitive tview.Primitive) {
 	beam.SetDrawFunc(func(screen tcell.Screen, x, y, width, height int) (int, int, int, int) {
 		style := tcell.StyleDefault.Foreground(a.palette.Purple).Background(bg)
 		if !primitive.HasFocus() {
-			style = tcell.StyleDefault.Foreground(tcell.NewRGBColor(84, 49, 124)).Background(bg)
+			style = tcell.StyleDefault.Foreground(a.palette.Muted).Background(bg)
 		}
 		for row := 0; row < height; row++ {
 			screen.SetContent(x, y+row, '│', nil, style)
@@ -4697,7 +4805,7 @@ func (a *App) handleMCPCommand(parts []string) {
 		url := parts[3]
 		err := a.mcpClient.AddServer(name, url)
 		if err != nil {
-			a.appendActivity(fmt.Sprintf("[%s]MCP add failed[-]: %v", a.palette.HexOrchid, err))
+			a.appendActivity(fmt.Sprintf("[%s::b]✗ MCP add failed[-::B]: %v", a.palette.HexAlert, err))
 			return
 		}
 		// Register the tools in the global registry
@@ -4713,8 +4821,8 @@ func (a *App) handleMCPCommand(parts []string) {
 			Enabled: true,
 		}
 		if saveErr := a.saveConfig(a.config); saveErr != nil {
-			a.appendActivity(fmt.Sprintf("[%s]MCP %s added in-memory but config save failed[-]: %v",
-				a.palette.HexOrchid, name, saveErr))
+			a.appendActivity(fmt.Sprintf("[%s::b]✗ MCP %s added in-memory but config save failed[-::B]: %v",
+				a.palette.HexAlert, name, saveErr))
 			return
 		}
 		a.appendActivity(fmt.Sprintf("Successfully added MCP server [%s]%s[-] and registered tools", a.palette.HexLavender, name))
@@ -4743,7 +4851,7 @@ func (a *App) handleMCPCommand(parts []string) {
 		}
 		name := parts[2]
 		if err := a.mcpClient.RemoveServer(name); err != nil {
-			a.appendActivity(fmt.Sprintf("[%s]MCP remove failed[-]: %v", a.palette.HexOrchid, err))
+			a.appendActivity(fmt.Sprintf("[%s::b]✗ MCP remove failed[-::B]: %v", a.palette.HexAlert, err))
 			return
 		}
 		// Drop the mcp_{name}_* tools from the agent's tool set so
@@ -4753,8 +4861,8 @@ func (a *App) handleMCPCommand(parts []string) {
 		if _, ok := a.config.MCPServers[name]; ok {
 			delete(a.config.MCPServers, name)
 			if saveErr := a.saveConfig(a.config); saveErr != nil {
-				a.appendActivity(fmt.Sprintf("[%s]MCP %s removed in-memory but config save failed[-]: %v",
-					a.palette.HexOrchid, name, saveErr))
+				a.appendActivity(fmt.Sprintf("[%s::b]✗ MCP %s removed in-memory but config save failed[-::B]: %v",
+					a.palette.HexAlert, name, saveErr))
 				return
 			}
 		}

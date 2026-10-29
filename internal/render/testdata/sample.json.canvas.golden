@@ -1,0 +1,7 @@
+1 │ {
+2 │   "name": "coder",
+3 │   "version": "0.9.188",
+4 │   "nested": {"list": [1, 2.5, -3], "flag": false,
+  ┆ "nothing": null},
+5 │   "text": "contains [red]tags[-] literally"
+6 │ }
