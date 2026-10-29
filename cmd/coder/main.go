@@ -146,6 +146,20 @@ func main() {
 		return
 	}
 
+	// Local, read-mostly subcommands: dispatched before provider
+	// resolution and telemetry so they never touch the network, never
+	// prompt and work in cron/ssh/CI.
+	if flag.NArg() > 0 {
+		switch flag.Arg(0) {
+		case "reminders", "reminder":
+			cmdReminders(flag.Args()[1:], *workspaceRoot)
+			return
+		case "tasks", "task":
+			cmdTasks(flag.Args()[1:], *workspaceRoot)
+			return
+		}
+	}
+
 	// Resolve the provider (ergo first). Headless = anything that is not the
 	// interactive TUI; there is nobody to show a /login prompt to.
 	headless := flag.NArg() > 0 || *prompt != "" || isStdinPiped()
@@ -293,18 +307,24 @@ func main() {
 // checked and the run is skipped (exit 0, logged) once the cap for the
 // current calendar day is reached. Otherwise cmdAsk is invoked headlessly
 // with the entry's prompt and agent.
+const scheduleUsage = `usage: coder schedule run <id>
+
+Runs one scheduled entry now (this is what installed crontab lines call).
+To list, inspect or remove entries use ` + "`coder reminders list|show|rm`" + `.
+`
+
 func cmdSchedule(args []string, workspaceRoot, providerName, host, geminiKey string, timeout time.Duration) {
 	if len(args) == 0 {
-		fmt.Fprintf(os.Stderr, "usage: coder schedule run <id>\n")
+		fmt.Fprint(os.Stderr, scheduleUsage)
 		os.Exit(2)
 	}
 	sub := args[0]
 	if sub != "run" {
-		fmt.Fprintf(os.Stderr, "usage: coder schedule run <id>\n")
+		fmt.Fprint(os.Stderr, scheduleUsage)
 		os.Exit(2)
 	}
 	if len(args) != 2 {
-		fmt.Fprintf(os.Stderr, "usage: coder schedule run <id>\n")
+		fmt.Fprint(os.Stderr, scheduleUsage)
 		os.Exit(2)
 	}
 	id := strings.TrimSpace(args[1])

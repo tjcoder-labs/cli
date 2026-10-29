@@ -246,3 +246,28 @@ func TestInstallCronLine_NoBlankLinesAndRoundTrip(t *testing.T) {
 		}
 	}
 }
+
+func TestHasCronLine_ExactIDOnly(t *testing.T) {
+	ws := t.TempDir()
+	e := Entry{ID: "rem-abc", CronExpr: "0 9 * * 1-5", Prompt: "p"}
+	line, err := CronLine(e, ws, "/usr/local/bin/coder")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !HasCronLine("# x\n"+line+"\n", e, ws) {
+		t.Fatal("line not found")
+	}
+	for _, content := range []string{
+		"",
+		"# " + line + "\n",
+		"0 9 * * 1-5 coder schedule run rem-abcd\n",
+		"0 9 * * 1-5 coder schedule run xrem-abc\n",
+	} {
+		if HasCronLine(content, e, ws) {
+			t.Errorf("false positive for %q", content)
+		}
+	}
+	if !HasCronLine("0 9 * * 1-5 coder schedule run rem-abc >> log 2>&1\n", e, ws) {
+		t.Error("hand-edited line with the exact id should match")
+	}
+}

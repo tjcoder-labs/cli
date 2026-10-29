@@ -98,20 +98,12 @@ func RemoveCronLines(r CrontabRunner, e Entry, workspaceRoot string) (int, error
 	if err != nil {
 		return 0, err
 	}
-	runRe := regexp.MustCompile(`(^|\s)schedule run ` + regexp.QuoteMeta(e.ID) + `(\s|$)`)
-	echoLine := ""
-	if e.Prompt == "" {
-		pe := e
-		pe.OneShot = false
-		echoLine, _ = CronLine(pe, "", workspaceRoot)
-	}
+	owns := cronLineMatcher(e, workspaceRoot)
 	lines := strings.Split(content, "\n")
 	kept := make([]string, 0, len(lines))
 	removed := 0
 	for _, ln := range lines {
-		trimmed := strings.TrimSpace(ln)
-		if trimmed != "" && !strings.HasPrefix(trimmed, "#") &&
-			(runRe.MatchString(trimmed) || (echoLine != "" && trimmed == echoLine)) {
+		if owns(ln) {
 			removed++
 			continue
 		}
@@ -124,4 +116,32 @@ func RemoveCronLines(r CrontabRunner, e Entry, workspaceRoot string) (int, error
 		return 0, err
 	}
 	return removed, nil
+}
+
+// cronLineMatcher reports whether a crontab line belongs to e (see
+// RemoveCronLines for the rule). Comments and blank lines never match.
+func cronLineMatcher(e Entry, workspaceRoot string) func(line string) bool {
+	runRe := regexp.MustCompile(`(^|\s)schedule run ` + regexp.QuoteMeta(e.ID) + `(\s|$)`)
+	echoLine := ""
+	if e.Prompt == "" {
+		pe := e
+		pe.OneShot = false
+		echoLine, _ = CronLine(pe, "", workspaceRoot)
+	}
+	return func(ln string) bool {
+		trimmed := strings.TrimSpace(ln)
+		return trimmed != "" && !strings.HasPrefix(trimmed, "#") &&
+			(runRe.MatchString(trimmed) || (echoLine != "" && trimmed == echoLine))
+	}
+}
+
+// HasCronLine reports whether crontab content contains e's line.
+func HasCronLine(content string, e Entry, workspaceRoot string) bool {
+	owns := cronLineMatcher(e, workspaceRoot)
+	for _, ln := range strings.Split(content, "\n") {
+		if owns(ln) {
+			return true
+		}
+	}
+	return false
 }
