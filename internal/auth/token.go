@@ -141,6 +141,7 @@ func SaveErgoToken(token string) error {
 // ClearErgoToken removes the persisted token from the keychain and the
 // token file (a no-op when absent).
 func ClearErgoToken() error {
+	_ = ClearErgoIdentity()
 	if keyringEnabled() {
 		_ = keyringDelete() // not-found / unavailable is fine
 	}
