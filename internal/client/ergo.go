@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -37,6 +38,15 @@ var ergoContextWindows = map[string]int{
 	// Google (via gateway models)
 	"gemini-2.5-pro":   1048576,
 	"gemini-2.5-flash": 1048576,
+	// Ergo tiers (fallback only; the gateway's /api/show is authoritative)
+	"ergo/flash":  131072,
+	"ergo/pro":    262144,
+	"ergo/genius": 262144,
+	// xAI via gateway
+	"xai/grok-4.7":   500000,
+	"xai/grok-4.5":   1000000,
+	"xai/grok-4.3":   1000000,
+	"xai/grok-build": 256000,
 }
 
 // ---- OpenAI-compatible wire types ----
@@ -174,6 +184,8 @@ type Ergo struct {
 	apiKey     string
 	httpClient *http.Client
 	ollama     *Ollama // non-nil when speaking the Ollama protocol
+	showOnce   sync.Once
+	show       *Ollama // /api/show client for context windows (OpenAI mode)
 }
 
 // ErgoDefaultOllamaPath is the gateway's Ollama-compatible API prefix
@@ -429,9 +441,17 @@ func (e *Ergo) ListModels(ctx context.Context) ([]ModelInfo, error) {
 	return models, nil
 }
 
-// ContextWindow returns a best-effort window from the static map; 0 when
-// the model is unknown (the TUI treats 0 as "unknown", never fatal).
-func (e *Ergo) ContextWindow(_ context.Context, model string) (int, error) {
+// ContextWindow asks the gateway for the model's real window (its
+// Ollama-compatible /api/show reports the upstream model's
+// context_length, so ergo/flash|pro|genius resolve to whatever they route
+// to today). When the gateway cannot say, it falls back to the static
+// table; 0 means unknown (the TUI shows "window unknown", never a guess).
+func (e *Ergo) ContextWindow(ctx context.Context, model string) (int, error) {
+	if e.apiKey != "" {
+		if n, err := e.showClient().ContextWindow(ctx, model); err == nil && n > 0 {
+			return n, nil
+		}
+	}
 	if n, ok := ergoContextWindows[model]; ok {
 		return n, nil
 	}
@@ -441,6 +461,17 @@ func (e *Ergo) ContextWindow(_ context.Context, model string) (int, error) {
 		}
 	}
 	return 0, nil
+}
+
+// showClient is the gateway's Ollama-compatible API, used for /show.
+func (e *Ergo) showClient() *Ollama {
+	if e.ollama != nil {
+		return e.ollama
+	}
+	e.showOnce.Do(func() {
+		e.show = NewOllamaCloud(e.baseURL, e.apiKey, 10*time.Second).WithAPIPath(ErgoDefaultOllamaPath)
+	})
+	return e.show
 }
 
 // ShowModel surfaces gateway/rate metadata in the ModelDetails shape used

@@ -146,7 +146,9 @@ func TestErgoListModels(t *testing.T) {
 }
 
 func TestErgoContextWindow(t *testing.T) {
-	e := NewErgo("http://example.com", "k", 0)
+	srv := httptest.NewServer(http.NotFoundHandler()) // gateway without /api/show
+	defer srv.Close()
+	e := NewErgo(srv.URL, "k", 0)
 	n, err := e.ContextWindow(context.Background(), "gpt-4o-mini")
 	if err != nil || n != 128000 {
 		t.Fatalf("got %d, err %v", n, err)

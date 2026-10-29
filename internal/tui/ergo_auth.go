@@ -363,7 +363,10 @@ func ergoBaseURL() string {
 // carrying `key` (empty string leaves it unauthenticated → friendly 401
 // on the next chat).
 func (a *App) swapErgoProvider(key string) {
+	a.mu.Lock()
 	a.provider = client.NewErgo(ergoBaseURL(), key, 0)
+	a.contextWindows = nil
+	a.mu.Unlock()
 	if a.runner != nil {
 		// The runner holds its own provider reference; keep it in sync so
 		// the very next turn uses the new credential.

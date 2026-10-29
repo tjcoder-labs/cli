@@ -157,7 +157,7 @@ func TestAssistantLabelUsesCoderSays(t *testing.T) {
 }
 
 func TestRefreshContextBarHidesLabels(t *testing.T) {
-	app := &App{workspaceRoot: "/tmp/work", contextInfo: "ctx: unavailable", refOrder: []string{"README.md"}}
+	app := &App{workspaceRoot: "/tmp/work", refOrder: []string{"README.md"}}
 	bar := app.refreshContextBar()
 	if strings.Contains(bar, "cwd=") || strings.Contains(bar, "ctx:") || strings.Contains(bar, "refs:") {
 		t.Fatalf("expected context bar to omit labels, got %q", bar)

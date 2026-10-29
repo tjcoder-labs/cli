@@ -62,8 +62,9 @@ func (a *App) loadSession() {
 	}
 
 	a.history = append([]client.Message(nil), state.History...)
-	if state.ContextInfo != "" {
-		a.contextInfo = state.ContextInfo
+	a.ctxUsage = client.ContextUsage{}
+	if state.ContextUsage != nil && state.ContextUsage.Messages == len(a.history) {
+		a.ctxUsage = *state.ContextUsage
 	}
 	a.refSet = map[string]struct{}{}
 	a.refOrder = nil
@@ -166,7 +167,7 @@ func (a *App) saveSession() error {
 		ToolMax:        a.sessionState.ToolMax,
 		EnabledTools:   a.enabledToolList(),
 		History:        append([]client.Message(nil), a.history...),
-		ContextInfo:    a.contextInfo,
+		ContextUsage:   a.sessionContextUsage(),
 		RefOrder:       append([]string(nil), a.refOrder...),
 		Transcript:     entries,
 		Reasoning:      a.reasoning.GetText(true),

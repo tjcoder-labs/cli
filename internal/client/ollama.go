@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -52,6 +53,9 @@ type tagsResponse struct {
 
 type showResponse struct {
 	ModelInfo map[string]any `json:"model_info"`
+	// ContextLength is a top-level window some Ollama-compatible
+	// gateways (ergo) return alongside model_info.
+	ContextLength int `json:"context_length,omitempty"`
 	// The fields below are populated by Ollama (and most Ollama-compatible
 	// providers) but were previously discarded. They are the parts of
 	// `ollama show` a user actually wants to see when figuring out what a
@@ -249,9 +253,23 @@ func (o *Ollama) Chat(ctx context.Context, request ChatRequest, onEvent func(Str
 	return msg, err
 }
 
+// ContextWindow resolves the window the server will actually use for
+// model, in priority order: a running instance's context_length from
+// /api/ps (local servers only; it reflects OLLAMA_CONTEXT_LENGTH), the
+// modelfile's num_ctx parameter, the model's trained context_length
+// (model_info "<arch>.context_length"), then a top-level context_length
+// (Ollama-compatible gateways). 0 means unknown.
 func (o *Ollama) ContextWindow(ctx context.Context, model string) (int, error) {
 	if model == "" {
 		return 0, nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if o.apiKey == "" {
+		if n := o.runningContext(ctx, model); n > 0 {
+			return n, nil
+		}
 	}
 	o.mu.Lock()
 	if n, ok := o.ctxWindow[model]; ok {
@@ -260,9 +278,6 @@ func (o *Ollama) ContextWindow(ctx context.Context, model string) (int, error) {
 	}
 	o.mu.Unlock()
 
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	body, err := json.Marshal(map[string]string{"model": model})
 	if err != nil {
 		return 0, err
@@ -286,27 +301,83 @@ func (o *Ollama) ContextWindow(ctx context.Context, model string) (int, error) {
 	if err := json.NewDecoder(resp.Body).Decode(&decoded); err != nil {
 		return 0, err
 	}
-	ctxLen := 0
-	for key, value := range decoded.ModelInfo {
-		lower := strings.ToLower(key)
-		if !strings.Contains(lower, "context_length") && !strings.Contains(lower, "num_ctx") && !strings.Contains(lower, ".ctx") {
-			continue
-		}
-		switch typed := value.(type) {
-		case float64:
-			if int(typed) > ctxLen {
-				ctxLen = int(typed)
-			}
-		case int:
-			if typed > ctxLen {
-				ctxLen = typed
-			}
-		}
-	}
+	ctxLen := showContextLength(decoded)
 	o.mu.Lock()
 	o.ctxWindow[model] = ctxLen
 	o.mu.Unlock()
 	return ctxLen, nil
+}
+
+func showContextLength(d showResponse) int {
+	for _, line := range strings.Split(d.Parameters, "\n") {
+		f := strings.Fields(line)
+		if len(f) == 2 && f[0] == "num_ctx" {
+			if n, err := strconv.Atoi(f[1]); err == nil && n > 0 {
+				return n
+			}
+		}
+	}
+	best := 0
+	for key, value := range d.ModelInfo {
+		if key != "context_length" && !strings.HasSuffix(strings.ToLower(key), ".context_length") {
+			continue
+		}
+		if n := jsonInt(value); n > best {
+			best = n
+		}
+	}
+	if best > 0 {
+		return best
+	}
+	return d.ContextLength
+}
+
+func jsonInt(v any) int {
+	switch t := v.(type) {
+	case float64:
+		return int(t)
+	case int:
+		return t
+	case json.Number:
+		n, _ := t.Int64()
+		return int(n)
+	}
+	return 0
+}
+
+// runningContext returns the context length a loaded model is running
+// with according to /api/ps, or 0.
+func (o *Ollama) runningContext(ctx context.Context, model string) int {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, o.apiBase()+"/ps", nil)
+	if err != nil {
+		return 0
+	}
+	resp, err := o.httpClient.Do(req)
+	if err != nil {
+		return 0
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		return 0
+	}
+	var ps struct {
+		Models []struct {
+			Name          string `json:"name"`
+			Model         string `json:"model"`
+			ContextLength int    `json:"context_length"`
+		} `json:"models"`
+	}
+	if json.NewDecoder(resp.Body).Decode(&ps) != nil {
+		return 0
+	}
+	for _, m := range ps.Models {
+		if m.Name == model || m.Model == model || m.Name == model+":latest" {
+			return m.ContextLength
+		}
+	}
+	return 0
 }
 
 func (o *Ollama) chatOnce(ctx context.Context, request ChatRequest, onEvent func(StreamEvent) error) (Message, error) {

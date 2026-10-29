@@ -108,16 +108,18 @@ type Memory struct {
 // what either consumer writes today, which lets the TUI and headless
 // paths evolve independently without losing each other's data.
 type State struct {
-	CurrentAgent string            `json:"current_agent"`
-	CurrentModel string            `json:"current_model"`
-	ToolMax      int               `json:"tool_max,omitempty"`
-	EnabledTools []string          `json:"enabled_tools"`
-	History      []client.Message  `json:"history"`
-	ContextInfo  string            `json:"context_info,omitempty"`
-	RefOrder     []string          `json:"ref_order,omitempty"`
-	Transcript   []TranscriptEntry `json:"transcript"`
-	Reasoning    string            `json:"reasoning,omitempty"`
-	Activity     string            `json:"activity,omitempty"`
+	CurrentAgent string           `json:"current_agent"`
+	CurrentModel string           `json:"current_model"`
+	ToolMax      int              `json:"tool_max,omitempty"`
+	EnabledTools []string         `json:"enabled_tools"`
+	History      []client.Message `json:"history"`
+	ContextInfo  string           `json:"context_info,omitempty"` // legacy; read-only
+	// ContextUsage is the last context reading for History.
+	ContextUsage *client.ContextUsage `json:"context_usage,omitempty"`
+	RefOrder     []string             `json:"ref_order,omitempty"`
+	Transcript   []TranscriptEntry    `json:"transcript"`
+	Reasoning    string               `json:"reasoning,omitempty"`
+	Activity     string               `json:"activity,omitempty"`
 
 	// Tasks, Articles, and Memories are added by the task-tracking work
 	// and the unified-right-pane work. They are omitempty so old session
@@ -144,20 +146,21 @@ func Load(workspaceRoot string) (State, bool, error) {
 	}
 
 	var raw struct {
-		CurrentAgent   string           `json:"current_agent"`
-		CurrentModel   string           `json:"current_model"`
-		ToolMax        int              `json:"tool_max,omitempty"`
-		EnabledTools   []string         `json:"enabled_tools"`
-		History        []client.Message `json:"history"`
-		ContextInfo    string           `json:"context_info,omitempty"`
-		RefOrder       []string         `json:"ref_order,omitempty"`
-		Transcript     json.RawMessage  `json:"transcript"`
-		Reasoning      string           `json:"reasoning,omitempty"`
-		Activity       string           `json:"activity,omitempty"`
-		Tasks          []Task           `json:"tasks,omitempty"`
-		Articles       []Article        `json:"articles,omitempty"`
-		Memories       []Memory         `json:"memories,omitempty"`
-		BackgroundJobs []BackgroundJob  `json:"background_jobs,omitempty"`
+		CurrentAgent   string               `json:"current_agent"`
+		CurrentModel   string               `json:"current_model"`
+		ToolMax        int                  `json:"tool_max,omitempty"`
+		EnabledTools   []string             `json:"enabled_tools"`
+		History        []client.Message     `json:"history"`
+		ContextInfo    string               `json:"context_info,omitempty"`
+		ContextUsage   *client.ContextUsage `json:"context_usage,omitempty"`
+		RefOrder       []string             `json:"ref_order,omitempty"`
+		Transcript     json.RawMessage      `json:"transcript"`
+		Reasoning      string               `json:"reasoning,omitempty"`
+		Activity       string               `json:"activity,omitempty"`
+		Tasks          []Task               `json:"tasks,omitempty"`
+		Articles       []Article            `json:"articles,omitempty"`
+		Memories       []Memory             `json:"memories,omitempty"`
+		BackgroundJobs []BackgroundJob      `json:"background_jobs,omitempty"`
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return state, true, fmt.Errorf("session: decode %s: %w", Path(workspaceRoot), err)
@@ -169,6 +172,7 @@ func Load(workspaceRoot string) (State, bool, error) {
 	state.EnabledTools = raw.EnabledTools
 	state.History = raw.History
 	state.ContextInfo = raw.ContextInfo
+	state.ContextUsage = raw.ContextUsage
 	state.RefOrder = raw.RefOrder
 	state.Reasoning = raw.Reasoning
 	state.Activity = raw.Activity

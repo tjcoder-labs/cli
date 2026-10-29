@@ -217,7 +217,7 @@ type App struct {
 	enabledTools              map[string]bool
 	history                   []client.Message
 	busy                      bool
-	contextInfo               string
+	ctxUsage                  client.ContextUsage
 	refSet                    map[string]struct{}
 	refOrder                  []string
 	spinIdx                   int
@@ -334,9 +334,10 @@ type App struct {
 	inputRow tview.Primitive
 
 	mu sync.Mutex
-	// compactWindows caches context-window lookups for the /compact
-	// hint (guarded by mu). 0 = unknown / in flight.
-	compactWindows map[string]int
+	// contextWindows caches context-window lookups (per provider) for the
+	// status bar and the /compact hint (guarded by mu). 0 = unknown / in
+	// flight.
+	contextWindows map[string]int
 
 	// config holds the persisted user-tunable settings loaded from
 	// .ergo-cli-go/config.json. Mutated by /config and read by the
@@ -414,7 +415,6 @@ func New(provider client.Provider, registry *tools.Registry, workspaceRoot, mode
 		modelChosen:   modelOverride != "",
 		explicitModel: modelOverride,
 		enabledTools:  map[string]bool{},
-		contextInfo:   "ctx: unavailable",
 		refSet:        map[string]struct{}{},
 		palette:       darkPalette(),
 		config:        cfg,
@@ -1532,29 +1532,9 @@ func (a *App) renderMetaBar() string {
 	if cwd == "" {
 		cwd = "."
 	}
-	contextText := strings.TrimSpace(strings.TrimPrefix(a.contextInfo, "ctx:"))
-	contextText = strings.TrimSpace(contextText)
+	contextText := a.contextStatusText()
 	if contextText == "" {
 		contextText = "unavailable"
-	}
-	// If contextText contains a numeric "used / total" pair, render a compact
-	// progress bar in the primary tint color and replace the numeric portion
-	// with the bar to keep the context line compact and live-updating.
-	if contextText != "unavailable" {
-		// Match numbers with optional K/M suffixes, e.g. "12K / 127K" or "3% / 2M"
-		re := regexp.MustCompile(`([\d.]+)\s*([KM]?)\s*/\s*([\d.]+)\s*([KM]?)`)
-		if m := re.FindStringSubmatchIndex(contextText); m != nil {
-			usedStr := contextText[m[2]:m[3]]
-			usedSuffix := contextText[m[4]:m[5]]
-			totalStr := contextText[m[6]:m[7]]
-			totalSuffix := contextText[m[8]:m[9]]
-			used := parseTokenCount(usedStr, usedSuffix)
-			total := parseTokenCount(totalStr, totalSuffix)
-			if total > 0 {
-				bar := a.renderProgressBar(used, total, 28)
-				contextText = bar
-			}
-		}
 	}
 
 	refsText := strings.TrimSpace(strings.TrimPrefix(a.referenceSummary(), "refs:"))
@@ -1602,21 +1582,14 @@ func (a *App) renderMetaBar() string {
 	return line
 }
 
-// (a *App) renderProgressBar builds a compact 12-segment progress bar with a highlighted current segment.
-// Output format: [--progress--] 3% of 126,980 tokens.
-func (a *App) renderProgressBar(used, total, _width int) string {
+// renderProgressBar builds a compact 12-segment bar with a highlighted
+// current segment; an over-full window fills every segment.
+func (a *App) renderProgressBar(used, total int) string {
 	const segments = 12
 	if total <= 0 {
 		return ""
 	}
 	pct := float64(used) / float64(total)
-	if pct < 0 {
-		pct = 0
-	}
-	if pct > 1 {
-		pct = 1
-	}
-	// number of fully consumed segments (left of the current highlight)
 	consumed := int(pct * float64(segments))
 	if consumed < 0 {
 		consumed = 0
@@ -1624,28 +1597,20 @@ func (a *App) renderProgressBar(used, total, _width int) string {
 	if consumed > segments-1 {
 		consumed = segments - 1
 	}
-	// current segment index (0..segments-1)
-	current := consumed
-
 	var b strings.Builder
 	b.WriteString("[")
 	for i := 0; i < segments; i++ {
-		if i < consumed {
-			// consumed segment (dim)
+		switch {
+		case i < consumed:
 			b.WriteString(fmt.Sprintf("[%s]%s[-]", a.palette.HexDim, "━"))
-		} else if i == current {
-			// current highlighted segment (primary tint)
+		case i == consumed:
 			b.WriteString(fmt.Sprintf("[%s]%s[-]", a.palette.HexPurple, "▮"))
-		} else {
-			// unconsumed segment (faint)
+		default:
 			b.WriteString(fmt.Sprintf("[%s]%s[-]", a.palette.HexDim, "·"))
 		}
 	}
 	b.WriteString("]")
-
-	percent := int(pct * 100)
-	formattedTotal := formatTokensCompactTUI(total)
-	return fmt.Sprintf("%s %d%% of %s tokens.", b.String(), percent, formattedTotal)
+	return b.String()
 }
 
 // formatWithCommas formats an integer with comma separators, e.g. 126980 -> "126,980"
@@ -1667,21 +1632,6 @@ func formatWithCommas(n int) string {
 		parts = append([]string{s}, parts...)
 	}
 	return strings.Join(parts, ",")
-}
-
-// parseTokenCount parses a numeric string with an optional K/M suffix
-// into an integer token count. Used by renderMetaBar to extract
-// used/total from context strings like "~12K / 127K used".
-func parseTokenCount(num, suffix string) int {
-	f := 0.0
-	fmt.Sscanf(num, "%f", &f)
-	switch strings.ToUpper(suffix) {
-	case "K":
-		f *= 1000
-	case "M":
-		f *= 1_000_000
-	}
-	return int(f)
 }
 
 // formatTokensCompactTUI renders a token count using K/M suffixes.
@@ -2815,7 +2765,7 @@ func (a *App) clearSession() {
 	a.transcript.Clear()
 	a.reasoning.Clear()
 	a.activity.Clear()
-	a.contextInfo = "ctx: unavailable"
+	a.ctxUsage = client.ContextUsage{}
 	a.refSet = map[string]struct{}{}
 	a.refOrder = nil
 	a.setTranscriptSplash()
@@ -2938,6 +2888,7 @@ func (a *App) compactHistory(parts []string) {
 				{Role: "user", Content: "[Compaction] The prior conversation has been summarized to free context. Treat the assistant's summary below as authoritative for any earlier decision, file change, or open question."},
 				{Role: "assistant", Content: summary},
 			}
+			a.resetContextUsage()
 
 			// Persist immediately.
 			if err := a.saveSession(); err != nil {
@@ -2962,7 +2913,6 @@ func (a *App) compactHistory(parts []string) {
 			a.transcript.ScrollToEnd()
 
 			// Refresh the context bar to reflect freed tokens.
-			a.contextInfo = "ctx: recalculating…"
 			a.refreshContextBar()
 		})
 	}()
@@ -3340,7 +3290,9 @@ func (a *App) handleEvent(event tooling.Event) {
 				a.appendActivity(fmt.Sprintf("["+a.palette.HexOrchid+"::b]✗ %s[-:-:-] %s", event.ToolName, event.Text))
 			}
 		case tooling.EventContext:
-			a.contextInfo = event.Text
+			if event.Usage != nil {
+				a.recordContextUsage(*event.Usage)
+			}
 			a.refreshContextBar()
 		case tooling.EventSteering:
 			// Mid-turn user steering. Render as a transcript line
@@ -4170,7 +4122,10 @@ func (a *App) switchProvider(cfg providers.Config) {
 		a.appendActivity(fmt.Sprintf("[red]Provider build failed[-]: %v", err))
 		return
 	}
+	a.mu.Lock()
 	a.provider = p
+	a.contextWindows = nil // windows are per provider
+	a.mu.Unlock()
 	a.runner.Provider = p
 	// Clear stale model list so openModelModal triggers a fresh fetch.
 	a.models = nil
@@ -4179,6 +4134,7 @@ func (a *App) switchProvider(cfg providers.Config) {
 	a.currentModel = a.sanitizeModel(a.currentModel)
 	a.refreshHeader()
 	a.refreshFooter()
+	a.refreshContextForModel(a.currentModel)
 	a.appendActivity(fmt.Sprintf("Switched to provider %s (%s)", cfg.Name, cfg.BaseURL))
 	a.loadModelsAsync()
 }
@@ -4374,51 +4330,6 @@ func (a *App) openModelModal() {
 		a.closeModal()
 	})
 	a.showModal("Select Model", list)
-}
-
-// refreshContextForModel re-estimates the token consumption indicator
-// against the context window of `model` and re-renders the context bar
-// right away. Use this immediately after switching agent or model so
-// the bar reflects the new model's window without waiting for the
-// next model response. Each model family has a different context
-// window (e.g. 8K for some Gemini variants vs. 128K+ for others), so
-// the "X% of Y tokens" total genuinely changes on a switch. If the
-// provider can't resolve a window or there's no history yet, the bar
-// falls back to "ctx: unavailable" so the user sees a clear state.
-func (a *App) refreshContextForModel(model string) {
-	if a.provider == nil || model == "" {
-		return
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	window, err := a.provider.ContextWindow(ctx, model)
-	if err != nil || window <= 0 {
-		// Unknown window — keep the previous bar but mark it so the
-		// user at least sees the model name is in effect. We
-		// intentionally don't blank the indicator; the next model
-		// response will refresh it with authoritative counts.
-		a.appendActivity(fmt.Sprintf("[%s]token indicator[-]: context window unknown for %s", a.palette.HexDim, model))
-		return
-	}
-	estChars := 0
-	for _, m := range a.history {
-		estChars += len(m.Role) + len(m.Content) + len(m.Thinking) + len(m.ToolName)
-		for _, tc := range m.ToolCalls {
-			estChars += len(tc.Function.Name) + len(tc.Function.Arguments)
-		}
-	}
-	estTok := estChars / 4
-	if estTok > window {
-		estTok = window
-	}
-	remaining := window - estTok
-	if remaining < 0 {
-		remaining = 0
-	}
-	pctUsed := float64(estTok) / float64(window) * 100.0
-	a.contextInfo = fmt.Sprintf("ctx: ~%s / %s used (%.1f%%, est), remaining=%s",
-		formatTokensCompactTUI(estTok), formatTokensCompactTUI(window), pctUsed, formatTokensCompactTUI(remaining))
-	a.refreshContextBar()
 }
 
 func (a *App) openToolModal() {
