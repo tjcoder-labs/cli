@@ -82,6 +82,57 @@ func (s *promptState) zeroSecret() {
 	s.buf = nil
 }
 
+// appendSecret appends p to the masked buffer, growing the backing
+// array manually so the old one can be wiped rather than left for the
+// GC with secret bytes still in it.
+func (s *promptState) appendSecret(p []byte) {
+	if len(p) == 0 {
+		return
+	}
+	if cap(s.buf)-len(s.buf) < len(p) {
+		nb := make([]byte, len(s.buf), 2*cap(s.buf)+len(p)+16)
+		copy(nb, s.buf)
+		s.zeroSecret()
+		s.buf = nb
+	}
+	s.buf = append(s.buf, p...)
+}
+
+// paste appends pasted text to the active input line and reports
+// whether anything changed. For secret prompts the bytes go into the
+// masked buffer with every CR/LF dropped, so a key copied with its
+// trailing newline (or a terminal that turns the newline into Enter)
+// never smuggles a line break into the secret. For an open free-text
+// line the text goes into the visible answer: trailing newlines are
+// trimmed and embedded ones become spaces, because the answer is a
+// single line and a raw newline would break the card frame. Choice
+// rows (not editing) ignore paste.
+func (s *promptState) paste(text string) bool {
+	if s.secret {
+		clean := make([]byte, 0, len(text))
+		for i := 0; i < len(text); i++ {
+			if c := text[i]; c != '\r' && c != '\n' {
+				clean = append(clean, c)
+			}
+		}
+		s.appendSecret(clean)
+		for i := range clean {
+			clean[i] = 0
+		}
+		return len(clean) > 0
+	}
+	if !s.editing {
+		return false
+	}
+	text = strings.TrimRight(text, "\r\n")
+	text = strings.NewReplacer("\r\n", " ", "\n", " ", "\r", " ").Replace(text)
+	if text == "" {
+		return false
+	}
+	s.other = append(s.other, []rune(text)...)
+	return true
+}
+
 // handleKey applies one key. done reports the prompt finished; ans is
 // the result for choice prompts; for secret prompts the caller takes
 // s.buf (nil when cancelled).
@@ -106,15 +157,7 @@ func (s *promptState) handleKey(ev *tcell.EventKey) (done bool, ans tools.Prompt
 		case tcell.KeyRune:
 			var tmp [utf8.UTFMax]byte
 			n := utf8.EncodeRune(tmp[:], ev.Rune())
-			if cap(s.buf)-len(s.buf) < n {
-				// Grow manually so the old backing array can be wiped
-				// rather than left for the GC with secret bytes in it.
-				nb := make([]byte, len(s.buf), 2*cap(s.buf)+n+16)
-				copy(nb, s.buf)
-				s.zeroSecret()
-				s.buf = nb
-			}
-			s.buf = append(s.buf, tmp[:n]...)
+			s.appendSecret(tmp[:n])
 		}
 		return false, tools.PromptAnswer{}
 	}
@@ -386,6 +429,59 @@ func answeredContent(th theme.Theme, req tools.PromptRequest, ans tools.PromptAn
 
 var _ tools.Prompter = (*App)(nil)
 
+// promptGuard is the focus guard shared by keys and paste: for
+// promptArmDelay after the card gains focus, everything except Esc is
+// ignored, so an Enter, digit or paste aimed at the chat input (or the
+// modal that just closed) can never answer the card.
+type promptGuard struct{ armedAt atomic.Int64 }
+
+// arm records that the card just gained focus.
+func (g *promptGuard) arm() { g.armedAt.Store(promptNow().UnixNano()) }
+
+// settling reports whether the card is still inside the guard window.
+func (g *promptGuard) settling() bool {
+	return promptNow().Sub(time.Unix(0, g.armedAt.Load())) < promptArmDelay
+}
+
+// promptNow is the guard's clock. Tests replace it.
+var promptNow = time.Now
+
+// promptView is a TextView that carries a paste handler. tview.TextView
+// defines no PasteHandler (it always returns nil), so a bracketed paste
+// would otherwise be dropped before it reaches the prompt's input
+// capture. Embedding the TextView and overriding PasteHandler lets the
+// live prompt card receive pasted text while keeping every other
+// TextView behaviour intact.
+type promptView struct {
+	*tview.TextView
+	st       *promptState
+	guard    *promptGuard
+	finished func() bool // card already answered / unmounted
+	redraw   func()
+}
+
+func newPromptView(tv *tview.TextView, st *promptState) *promptView {
+	v := &promptView{TextView: tv, st: st, guard: &promptGuard{}}
+	tv.SetFocusFunc(v.guard.arm)
+	return v
+}
+
+// paste routes pasted text into the card's state machine, honouring
+// the same rules as keys: nothing once finished, nothing unless the
+// card holds focus, and nothing inside the focus guard window.
+func (v *promptView) paste(text string) {
+	if v.st == nil || (v.finished != nil && v.finished()) || !v.HasFocus() || v.guard.settling() {
+		return
+	}
+	if v.st.paste(text) && v.redraw != nil {
+		v.redraw()
+	}
+}
+
+func (v *promptView) PasteHandler() func(string, func(tview.Primitive)) {
+	return v.WrapPasteHandler(func(text string, _ func(tview.Primitive)) { v.paste(text) })
+}
+
 // runPrompt mounts st as a card at the bottom of the Conversation
 // panel (aligned with the transcript text), takes focus, and blocks (on
 // the caller's goroutine, never the UI one) until the user finishes or
@@ -402,18 +498,13 @@ func (a *App) runPrompt(ctx context.Context, st *promptState) (tools.PromptAnswe
 		return cancelled, outcomeCancelled, fmt.Errorf("interactive prompt requested on the UI goroutine")
 	}
 	result := make(chan tools.PromptAnswer, 1)
-	view := tview.NewTextView().SetDynamicColors(true).SetWrap(false)
-	view.SetBackgroundColor(a.palette.BgRoot)
+	tv := tview.NewTextView().SetDynamicColors(true).SetWrap(false)
+	tv.SetBackgroundColor(a.palette.BgRoot)
 	// Same horizontal padding as the transcript body, so the live card
 	// sits exactly where its answered copy will be printed.
-	view.SetBorderPadding(0, 1, 3, 2)
+	tv.SetBorderPadding(0, 1, 3, 2)
+	view := newPromptView(tv, st)
 	var finished bool
-	// armedAt is when the card last gained focus (unix nanos). Keys
-	// other than Esc that arrive within promptArmDelay of that are
-	// dropped, so an Enter or digit typed for the chat input (or the
-	// modal that just closed) can never pick the pre-selected default.
-	var armedAt atomic.Int64
-	view.SetFocusFunc(func() { armedAt.Store(time.Now().UnixNano()) })
 	unmount := func() {
 		hadFocus := a.tv.GetFocus() == view
 		a.transcriptPanel.RemoveItem(view)
@@ -437,7 +528,7 @@ func (a *App) runPrompt(ctx context.Context, st *promptState) (tools.PromptAnswe
 		if finished {
 			return nil
 		}
-		if ev.Key() != tcell.KeyEscape && time.Since(time.Unix(0, armedAt.Load())) < promptArmDelay {
+		if ev.Key() != tcell.KeyEscape && view.guard.settling() {
 			return nil
 		}
 		done, ans := st.handleKey(ev)
@@ -450,6 +541,13 @@ func (a *App) runPrompt(ctx context.Context, st *promptState) (tools.PromptAnswe
 		lp.redraw()
 		return nil
 	})
+	// A bracketed paste is delivered to the focused primitive's
+	// PasteHandler, not its InputHandler. Route it into the same state
+	// machine (view.paste applies the focus guard) so secret prompts
+	// accept a pasted key and free-text prompts accept pasted answers.
+	// Both closures run on the UI goroutine only.
+	view.finished = func() bool { return finished }
+	view.redraw = lp.redraw
 	a.postUI(func() {
 		if finished {
 			return
@@ -488,13 +586,13 @@ func (a *App) runPrompt(ctx context.Context, st *promptState) (tools.PromptAnswe
 	}
 }
 
-// promptArmDelay is how long a freshly focused card ignores keys other
-// than Esc. Tests set it to 0.
+// promptArmDelay is how long a freshly focused card ignores keys and
+// pastes (everything except Esc). Tests set it to 0.
 var promptArmDelay = 300 * time.Millisecond
 
 // livePrompt is the card currently mounted under the transcript.
 type livePrompt struct {
-	view      *tview.TextView
+	view      *promptView
 	width     int
 	redraw    func()
 	queued    bool
@@ -504,7 +602,7 @@ type livePrompt struct {
 // liveCardView returns the mounted card when it is actually on screen
 // (no modal pane, fullscreen or /about hiding the Conversation panel),
 // else nil. UI goroutine only.
-func (a *App) liveCardView() *tview.TextView {
+func (a *App) liveCardView() *promptView {
 	if a.livePrompt == nil || a.leftPane != nil || a.fullscreen || a.aboutMode {
 		return nil
 	}
