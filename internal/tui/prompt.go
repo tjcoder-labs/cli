@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -314,6 +315,18 @@ func cardHeader(th theme.Theme, req tools.PromptRequest, secret bool) []render.L
 	return out
 }
 
+// secretMaskMax caps the bullets shown for a secret so a long pasted
+// credential (a 4 KiB token is ~100 wrapped rows) cannot grow the card
+// past the screen; longer secrets show the capped mask plus a count.
+const secretMaskMax = 32
+
+func secretMask(n int) string {
+	if n <= secretMaskMax {
+		return strings.Repeat("•", n)
+	}
+	return strings.Repeat("•", secretMaskMax) + "… " + strconv.Itoa(n) + " chars"
+}
+
 // content returns the live card's rows (before boxing).
 func (s *promptState) content(th theme.Theme) []render.Line {
 	out := cardHeader(th, s.req, s.secret)
@@ -322,7 +335,7 @@ func (s *promptState) content(th theme.Theme) []render.Line {
 	if s.secret {
 		out = append(out,
 			render.Line{{Text: s.label, Fg: th.Text}},
-			render.Line{{Text: "› ", Fg: th.Bright, Attr: "b"}, {Text: strings.Repeat("•", utf8.RuneCount(s.buf)), Fg: th.Text}, cursor},
+			render.Line{{Text: "› ", Fg: th.Bright, Attr: "b"}, {Text: secretMask(utf8.RuneCount(s.buf)), Fg: th.Text}, cursor},
 			nil,
 			render.Line{{Text: "Enter to submit · Esc to cancel · input is hidden and never sent to the model", Fg: th.Faint}})
 		return out
