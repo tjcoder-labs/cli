@@ -291,6 +291,11 @@ func (r *Runner) run(ctx context.Context, history []client.Message, prompt strin
 	systemPrompt := agentCfg.Prompt
 	if offered["ask_user"] {
 		systemPrompt += "\n\n" + tools.AskUserGuidance
+		if r.Prompter == nil {
+			// Headless: nobody can answer, and a default is never used
+			// in place of an answer.
+			systemPrompt += "\n" + tools.AskUserHeadlessGuidance
+		}
 	}
 	if injected := loadAgentsPrompt(r.WorkspaceRoot); injected != "" {
 		systemPrompt += "\n\nRepository instructions from AGENTS.md (auto-injected):\n" + injected

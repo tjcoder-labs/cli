@@ -222,6 +222,11 @@ var errSudoDenied = errors.New("sudo denied")
 // grant's Env must be applied to the command and Close called after it
 // exits. On denial the error explains why (and is safe to show the
 // model: it never contains secrets).
+// sudoOptions are the sudo authorization card's choices, in order.
+// There is deliberately no default: the cursor starts on the first row
+// but nothing is chosen until the user picks.
+var sudoOptions = []string{"Allow once", "Allow sudo for this session", "Deny"}
+
 func authorizeSudo(ctx context.Context, command string, env ExecEnv) (*sudoGrant, error) {
 	for _, w := range sudoInvocations(command) {
 		if w != "sudo" {
@@ -257,22 +262,26 @@ func authorizeSudo(ctx context.Context, command string, env ExecEnv) (*sudoGrant
 			Title:    "sudo",
 			Question: "The agent wants to run a command with sudo.",
 			Detail:   command,
-			Options:  []string{"Allow once", "Allow sudo for this session", "Deny"},
+			Options:  append([]string(nil), sudoOptions...),
 		})
 		if err != nil {
 			return nil, err
 		}
+		// Only an explicit pick of an allow option grants sudo. Esc,
+		// "Deny", or anything unexpected (an empty answer, an index
+		// that does not match its label) is a denial: no option is
+		// ever applied without the user choosing it.
 		switch {
-		case ans.Cancelled || ans.Index == 2:
-			env.Prompter.Record("sudo denied: " + command)
-			return nil, fmt.Errorf("%w: the user denied sudo for this command", errSudoDenied)
-		case ans.Index == 1:
+		case !ans.Cancelled && ans.Index == 1 && ans.Choice == sudoOptions[1]:
 			decision = "allowed for this session"
 			t := true
 			policy.set(&t, nil)
-		default:
+		case !ans.Cancelled && ans.Index == 0 && ans.Choice == sudoOptions[0]:
 			once = true
 			decision = "allowed once"
+		default:
+			env.Prompter.Record("sudo denied: " + command)
+			return nil, fmt.Errorf("%w: the user denied sudo for this command", errSudoDenied)
 		}
 	}
 

@@ -805,6 +805,14 @@ func (a *App) build() {
 		if ev, handled := a.handleReferenceKey(event); handled {
 			return ev
 		}
+		// Tab hops to a mounted question card, unless the slash
+		// palette is using Tab to cycle its matches.
+		if event.Key() == tcell.KeyTab && !(a.hintMode == "command" && len(a.hintMatches) > 0) {
+			if v := a.liveCardView(); v != nil {
+				a.tv.SetFocus(v)
+				return nil
+			}
+		}
 		switch event.Key() {
 		case tcell.KeyCtrlU:
 			a.killInputToLineStart()
@@ -1844,9 +1852,15 @@ func (a *App) textEntryFocused() bool {
 	if a.tv == nil {
 		return false
 	}
-	switch a.tv.GetFocus().(type) {
+	f := a.tv.GetFocus()
+	switch f.(type) {
 	case *tview.InputField, *tview.TextArea:
 		return true
+	}
+	// A question card typing an Other… answer or a password clears
+	// its own buffer on Ctrl-U.
+	if lp := a.livePrompt; lp != nil && f == tview.Primitive(lp.view) && lp.textEntry != nil {
+		return lp.textEntry()
 	}
 	return false
 }
@@ -2475,8 +2489,9 @@ func (a *App) runCognitionRecap() {
 }
 
 // showPanel switches the activity panel between 'activity', 'tasks', and 'articles'.
-// Panels are display-only; focus always remains on the input field so the user
-// can continue typing commands. Use Alt+[letter] to switch panels without losing input focus.
+// Panels are display-only; focus returns to the default target (a mounted
+// question card, otherwise the input field) so the user can keep going.
+// Use Alt+[letter] to switch panels without losing that focus.
 func (a *App) showPanel(name string) {
 	name = strings.ToLower(strings.TrimSpace(name))
 	switch name {
@@ -2484,32 +2499,32 @@ func (a *App) showPanel(name string) {
 		a.refreshTasksList()
 		a.setActivePanel("tasks")
 		a.rebuildLayout()
-		a.focusInput()
+		a.restoreDefaultFocus()
 		return
 	case "memories":
 		a.refreshMemoriesList()
 		a.setActivePanel("memories")
 		a.rebuildLayout()
-		a.focusInput()
+		a.restoreDefaultFocus()
 		return
 	case "articles":
 		a.setActivePanel("articles")
 		a.setActivityTitle("ARTICLES", "")
 		a.activity.SetText("[articles] Not implemented yet\n")
 		a.rebuildLayout()
-		a.focusInput()
+		a.restoreDefaultFocus()
 		return
 	case "canvas", "code", "reference":
 		a.setActivePanel("canvas")
 		a.refreshCanvasPanel()
 		a.rebuildLayout()
-		a.focusInput()
+		a.restoreDefaultFocus()
 		return
 	case "test":
 		a.setActivePanel("test")
 		a.testView.SetText("Test Pane: Active\n\nThis is an empty test pane used for troubleshooting hangs.")
 		a.rebuildLayout()
-		a.focusInput()
+		a.restoreDefaultFocus()
 		return
 	default:
 		a.setActivePanel("activity")
@@ -2520,7 +2535,7 @@ func (a *App) showPanel(name string) {
 			}
 		}
 		a.rebuildLayout()
-		a.focusInput()
+		a.restoreDefaultFocus()
 	}
 }
 
@@ -2529,12 +2544,6 @@ func (a *App) showPanel(name string) {
 // glyph and (when done) a struck-through, dimmed title. The user
 // navigates with Up/Down and presses Enter to toggle the task
 // between done and its previous open status.
-func (a *App) focusInput() {
-	if a.tv != nil && a.input != nil {
-		a.tv.SetFocus(a.input)
-	}
-}
-
 func (a *App) refreshTasksList() {
 	if a.tasksList == nil {
 		return
@@ -3322,7 +3331,7 @@ func (a *App) launchTurnWithContext(prompt, agentNameOverride, turnContext strin
 			a.stopSpinner()
 			a.refreshContextBar()
 			a.refreshFooter()
-			a.tv.SetFocus(a.input)
+			a.restoreDefaultFocus()
 			a.saveSession()
 
 			// Auto-refresh tasks pane if visible and tasks were modified by the agent
@@ -4162,6 +4171,12 @@ func (a *App) rebuildLayout() {
 	a.pages.RemovePage("main")
 	a.pages.AddPage("main", layout, true, true)
 	a.rootFlex = layout
+	// AddPage just pushed focus to the input (the layout's focus
+	// item). A visible question card must keep it; showModal sets its
+	// own focus right after this.
+	if a.liveCardView() != nil {
+		a.restoreDefaultFocus()
+	}
 }
 
 func (a *App) setReasoningSplash() {
@@ -4622,11 +4637,12 @@ func (a *App) showModal(title string, primitive tview.Primitive) {
 }
 
 // closeModal dismisses an in-pane modal and restores the Conversation
-// column, returning focus to the input field.
+// column, returning focus to the question card when one is mounted,
+// otherwise to the input field.
 func (a *App) closeModal() {
 	a.leftPane = nil
 	a.rebuildLayout()
-	a.tv.SetFocus(a.input)
+	a.restoreDefaultFocus()
 }
 
 func (a *App) styleModalList(list *tview.List) {

@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync/atomic"
+	"time"
 	"unicode/utf8"
 
 	"github.com/gdamore/tcell/v2"
@@ -405,18 +407,26 @@ func (a *App) runPrompt(ctx context.Context, st *promptState) (tools.PromptAnswe
 	// Same horizontal padding as the transcript body, so the live card
 	// sits exactly where its answered copy will be printed.
 	view.SetBorderPadding(0, 1, 3, 2)
-	var prevFocus tview.Primitive
 	var finished bool
+	// armedAt is when the card last gained focus (unix nanos). Keys
+	// other than Esc that arrive within promptArmDelay of that are
+	// dropped, so an Enter or digit typed for the chat input (or the
+	// modal that just closed) can never pick the pre-selected default.
+	var armedAt atomic.Int64
+	view.SetFocusFunc(func() { armedAt.Store(time.Now().UnixNano()) })
 	unmount := func() {
+		hadFocus := a.tv.GetFocus() == view
 		a.transcriptPanel.RemoveItem(view)
 		if a.livePrompt != nil && a.livePrompt.view == view {
 			a.livePrompt = nil
 		}
-		if prevFocus != nil {
-			a.tv.SetFocus(prevFocus)
+		// Only move focus if the card still owned it; a modal or
+		// panel the user opened meanwhile keeps its focus.
+		if hadFocus {
+			a.restoreDefaultFocus()
 		}
 	}
-	lp := &livePrompt{view: view}
+	lp := &livePrompt{view: view, textEntry: func() bool { return st.secret || st.editing }}
 	lp.redraw = func() {
 		lp.width = innerWidth(a.transcript)
 		text := st.render(a.palette, lp.width)
@@ -425,6 +435,9 @@ func (a *App) runPrompt(ctx context.Context, st *promptState) (tools.PromptAnswe
 	}
 	view.SetInputCapture(func(ev *tcell.EventKey) *tcell.EventKey {
 		if finished {
+			return nil
+		}
+		if ev.Key() != tcell.KeyEscape && time.Since(time.Unix(0, armedAt.Load())) < promptArmDelay {
 			return nil
 		}
 		done, ans := st.handleKey(ev)
@@ -438,12 +451,19 @@ func (a *App) runPrompt(ctx context.Context, st *promptState) (tools.PromptAnswe
 		return nil
 	})
 	a.postUI(func() {
-		prevFocus = a.tv.GetFocus()
+		if finished {
+			return
+		}
 		a.transcriptPanel.AddItem(view, 3, 0, true)
 		a.livePrompt = lp
 		lp.redraw()
 		a.transcript.ScrollToEnd()
-		a.tv.SetFocus(view)
+		// Take focus only when the card is on screen. With a modal,
+		// fullscreen or /about up, the card waits; closing those
+		// routes focus here through restoreDefaultFocus.
+		if a.liveCardView() != nil {
+			a.tv.SetFocus(view)
+		}
 	})
 	select {
 	case ans := <-result:
@@ -468,12 +488,44 @@ func (a *App) runPrompt(ctx context.Context, st *promptState) (tools.PromptAnswe
 	}
 }
 
+// promptArmDelay is how long a freshly focused card ignores keys other
+// than Esc. Tests set it to 0.
+var promptArmDelay = 300 * time.Millisecond
+
 // livePrompt is the card currently mounted under the transcript.
 type livePrompt struct {
-	view   *tview.TextView
-	width  int
-	redraw func()
-	queued bool
+	view      *tview.TextView
+	width     int
+	redraw    func()
+	queued    bool
+	textEntry func() bool // card is taking typed text (Other… or secret)
+}
+
+// liveCardView returns the mounted card when it is actually on screen
+// (no modal pane, fullscreen or /about hiding the Conversation panel),
+// else nil. UI goroutine only.
+func (a *App) liveCardView() *tview.TextView {
+	if a.livePrompt == nil || a.leftPane != nil || a.fullscreen || a.aboutMode {
+		return nil
+	}
+	return a.livePrompt.view
+}
+
+// restoreDefaultFocus is the one place focus goes back to after a
+// modal, menu, panel switch or layout rebuild: the question card when
+// one is mounted and visible, otherwise the chat input. UI goroutine
+// only; never blocks.
+func (a *App) restoreDefaultFocus() {
+	if a.tv == nil {
+		return
+	}
+	if v := a.liveCardView(); v != nil {
+		a.tv.SetFocus(v)
+		return
+	}
+	if a.input != nil {
+		a.tv.SetFocus(a.input)
+	}
 }
 
 // checkPromptWidth runs after every draw and re-boxes the live card

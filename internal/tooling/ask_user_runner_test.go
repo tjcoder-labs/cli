@@ -121,6 +121,9 @@ func TestRunner_AskUserBlocksUntilAnswered(t *testing.T) {
 	if !strings.Contains(sys, tools.AskUserGuidance) {
 		t.Fatal("ask_user guidance missing from the system prompt")
 	}
+	if strings.Contains(sys, tools.AskUserHeadlessGuidance) {
+		t.Fatal("interactive runs must not carry the headless ask_user note")
+	}
 }
 
 func TestRunner_AskUserDismissed(t *testing.T) {
@@ -216,5 +219,29 @@ func TestRunner_ToolLessRunNeverPrompts(t *testing.T) {
 	}
 	if got := toolResults(o.history); len(got) != 1 || !strings.Contains(got[0], "not enabled") {
 		t.Fatalf("tool results = %q", got)
+	}
+}
+
+// TestRunner_HeadlessAuthorizationNotApproved: a turn whose ask_user is
+// an authorization with a "Yes, proceed" default, run with no prompter
+// (headless), gets the explicit not-approved result, never the default.
+func TestRunner_HeadlessAuthorizationNotApproved(t *testing.T) {
+	args := `{"question":"Wipe the cache directory?","kind":"authorization","options":["Yes, proceed","No"],"default":"Yes, proceed","detail":"rm -rf ~/.cache/coder"}`
+	provider := &scriptedProvider{responses: []client.Message{askCall(args), {Role: "assistant", Content: "not wiping"}}}
+	r := &Runner{Provider: provider, Registry: tools.NewRegistry(provider), WorkspaceRoot: t.TempDir(), MaxSteps: 4}
+	o := waitRun(t, startRun(t, context.Background(), r, []string{"ask_user"}))
+	if o.err != nil {
+		t.Fatal(o.err)
+	}
+	got := toolResults(o.history)
+	if len(got) != 1 || got[0] != tools.AskUnavailableAuth {
+		t.Fatalf("tool results = %q", got)
+	}
+	if strings.Contains(got[0], "Yes, proceed") || strings.HasPrefix(got[0], tools.AskAnswered) {
+		t.Fatalf("headless authorization must not be approved: %q", got[0])
+	}
+	sys := provider.requests[0].Messages[0].Content
+	if !strings.Contains(sys, tools.AskUserGuidance) || !strings.Contains(sys, tools.AskUserHeadlessGuidance) {
+		t.Fatal("headless runs must carry the non-interactive ask_user guidance")
 	}
 }

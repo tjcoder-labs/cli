@@ -189,7 +189,9 @@ func (a *App) runUpdate(parts []string) {
 		Detail:   detail,
 		Options:  []string{"Update now", "Not now"},
 	})
-	if err != nil || ans.Index != 0 {
+	// Only an explicit "Update now" pick installs; Esc, "Not now",
+	// a cancelled turn or an empty answer never do.
+	if err != nil || ans.Cancelled || ans.Index != 0 || ans.Choice != "Update now" {
 		return
 	}
 	if !installing.CompareAndSwap(false, true) {

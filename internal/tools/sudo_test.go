@@ -111,7 +111,9 @@ func TestSudoGateHeadlessAllowedNeverPrompts(t *testing.T) {
 
 func TestSudoGateDenyAndEsc(t *testing.T) {
 	withFakeSudo(t, &fakeSudo{cached: true})
-	for _, ans := range []PromptAnswer{{Index: 2, Choice: "Deny"}, {Index: -1, Cancelled: true}} {
+	// A zero-value answer (nothing picked) and an index whose label does
+	// not match must deny too: the first row is never applied by default.
+	for _, ans := range []PromptAnswer{{Index: 2, Choice: "Deny"}, {Index: -1, Cancelled: true}, {}, {Index: 0, Choice: "Deny"}} {
 		p := &fakePrompter{answers: []PromptAnswer{ans}}
 		_, err := authorizeSudo(context.Background(), "sudo id", ExecEnv{Prompter: p, Sudo: &SudoPolicy{}})
 		if !errors.Is(err, errSudoDenied) {
@@ -167,7 +169,7 @@ func TestSudoGateSessionApprovalSkipsPromptAndUsesCache(t *testing.T) {
 	f := &fakeSudo{}
 	withFakeSudo(t, f)
 	pol := &SudoPolicy{}
-	p := &fakePrompter{answers: []PromptAnswer{{Index: 1}}, secret: []byte("pw")}
+	p := &fakePrompter{answers: []PromptAnswer{{Index: 1, Choice: "Allow sudo for this session"}}, secret: []byte("pw")}
 	g, err := authorizeSudo(context.Background(), "sudo id", ExecEnv{Prompter: p, Sudo: pol})
 	if err != nil {
 		t.Fatal(err)
@@ -188,12 +190,12 @@ func TestSudoGateSessionApprovalSkipsPromptAndUsesCache(t *testing.T) {
 
 func TestSudoGateBadPasswordAndCancelledPassword(t *testing.T) {
 	withFakeSudo(t, &fakeSudo{validateErr: errors.New("nope")})
-	p := &fakePrompter{answers: []PromptAnswer{{Index: 0}}, secret: []byte("bad")}
+	p := &fakePrompter{answers: []PromptAnswer{{Index: 0, Choice: "Allow once"}}, secret: []byte("bad")}
 	if _, err := authorizeSudo(context.Background(), "sudo id", ExecEnv{Prompter: p, Sudo: &SudoPolicy{}}); !errors.Is(err, errSudoDenied) {
 		t.Fatalf("bad password must deny, got %v", err)
 	}
 	withFakeSudo(t, &fakeSudo{})
-	p = &fakePrompter{answers: []PromptAnswer{{Index: 0}}}
+	p = &fakePrompter{answers: []PromptAnswer{{Index: 0, Choice: "Allow once"}}}
 	if _, err := authorizeSudo(context.Background(), "sudo id", ExecEnv{Prompter: p, Sudo: &SudoPolicy{}}); !errors.Is(err, errSudoDenied) {
 		t.Fatalf("cancelled password must deny, got %v", err)
 	}
@@ -201,7 +203,7 @@ func TestSudoGateBadPasswordAndCancelledPassword(t *testing.T) {
 
 func TestSudoGateRejectsAbsolutePath(t *testing.T) {
 	withFakeSudo(t, &fakeSudo{cached: true})
-	p := &fakePrompter{answers: []PromptAnswer{{Index: 0}}}
+	p := &fakePrompter{answers: []PromptAnswer{{Index: 0, Choice: "Allow once"}}}
 	if _, err := authorizeSudo(context.Background(), "/usr/bin/sudo id", ExecEnv{Prompter: p}); !errors.Is(err, errSudoDenied) {
 		t.Fatalf("absolute sudo path must be refused, got %v", err)
 	}
@@ -226,7 +228,7 @@ func TestRunCommandSudoDeniedHeadlessDoesNotExecute(t *testing.T) {
 func TestRunCommandSudoUsesShim(t *testing.T) {
 	withFakeSudo(t, &fakeSudo{cached: true})
 	dir := t.TempDir()
-	p := &fakePrompter{answers: []PromptAnswer{{Index: 0}}}
+	p := &fakePrompter{answers: []PromptAnswer{{Index: 0, Choice: "Allow once"}}}
 	// `command -v sudo` resolves through PATH, proving the shim is first.
 	raw, _ := json.Marshal(map[string]any{"command": "true || sudo id; command -v sudo"})
 	res, err := runCommandTool{}.Execute(context.Background(), raw, ExecEnv{WorkspaceRoot: dir, Prompter: p, Sudo: &SudoPolicy{}})

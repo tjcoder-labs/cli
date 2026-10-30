@@ -18,12 +18,15 @@ const askUserMaxOptions = 6
 // Result strings returned to the model. They start with a fixed
 // upper-case status word so the outcome is unambiguous.
 const (
-	AskAnswered     = "ANSWERED"
-	AskDismissed    = "DISMISSED: the user dismissed the question; do not re-ask, proceed with your best judgment or stop."
-	AskUnavailable  = "UNAVAILABLE: no interactive user; proceed with best judgment."
-	AskInterrupted  = "INTERRUPTED: the user sent a new message instead of answering; do not re-ask, follow their new message."
-	AskCancelled    = "CANCELLED: the turn was cancelled while waiting for the user's answer."
-	askDeniedSuffix = " Treat this as declined: do not perform the action."
+	AskAnswered    = "ANSWERED"
+	AskDismissed   = "DISMISSED: the user dismissed the question; do not re-ask, proceed with your best judgment or stop."
+	AskUnavailable = "UNAVAILABLE: no interactive user; the question was not answered and no default was applied. Proceed with best judgment or stop."
+	// AskUnavailableAuth is the headless result for an authorization
+	// question: nothing was approved, whatever the default says.
+	AskUnavailableAuth = "UNAVAILABLE: no interactive user; authorization NOT granted. Do not proceed with the privileged action."
+	AskInterrupted     = "INTERRUPTED: the user sent a new message instead of answering; do not re-ask, follow their new message."
+	AskCancelled       = "CANCELLED: the turn was cancelled while waiting for the user's answer."
+	askDeniedSuffix    = " Treat this as declined: do not perform the action."
 )
 
 // AskUserGuidance is appended to the system prompt whenever ask_user is
@@ -31,8 +34,13 @@ const (
 const AskUserGuidance = `Asking the user (ask_user):
 - Call ask_user only when a decision truly needs the user (ambiguous request, a choice between materially different approaches, or explicit approval before something destructive or irreversible). Otherwise decide yourself and say what you assumed.
 - Ask one question at a time and wait for the answer; never batch several questions into one call.
-- Keep the question short (one sentence) and prefer 2-6 concrete options, most likely first; set default to the recommended one. The user can always type a custom answer unless allow_custom is false.
-- Results start with ANSWERED, DISMISSED, UNAVAILABLE, INTERRUPTED or CANCELLED. On DISMISSED or UNAVAILABLE do not ask again: proceed with your best judgment (or the default) or stop and explain.`
+- Keep the question short (one sentence) and prefer 2-6 concrete options, most likely first; set default to the recommended one. The default only pre-selects that option on the card: it is NEVER applied automatically, and only an explicit user answer counts. The user can always type a custom answer unless allow_custom is false.
+- Results start with ANSWERED, DISMISSED, UNAVAILABLE, INTERRUPTED or CANCELLED. Only ANSWERED is a user decision. On DISMISSED or UNAVAILABLE do not ask again: proceed with your best judgment or stop and explain. On INTERRUPTED follow the user's new message; on CANCELLED stop.
+- An authorization (kind authorization) is granted only by an ANSWERED result that approves it. DISMISSED, UNAVAILABLE, INTERRUPTED and CANCELLED all mean NOT approved: do not perform the action.`
+
+// AskUserHeadlessGuidance is added after AskUserGuidance when the
+// session has no interactive user (no Prompter).
+const AskUserHeadlessGuidance = `- This session is non-interactive: ask_user always returns UNAVAILABLE and no default is applied. Nothing that needs authorization is approved; do not perform it.`
 
 // ErrSteered is returned by a Prompter when a prompt was abandoned
 // because the user sent a new (steering) message instead of answering.
@@ -85,7 +93,8 @@ func (askUserTool) Definition() client.ToolDefinition {
 			Description: "Ask the user ONE short question on an inline card in the transcript and wait for the answer. " +
 				"Offer up to 6 numbered options (the user picks with a number key or arrows+Enter); a free-text answer row is added unless allow_custom is false; " +
 				"with no options it is a free-text question. Esc dismisses. Use only when a decision truly needs the user. " +
-				"Returns 'ANSWERED: <label>', 'ANSWERED (custom): <text>', 'ANSWERED (multiple): …', 'DISMISSED: …', or 'UNAVAILABLE: …' (non-interactive session).",
+				"Returns 'ANSWERED: <label>', 'ANSWERED (custom): <text>', 'ANSWERED (multiple): …', 'DISMISSED: …', 'INTERRUPTED: …' (the user sent a new message instead), 'CANCELLED: …' (the turn was cancelled), or 'UNAVAILABLE: …' (non-interactive session). " +
+				"The default is never auto-applied: without an explicit user answer there is no answer. An authorization is granted only by an ANSWERED approval; every other outcome means not approved.",
 			Parameters: objectSchema([]string{"question"}, map[string]any{
 				"question": stringProp("The question, one short sentence."),
 				"header":   stringProp("Optional short card title (2-4 words), e.g. 'Deploy target'. Defaults to QUESTION."),
@@ -104,7 +113,7 @@ func (askUserTool) Definition() client.ToolDefinition {
 				},
 				"allow_custom": boolProp("Offer a free-text answer row (default true)."),
 				"multi_select": boolProp("Let the user choose several options (default false)."),
-				"default":      stringProp("Label (or 1-based number) of the recommended option: the cursor starts there, and it is used when no user is available."),
+				"default":      stringProp("Label (or 1-based number) of the recommended option. It only pre-selects that row on the card; it is never used as an answer (not even when no user is available)."),
 				"kind":         stringProp("One of question (default), authorization, next_steps. For authorization, a dismissal means denied."),
 				"detail":       stringProp("Optional detail shown under the question, e.g. the exact command or file affected."),
 			}),
@@ -186,11 +195,10 @@ func (t askUserTool) Execute(ctx context.Context, raw json.RawMessage, env ExecE
 		return Result{}, err
 	}
 	if env.Prompter == nil {
-		content := AskUnavailable
-		if req.Default > 0 {
-			content = "UNAVAILABLE: no interactive user; using the default option: " + req.Options[req.Default-1]
-		}
-		return Result{Content: content, Preview: "ask_user: no interactive user"}, nil
+		// Never answer on the user's behalf: a default is only the
+		// card's pre-selected row, not an answer. Headless there is no
+		// card, so there is no answer, and an authorization is denied.
+		return Result{Content: unavailableResult(req), Preview: "ask_user: no interactive user"}, nil
 	}
 	ans, err := env.Prompter.Ask(ctx, req)
 	switch {
@@ -205,9 +213,26 @@ func (t askUserTool) Execute(ctx context.Context, raw json.RawMessage, env ExecE
 	return Result{Content: content, Preview: preview(content)}, nil
 }
 
+// unavailableResult is the result when nobody can answer req.
+func unavailableResult(req PromptRequest) string {
+	if req.Kind == PromptAuthorization {
+		return AskUnavailableAuth
+	}
+	return AskUnavailable
+}
+
+// emptyAnswer reports a non-cancelled answer that carries no choice and
+// no text, i.e. nothing the user actually picked or typed.
+func emptyAnswer(ans PromptAnswer) bool {
+	return !ans.Cancelled && ans.Choice == "" && strings.TrimSpace(ans.Other) == "" && len(ans.Choices) == 0
+}
+
 // FormatAskAnswer renders ans as the structured ask_user result.
+// An answer with nothing picked or typed is never reported as
+// ANSWERED (that would let an empty/zero answer stand in for the
+// pre-selected default); it is treated as a dismissal.
 func FormatAskAnswer(req PromptRequest, ans PromptAnswer) string {
-	if ans.Cancelled {
+	if ans.Cancelled || emptyAnswer(ans) {
 		if req.Kind == PromptAuthorization {
 			return AskDismissed + askDeniedSuffix
 		}
