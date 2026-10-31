@@ -1453,14 +1453,21 @@ func (a *App) refreshStatusIndicator() {
 	if agentName == "" {
 		agentName = "coder"
 	}
-	// Values only. If the model id already names the provider (tjcoder/…),
-	// don't repeat the provider beside it.
+	// Always "agent · provider/model", for tjcoder and ollama alike.
+	// If the model id already starts with the provider, don't double it.
 	providerName := client.ProviderKey(a.provider)
 	modelName := a.currentModel
 	if modelName == "" {
 		modelName = "—"
 	}
-	showProvider := providerName != "" && !strings.HasPrefix(modelName, providerName+"/")
+	switch {
+	case providerName != "" && strings.HasPrefix(modelName, providerName+"/"):
+		// already provider/model
+	case providerName != "" && modelName != "—":
+		modelName = providerName + "/" + modelName
+	case providerName != "":
+		modelName = providerName
+	}
 	state := a.agentStateLabel()
 	stateColor := a.palette.HexLavender
 	stateBold := false
@@ -1479,23 +1486,12 @@ func (a *App) refreshStatusIndicator() {
 		stateTag = fmt.Sprintf("[%s]%s[-]", stateColor, state)
 	}
 	a.statusBar.SetTextAlign(tview.AlignLeft)
-	var status string
-	if showProvider {
-		status = fmt.Sprintf(
-			"[%s::b]%s[-:-:-] [%s]·[-] [%s::b]%s[-:-:-] [%s]·[-] [%s::b]%s[-:-:-] · %s   [%s][Ctl+A][-] switch agent",
-			a.palette.HexLavender, agentName,
-			a.palette.HexDim, a.palette.HexLavender, providerName,
-			a.palette.HexDim, a.palette.HexLavender, modelName,
-			stateTag, a.palette.HexLavender,
-		)
-	} else {
-		status = fmt.Sprintf(
-			"[%s::b]%s[-:-:-] [%s]·[-] [%s::b]%s[-:-:-] · %s   [%s][Ctl+A][-] switch agent",
-			a.palette.HexLavender, agentName,
-			a.palette.HexDim, a.palette.HexLavender, modelName,
-			stateTag, a.palette.HexLavender,
-		)
-	}
+	status := fmt.Sprintf(
+		"[%s::b]%s[-:-:-] [%s]·[-] [%s::b]%s[-:-:-] · %s   [%s][Ctl+A][-] switch agent",
+		a.palette.HexLavender, agentName,
+		a.palette.HexDim, a.palette.HexLavender, modelName,
+		stateTag, a.palette.HexLavender,
+	)
 	a.statusBar.SetText(status)
 }
 
