@@ -221,7 +221,8 @@ var slashCommands = []slashCommand{
 	{"trigger", "Trigger an event"},
 	{"reminder", "Create a reminder"},
 	{"task", "Create a task"},
-	{"tasks", "Open tasks panel"},
+	{"tasks", "Toggle the tasks panel"},
+	{"reminders", "Toggle the reminders panel (schedules and next runs)"},
 	{"memory", "Store a memory"},
 	{"config", "Edit user config (JSON)"},
 	{"environment", "Edit injected environment/context template"},
@@ -229,7 +230,7 @@ var slashCommands = []slashCommand{
 	{"logout", "Sign out of ergo"},
 	{"balance", "Show ergo wallet balance"},
 	{"activity", "Open activity panel"},
-	{"canvas", "Open a file/range in the canvas panel"},
+	{"canvas", "Open a file/range in the canvas panel (no args toggles)"},
 	{"add", "Add a workspace: folder path or ssh <host>[:<path>]"},
 	{"dirs", "List workspaces (rm <name> removes); alias /workspaces"},
 	{"use", "Set the active workspace"},
@@ -320,8 +321,18 @@ type App struct {
 	// Up/Down and presses Delete to remove a memory.
 	memoriesList  *tview.List
 	memoriesPanel *tview.Flex
-	testView      *tview.TextView
-	testPanel     *tview.Flex
+	// remindersList is the read-only /reminders pane: one row per
+	// reminders.json entry with its cron readout and next run.
+	// remindersStop ends the watcher that keeps it current while it
+	// is open; remindersKey/remindersDrawn record what it last drew.
+	remindersList  *tview.List
+	remindersTitle *tview.TextView
+	remindersPanel *tview.Flex
+	remindersStop  chan struct{}
+	remindersKey   string
+	remindersDrawn time.Time
+	testView       *tview.TextView
+	testPanel      *tview.Flex
 	// right is the right-column Flex (Cognition stacked over the
 	// active body). Cached so buildRightColumn can read its current
 	// size for adaptive height calculations.
@@ -614,6 +625,7 @@ func (a *App) loadMCPServers() {
 
 func (a *App) Run() error {
 	defer a.closeWorkspaces()
+	defer a.stopRemindersWatch()
 	defer a.saveSession()
 	defer a.stopSpinner()
 	a.running = true
@@ -743,6 +755,7 @@ func (a *App) build() {
 		AddItem(a.memoriesTitle, 1, 0, false).
 		AddItem(a.memoriesList, 0, 1, true)
 	a.memoriesPanel.SetBackgroundColor(a.palette.BgReasoning)
+	a.buildRemindersPanel()
 
 	a.testView = tview.NewTextView().
 		SetDynamicColors(true).
@@ -833,6 +846,11 @@ func (a *App) build() {
 		// "@" file picker: Up/Down move, Tab/Enter select, Esc cancels.
 		if ev, handled := a.handleReferenceKey(event); handled {
 			return ev
+		}
+		// Esc in the input closes a side pane (tasks, reminders,
+		// canvas, …) and returns the right column to activity.
+		if event.Key() == tcell.KeyEscape && a.closeSidePanel() {
+			return nil
 		}
 		// /add, /use, /dirs argument hints: Tab completes the
 		// highlighted suggestion, Shift+Tab moves the highlight.
@@ -2057,14 +2075,11 @@ func (a *App) handleSlashCommand(cmd string) {
 		a.handleProvidersCommand(parts)
 	case "environment", "env":
 		a.openEnvironmentModal()
-	case "tasks":
-		a.showPanel("tasks")
+	case "tasks", "reminders", "test", "articles":
+		// Running a pane command again closes the pane.
+		a.togglePanel(command)
 	case "activity":
 		a.showPanel("activity")
-	case "test":
-		a.showPanel("test")
-	case "articles":
-		a.showPanel("articles")
 	case "canvas", "code", "reference":
 		// /canvas [path] [start[-end]] — open a file (optionally a
 		// line range) in the canvas panel. With no path it shows the
@@ -2076,7 +2091,7 @@ func (a *App) handleSlashCommand(cmd string) {
 			}
 			a.openCanvas(parts[1], start, end)
 		} else {
-			a.showPanel("canvas")
+			a.togglePanel("canvas")
 		}
 	case "mcp":
 		a.handleMCPCommand(parts)
@@ -2493,6 +2508,9 @@ func (a *App) openAgentInfoModal() {
 // setActivePanel records which right-column body is currently
 // showing so the panel shortcuts can highlight the active entry.
 func (a *App) setActivePanel(name string) {
+	if name != "reminders" {
+		a.stopRemindersWatch()
+	}
 	a.activePanel = name
 }
 
@@ -2559,6 +2577,13 @@ func (a *App) showPanel(name string) {
 	case "tasks":
 		a.refreshTasksList()
 		a.setActivePanel("tasks")
+		a.rebuildLayout()
+		a.restoreDefaultFocus()
+		return
+	case "reminders":
+		a.refreshRemindersList()
+		a.setActivePanel("reminders")
+		a.startRemindersWatch()
 		a.rebuildLayout()
 		a.restoreDefaultFocus()
 		return
@@ -4149,6 +4174,8 @@ func (a *App) buildRightColumn() *tview.Flex {
 		bodyPrim = a.tasksPanel
 	case "memories":
 		bodyPrim = a.memoriesPanel
+	case "reminders":
+		bodyPrim = a.remindersPanel
 	case "test":
 		bodyPrim = a.testPanel
 	case "articles", "code", "canvas", "reference":

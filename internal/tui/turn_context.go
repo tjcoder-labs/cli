@@ -229,6 +229,8 @@ func (a *App) focusedPaneName() string {
 		return "tasks"
 	case a.memoriesList != nil && f == tview.Primitive(a.memoriesList):
 		return "memories"
+	case a.remindersList != nil && f == tview.Primitive(a.remindersList):
+		return "reminders"
 	case a.activity != nil && f == tview.Primitive(a.activity):
 		return "activity"
 	case a.reasoning != nil && f == tview.Primitive(a.reasoning):

@@ -202,6 +202,7 @@ func (a *App) openReminderModal() {
 				line += fmt.Sprintf(" [%s]· crontab installed[-]", a.palette.HexDim)
 			}
 			a.appendActivity(line)
+			a.refreshRemindersIfOpen()
 			if err != nil {
 				a.appendActivity(th.Warn("crontab install failed: " + err.Error()))
 			}
