@@ -1,5 +1,7 @@
 # Contributing to Coder CLI
 
+> ⚠️ **Every version bump needs a release-notes entry in the same commit.** See the top of [AGENTS.md](./AGENTS.md).
+
 Thank you for your interest in contributing to Coder CLI! We welcome bug reports, documentation improvements, and code contributions.
 
 ## How to contribute

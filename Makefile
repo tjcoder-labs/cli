@@ -8,7 +8,7 @@ POSTHOG_HOST ?= https://us.i.posthog.com
 LDFLAGS     := -X 'main.version=$(VERSION)' -X 'main.productName=$(PRODUCT)' -X 'main.author=$(AUTHOR)' \
                -X 'main.sentryDSN=$(SENTRY_DSN)' -X 'main.posthogKey=$(POSTHOG_KEY)' -X 'main.posthogHost=$(POSTHOG_HOST)'
 
-.PHONY: build build-coder run run-coder fmt clean install uninstall
+.PHONY: build build-coder run run-coder fmt clean install uninstall release-notes
 
 build: $(EMBED_PKG)
 	mkdir -p bin
@@ -42,7 +42,11 @@ uninstall:
 	rm -f "$$PREFIX/coder" && echo "removed $$PREFIX/coder"
 
 fmt:
-	gofmt -w ./cmd ./internal
+	gofmt -w ./cmd ./internal ./release-notes
+
+# Validate release-notes/releases.json and regenerate CHANGELOG.md.
+release-notes:
+	go run ./cmd/releasenotes
 
 test: TESTS.sh
 	bash TESTS.sh

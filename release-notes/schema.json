@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/tjcoder-labs/cli/release-notes/schema.json",
+  "title": "Coder CLI release notes",
+  "description": "Source of truth for release notes. Read by internal/releasenotes (embedded in the binary) and, later, by the update system. Changes to this schema must be additive only; bump schema_version when adding fields.",
+  "type": "object",
+  "required": ["schema_version", "releases"],
+  "additionalProperties": false,
+  "properties": {
+    "$schema": { "type": "string" },
+    "schema_version": {
+      "description": "Format version. 1 = this schema. Readers must accept newer versions and ignore fields they do not know.",
+      "type": "integer",
+      "minimum": 1
+    },
+    "releases": {
+      "description": "Newest first, versions unique.",
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/release" }
+    }
+  },
+  "$defs": {
+    "semver": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$"
+    },
+    "release": {
+      "type": "object",
+      "required": ["version", "date", "title", "summary", "changes"],
+      "additionalProperties": false,
+      "properties": {
+        "version": { "$ref": "#/$defs/semver", "description": "package.json version this entry describes (no leading v)." },
+        "covers_from": { "$ref": "#/$defs/semver", "description": "Optional first version of a batch this entry summarises (inclusive); must be lower than version." },
+        "date": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$", "description": "Release date, YYYY-MM-DD in America/Denver." },
+        "title": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "summary": { "type": "string", "minLength": 1, "description": "One or two plain-language sentences." },
+        "min_upgrade_from": { "$ref": "#/$defs/semver", "description": "Installs older than this cannot upgrade straight to this version." },
+        "requires_restart": { "type": "boolean", "description": "True when the user must restart coder (beyond the usual restart after an update) or redo setup." },
+        "changes": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": false,
+          "properties": {
+            "added": { "$ref": "#/$defs/items" },
+            "changed": { "$ref": "#/$defs/items" },
+            "deprecated": { "$ref": "#/$defs/items" },
+            "removed": { "$ref": "#/$defs/items" },
+            "fixed": { "$ref": "#/$defs/items" },
+            "security": { "$ref": "#/$defs/items" }
+          }
+        },
+        "notes": {
+          "description": "Known limits and caveats, plain language.",
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "items": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/item" }
+    },
+    "item": {
+      "type": "object",
+      "required": ["text"],
+      "additionalProperties": false,
+      "properties": {
+        "text": { "type": "string", "minLength": 1, "maxLength": 200, "description": "Short, user-facing, one line." },
+        "details": { "type": "string", "minLength": 1 },
+        "commands": {
+          "description": "Slash commands this item touches, e.g. /add.",
+          "type": "array",
+          "items": { "type": "string", "pattern": "^/[a-z][a-z0-9-]*$" }
+        },
+        "breaking": { "type": "boolean" },
+        "highlight": { "type": "boolean", "description": "Show in short 'what's new' views such as the update card." }
+      }
+    }
+  }
+}
