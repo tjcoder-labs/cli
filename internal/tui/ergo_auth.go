@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 	"github.com/tjcoder-labs/cli/internal/auth"
 	"github.com/tjcoder-labs/cli/internal/client"
@@ -259,25 +260,62 @@ func (a *App) handleLogoutCommand() {
 	}()
 }
 
-// handleBalanceCommand fetches the wallet balance and refreshes the status bar.
+// handleBalanceCommand opens the wallet pane: current balance and a
+// numbered top-up list. A digit picks an amount immediately; arrows move
+// the highlight and Enter confirms. Esc closes.
 func (a *App) handleBalanceCommand() {
 	key := auth.ResolveErgoToken()
 	if key == "" {
 		a.appendActivity("Not signed in to ergo — run /login first")
 		return
 	}
-	a.appendActivity("Fetching ergo balance…")
+	header := tview.NewTextView().SetDynamicColors(true)
+	header.SetBackgroundColor(a.palette.BgInput)
+	header.SetTextColor(a.palette.TextMain)
+	header.SetText(fmt.Sprintf("\n  [%s]Loading wallet…[-]", a.palette.HexDim))
+	list := tview.NewList()
+	a.styleModalList(list)
+	list.ShowSecondaryText(true)
+	// Esc always closes. tview calls DoneFunc for Esc on a focused list.
+	list.SetDoneFunc(func() { a.closeModal() })
+	list.SetInputCapture(func(ev *tcell.EventKey) *tcell.EventKey {
+		if ev.Key() == tcell.KeyEsc {
+			a.closeModal()
+			return nil
+		}
+		return ev
+	})
+	panel := tview.NewFlex().SetDirection(tview.FlexRow).
+		AddItem(header, 6, 0, false).
+		AddItem(list, 0, 1, true)
+	panel.SetBackgroundColor(a.palette.BgInput)
+	a.showModal("TJ Coder Wallet", panel)
+	a.tv.SetFocus(list)
+
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), ergoAuthTimeout)
 		defer cancel()
 		cents, err := fetchErgoBalanceCents(ctx, key)
+		if err != nil {
+			a.postUI(func() {
+				header.SetText(fmt.Sprintf("\n  [%s::b]✗ wallet unavailable[-::B]\n\n  %s\n", a.palette.HexAlert, tview.Escape(err.Error())))
+			})
+			return
+		}
+		packs, _ := fetchWalletPacks(ctx, key)
 		a.postUI(func() {
-			if err != nil {
-				a.appendActivity(fmt.Sprintf(a.palette.Theme.Err("ergo balance unavailable")+": %v", err))
-				return
-			}
 			a.setErgoBalanceCents(cents)
-			a.appendActivity(fmt.Sprintf("ergo balance: %s  (top up: %s)", formatCents(cents), client.ErgoDefaultTopupURL))
+			header.SetText(walletHeader(a.palette, cents))
+			list.Clear()
+			for _, p := range packs {
+				p := p
+				shortcut := rune(0)
+				if p.N >= 1 && p.N <= 9 {
+					shortcut = rune('0' + p.N)
+				}
+				list.AddItem(p.Button(), p.Label, shortcut, func() { a.startTopup(key, p) })
+			}
+			a.tv.SetFocus(list)
 		})
 	}()
 }
@@ -414,4 +452,148 @@ func fetchErgoBalanceCents(ctx context.Context, key string) (int64, error) {
 		return 0, err
 	}
 	return body.BalanceCents, nil
+}
+
+// walletPack is one numbered top-up option in the wallet pane.
+type walletPack struct {
+	N        int
+	Label    string
+	USDCents int64
+	PackID   string // set for catalog packs; empty for custom amounts
+	Bonus    string
+}
+
+func (p walletPack) Button() string {
+	if p.Bonus != "" {
+		return fmt.Sprintf("%d  %s  %s", p.N, formatCents(p.USDCents), p.Bonus)
+	}
+	return fmt.Sprintf("%d  %s", p.N, formatCents(p.USDCents))
+}
+
+func (p walletPack) Line() string {
+	if p.Bonus != "" {
+		return fmt.Sprintf("  %d   %-8s  %s  %s", p.N, formatCents(p.USDCents), p.Label, p.Bonus)
+	}
+	return fmt.Sprintf("  %d   %-8s  %s", p.N, formatCents(p.USDCents), p.Label)
+}
+
+// defaultWalletPacks is used when the packs endpoint is unavailable.
+func defaultWalletPacks() []walletPack {
+	return []walletPack{
+		{N: 1, Label: "Starter", USDCents: 500, PackID: "starter"},
+		{N: 2, Label: "Builder", USDCents: 2000, PackID: "builder", Bonus: "+10%"},
+		{N: 3, Label: "Scale", USDCents: 10000, PackID: "scale", Bonus: "+20%"},
+		{N: 4, Label: "Custom", USDCents: 1000},
+		{N: 5, Label: "Custom", USDCents: 2500},
+		{N: 6, Label: "Custom", USDCents: 5000},
+	}
+}
+
+func walletHeader(pal Palette, cents int64) string {
+	return fmt.Sprintf(
+		"\n  [%s]Balance[-]\n\n      [%s::b]%s[-:-:-]\n\n  [%s]1–9 picks · ↑↓ moves · Enter confirms · Esc closes[-]\n",
+		pal.HexDim, pal.HexPurple, formatCents(cents), pal.HexDim)
+}
+
+func fetchWalletPacks(ctx context.Context, key string) ([]walletPack, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, ergoBaseURL()+"/v1/wallet/packs", nil)
+	if err != nil {
+		return defaultWalletPacks(), err
+	}
+	req.Header.Set("Authorization", "Bearer "+key)
+	resp, err := (&http.Client{Timeout: ergoAuthTimeout}).Do(req)
+	if err != nil || resp.StatusCode != http.StatusOK {
+		if resp != nil {
+			resp.Body.Close()
+		}
+		return defaultWalletPacks(), err
+	}
+	defer resp.Body.Close()
+	var body struct {
+		Packs []struct {
+			ID       string `json:"id"`
+			Label    string `json:"label"`
+			USDCents int64  `json:"usd_cents"`
+			BonusPct int    `json:"bonus_pct"`
+		} `json:"packs"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil || len(body.Packs) == 0 {
+		return defaultWalletPacks(), err
+	}
+	out := make([]walletPack, 0, len(body.Packs)+3)
+	n := 1
+	for _, p := range body.Packs {
+		if strings.HasPrefix(p.ID, "wifi-") {
+			continue
+		}
+		bonus := ""
+		if p.BonusPct > 0 {
+			bonus = fmt.Sprintf("+%d%%", p.BonusPct)
+		}
+		out = append(out, walletPack{N: n, Label: p.Label, USDCents: p.USDCents, PackID: p.ID, Bonus: bonus})
+		n++
+	}
+	for _, c := range []int64{1000, 2500, 5000} {
+		out = append(out, walletPack{N: n, Label: "Custom", USDCents: c})
+		n++
+	}
+	if len(out) == 0 {
+		return defaultWalletPacks(), nil
+	}
+	return out, nil
+}
+
+func (a *App) startTopup(key string, p walletPack) {
+	a.appendActivity(fmt.Sprintf("Opening Stripe Checkout for %s…", formatCents(p.USDCents)))
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), ergoAuthTimeout)
+		defer cancel()
+		url, err := createCheckout(ctx, key, p)
+		a.postUI(func() {
+			if err != nil {
+				a.appendActivity(fmt.Sprintf(a.palette.Theme.Err("checkout failed")+": %v", err))
+				return
+			}
+			if err := openBrowser(url); err != nil {
+				a.appendActivity("Checkout URL: " + url)
+				return
+			}
+			a.appendActivity(fmt.Sprintf("Stripe Checkout opened for %s. Balance updates after payment.", formatCents(p.USDCents)))
+			a.closeModal()
+		})
+	}()
+}
+
+func createCheckout(ctx context.Context, key string, p walletPack) (string, error) {
+	body := map[string]any{}
+	if p.PackID != "" {
+		body["packId"] = p.PackID
+	} else {
+		body["usdCents"] = p.USDCents
+	}
+	raw, _ := json.Marshal(body)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, ergoBaseURL()+"/v1/wallet/checkout", strings.NewReader(string(raw)))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+key)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := (&http.Client{Timeout: ergoAuthTimeout}).Do(req)
+	if err != nil {
+		return "", fmt.Errorf("checkout request failed: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("checkout: %s", resp.Status)
+	}
+	var out struct {
+		URL string `json:"url"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return "", err
+	}
+	if out.URL == "" {
+		return "", fmt.Errorf("checkout returned no url")
+	}
+	return out.URL, nil
 }

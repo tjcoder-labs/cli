@@ -5,10 +5,11 @@ VERSION     := $(shell python3 -c 'import json; print(json.load(open("$(PKG_JSON
 PRODUCT     := $(shell python3 -c 'import json,sys; d=json.load(open("$(PKG_JSON)")); print(d.get("productName") or d.get("name") or "Coder CLI")' 2>/dev/null || echo "Coder CLI")
 AUTHOR      := $(shell python3 -c 'import json; print(json.load(open("$(PKG_JSON)"))["author"])' 2>/dev/null || echo "TJ Coder AI Labs")
 POSTHOG_HOST ?= https://us.i.posthog.com
+SENTRY_DSN ?= https://c172bd853cc830ff65000c25fd68d924@o4512349068132352.ingest.us.sentry.io/4512349452435456
 LDFLAGS     := -X 'main.version=$(VERSION)' -X 'main.productName=$(PRODUCT)' -X 'main.author=$(AUTHOR)' \
                -X 'main.sentryDSN=$(SENTRY_DSN)' -X 'main.posthogKey=$(POSTHOG_KEY)' -X 'main.posthogHost=$(POSTHOG_HOST)'
 
-.PHONY: build build-coder run run-coder fmt clean install uninstall
+.PHONY: build build-coder run run-coder fmt clean install uninstall release-notes
 
 build: $(EMBED_PKG)
 	mkdir -p bin
@@ -42,7 +43,11 @@ uninstall:
 	rm -f "$$PREFIX/coder" && echo "removed $$PREFIX/coder"
 
 fmt:
-	gofmt -w ./cmd ./internal
+	gofmt -w ./cmd ./internal ./release-notes
+
+# Validate release-notes/releases.json and regenerate CHANGELOG.md.
+release-notes:
+	go run ./cmd/releasenotes
 
 test: TESTS.sh
 	bash TESTS.sh

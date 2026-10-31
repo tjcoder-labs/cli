@@ -1,3 +1,5 @@
+> ⚠️ Working on this repository's code? Every version bump needs a release-notes entry in the same commit. See the top of [AGENTS.md](./AGENTS.md).
+
 CODER — Agent Primary Directives
 
 Purpose

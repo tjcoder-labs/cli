@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -16,6 +17,7 @@ import (
 	"github.com/tjcoder-labs/cli/internal/session"
 	"github.com/tjcoder-labs/cli/internal/tasks"
 	"github.com/tjcoder-labs/cli/internal/tools"
+	"github.com/tjcoder-labs/cli/internal/workspace"
 )
 
 // errTurnCancelledBySteering is returned by runChatTurn when the
@@ -88,6 +90,9 @@ type Runner struct {
 	// unless --allow-sudo sets Sudo.
 	Prompter tools.Prompter
 	Sudo     *tools.SudoPolicy
+	// Workspaces is the session's workspace set (primary cwd plus
+	// /add'ed local and SSH folders). nil = WorkspaceRoot only.
+	Workspaces *workspace.Set
 
 	// Steering, if non-nil, is a buffered channel of user
 	// mid-turn steering messages. The runner drains it at two
@@ -130,6 +135,29 @@ var toolCallDelims = []string{
 	"</tool_call|>", "<tool_call|>",
 	"</tool_call>", "<tool_call>",
 	"\u2039/tool_call\u203a", "\u2039tool_call\u203a",
+	// Anthropic/Claude-style markup that models (e.g. DeepSeek) sometimes
+	// emit as prose instead of routing through the native tool channel.
+	"<tool_calls>", "</tool_calls>",
+	"</invoke>", "</parameter>",
+}
+
+// anthropicOpenRe matches opening tags with a name attribute and optional
+// attributes, e.g. <invoke name="search_code"> or <parameter name="path">.
+// We only need to detect the opener in the stream (the closer is a plain
+// literal already in toolCallDelims), so a partial match is sufficient.
+var anthropicOpenRe = regexp.MustCompile(`(?s)<(?:invoke|parameter)(?:\s+[^>]*?)?>`)
+
+// earliestToolCallToken returns the byte index and matched text of the
+// earliest tool-call delimiter (literal or attribute-bearing opener) in s.
+// It returns (-1, "") when none is present. Attribute-bearing openers
+// (<invoke ...>, <parameter ...>) are matched via regex so their name
+// attributes do not defeat the literal search.
+func earliestToolCallToken(s string) (int, string) {
+	idx, tok := earliestToken(s, toolCallDelims)
+	if m := anthropicOpenRe.FindStringIndex(s); m != nil && (idx == -1 || m[0] < idx) {
+		idx, tok = m[0], s[m[0]:m[1]]
+	}
+	return idx, tok
 }
 
 // partialSuffixLen checks if the end of string 's' contains an incomplete
@@ -197,7 +225,7 @@ func (p *thoughtParser) Add(text string) (reasoning, commentary string) {
 		case p.inToolCall:
 			// Suppress everything until the next delimiter (which closes the
 			// span); emit nothing.
-			idx, tok := earliestToken(p.buf, toolCallDelims)
+			idx, tok := earliestToolCallToken(p.buf)
 			if idx != -1 {
 				p.buf = p.buf[idx+len(tok):]
 				p.inToolCall = false
@@ -210,7 +238,7 @@ func (p *thoughtParser) Add(text string) (reasoning, commentary string) {
 
 		default:
 			thinkIdx := strings.Index(p.buf, "<think>")
-			toolIdx, toolTok := earliestToken(p.buf, toolCallDelims)
+			toolIdx, toolTok := earliestToolCallToken(p.buf)
 
 			// Pick whichever opener appears first in the buffer.
 			nextIdx, kind := -1, ""
@@ -282,6 +310,9 @@ func (r *Runner) run(ctx context.Context, history []client.Message, prompt strin
 	if r.MaxSteps <= 0 {
 		r.MaxSteps = defaultMaxToolSteps
 	}
+	// stepGrant is the configured cap. Continue adds this many steps,
+	// not a hardcoded default, so /config toolMax is what the user gets.
+	stepGrant := r.MaxSteps
 	history = append(history, client.Message{Role: "user", Content: prompt})
 	defs := r.Registry.Definitions(enabledTools)
 	offered := make(map[string]bool, len(defs))
@@ -299,6 +330,11 @@ func (r *Runner) run(ctx context.Context, history []client.Message, prompt strin
 	}
 	if injected := loadAgentsPrompt(r.WorkspaceRoot); injected != "" {
 		systemPrompt += "\n\nRepository instructions from AGENTS.md (auto-injected):\n" + injected
+	}
+	if r.Workspaces != nil {
+		if block := r.Workspaces.PromptBlock(); block != "" {
+			systemPrompt += "\n\n" + block
+		}
 	}
 	contextWindow, _ := r.Provider.ContextWindow(ctx, model)
 
@@ -322,7 +358,9 @@ func (r *Runner) run(ctx context.Context, history []client.Message, prompt strin
 	}
 
 	ctxTrack := newContextTracker(model, contextWindow, systemPrompt, defs)
-	for step := 0; step < r.MaxSteps; step++ {
+	start := 0
+budget:
+	for step := start; step < r.MaxSteps; step++ {
 
 		// 0. Mid-turn steering drain. Before each model call, drain
 		// at most one queued steering message and append it to
@@ -454,6 +492,7 @@ func (r *Runner) run(ctx context.Context, history []client.Message, prompt strin
 					PersistSession: r.PersistSession,
 					Prompter:       r.Prompter,
 					Sudo:           r.Sudo,
+					Workspaces:     r.Workspaces,
 				})
 			}
 			stopWatch()
@@ -495,15 +534,28 @@ func (r *Runner) run(ctx context.Context, history []client.Message, prompt strin
 		}
 	}
 
+	// Budget reached. Ask in the transcript rather than dumping a
+	// markdown warning. Continue extends the cap and resumes the loop.
+	if r.Prompter != nil {
+		ans, askErr := r.Prompter.Ask(ctx, tools.PromptRequest{
+			Kind:     tools.PromptNextSteps,
+			Title:    "TOOL BUDGET",
+			Question: fmt.Sprintf("Tool-call budget reached (%d steps).", r.MaxSteps),
+			Detail:   fmt.Sprintf("Continue adds %d more steps.", stepGrant),
+			Options:  []string{"Continue"},
+		})
+		if askErr == nil && !ans.Cancelled && ans.Index == 0 {
+			start = r.MaxSteps
+			r.MaxSteps += stepGrant
+			goto budget
+		}
+	}
+
 	if onEvent != nil {
 		onEvent(Event{
 			Type:     EventError,
 			ToolName: "runner",
 			Text:     fmt.Sprintf("reached max tool steps (%d); asking model for a checkpoint response", r.MaxSteps),
-		})
-		onEvent(Event{
-			Type: EventCommentary,
-			Text: "\n\n**! Tool-call budget reached for this turn.** Generating a checkpoint response without additional tools.\n\n",
 		})
 	}
 

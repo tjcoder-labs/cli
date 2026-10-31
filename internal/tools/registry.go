@@ -9,6 +9,7 @@ import (
 
 	"github.com/tjcoder-labs/cli/internal/client"
 	"github.com/tjcoder-labs/cli/internal/session"
+	"github.com/tjcoder-labs/cli/internal/workspace"
 )
 
 type Result struct {
@@ -39,6 +40,9 @@ type ExecEnv struct {
 	// Sudo is the process-wide sudo policy (session approval state and
 	// the headless --allow-sudo opt-in). nil denies sudo.
 	Sudo *SudoPolicy
+	// Workspaces is the session's set of workspaces (primary root plus
+	// folders and SSH hosts added with /add). nil means WorkspaceRoot only.
+	Workspaces *workspace.Set
 }
 
 // HighlightSink returns the /code panel sink wired to this env, or

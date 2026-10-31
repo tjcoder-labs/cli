@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/tjcoder-labs/cli/internal/client"
 	"github.com/tjcoder-labs/cli/internal/reminders"
+	"github.com/tjcoder-labs/cli/internal/workspace"
 )
 
 // validateFetchURL rejects URLs that resolve to loopback, private,
@@ -108,17 +110,19 @@ func (appendFileTool) Definition() client.ToolDefinition {
 			Name:        "append_file",
 			Description: "Append content to a file (creates file if missing).",
 			Parameters: objectSchema([]string{"path", "content"}, map[string]any{
-				"path":    stringProp("File path relative to workspace."),
-				"content": stringProp("Content to append."),
+				"path":      stringProp("File path relative to workspace."),
+				"content":   stringProp("Content to append."),
+				"workspace": workspaceProp(),
 			}),
 		},
 	}
 }
 
-func (appendFileTool) Execute(_ context.Context, raw json.RawMessage, env ExecEnv) (Result, error) {
+func (appendFileTool) Execute(ctx context.Context, raw json.RawMessage, env ExecEnv) (Result, error) {
 	var args struct {
-		Path    string `json:"path"`
-		Content string `json:"content"`
+		Path      string `json:"path"`
+		Content   string `json:"content"`
+		Workspace string `json:"workspace"`
 	}
 	if err := json.Unmarshal(raw, &args); err != nil {
 		return Result{}, err
@@ -126,22 +130,14 @@ func (appendFileTool) Execute(_ context.Context, raw json.RawMessage, env ExecEn
 	if args.Path == "" {
 		return Result{}, fmt.Errorf("path required")
 	}
-	path, err := resolveInWorkspace(env.WorkspaceRoot, args.Path)
+	ws, path, err := env.target(ctx, args.Workspace, args.Path)
 	if err != nil {
 		return Result{}, err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := ws.FS.AppendFile(ctx, path, []byte(args.Content)); err != nil {
 		return Result{}, err
 	}
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-	if err != nil {
-		return Result{}, err
-	}
-	defer f.Close()
-	if _, err := f.WriteString(args.Content); err != nil {
-		return Result{}, err
-	}
-	msg := fmt.Sprintf("appended %s", path)
+	msg := fmt.Sprintf("appended %s", shown(ws, path))
 	return Result{Content: msg, Preview: msg}, nil
 }
 
@@ -155,17 +151,19 @@ func (deleteFileTool) Definition() client.ToolDefinition {
 			Name:        "delete_file",
 			Description: "Delete a file at the given path. Fails if missing unless force=true.",
 			Parameters: objectSchema([]string{"path"}, map[string]any{
-				"path":  stringProp("File path"),
-				"force": boolProp("If true, do not error when file is missing."),
+				"path":      stringProp("File path"),
+				"force":     boolProp("If true, do not error when file is missing."),
+				"workspace": workspaceProp(),
 			}),
 		},
 	}
 }
 
-func (deleteFileTool) Execute(_ context.Context, raw json.RawMessage, env ExecEnv) (Result, error) {
+func (deleteFileTool) Execute(ctx context.Context, raw json.RawMessage, env ExecEnv) (Result, error) {
 	var args struct {
-		Path  string `json:"path"`
-		Force bool   `json:"force"`
+		Path      string `json:"path"`
+		Force     bool   `json:"force"`
+		Workspace string `json:"workspace"`
 	}
 	if err := json.Unmarshal(raw, &args); err != nil {
 		return Result{}, err
@@ -173,20 +171,20 @@ func (deleteFileTool) Execute(_ context.Context, raw json.RawMessage, env ExecEn
 	if args.Path == "" {
 		return Result{}, fmt.Errorf("path required")
 	}
-	path, err := resolveInWorkspace(env.WorkspaceRoot, args.Path)
+	ws, path, err := env.target(ctx, args.Workspace, args.Path)
 	if err != nil {
 		return Result{}, err
 	}
-	if _, err := os.Stat(path); os.IsNotExist(err) {
+	if _, err := ws.FS.Stat(ctx, path); errors.Is(err, os.ErrNotExist) {
 		if args.Force {
 			return Result{Content: "missing (ignored)", Preview: "missing (ignored)"}, nil
 		}
 		return Result{}, fmt.Errorf("file not found")
 	}
-	if err := os.Remove(path); err != nil {
+	if err := ws.FS.Remove(ctx, path); err != nil {
 		return Result{}, err
 	}
-	msg := fmt.Sprintf("deleted %s", path)
+	msg := fmt.Sprintf("deleted %s", shown(ws, path))
 	return Result{Content: msg, Preview: msg}, nil
 }
 
@@ -200,17 +198,19 @@ func (moveFileTool) Definition() client.ToolDefinition {
 			Name:        "move_file",
 			Description: "Move or rename a file from src to dst (relative to workspace).",
 			Parameters: objectSchema([]string{"src", "dst"}, map[string]any{
-				"src": stringProp("Source path."),
-				"dst": stringProp("Destination path."),
+				"src":       stringProp("Source path."),
+				"dst":       stringProp("Destination path (same workspace as src)."),
+				"workspace": workspaceProp(),
 			}),
 		},
 	}
 }
 
-func (moveFileTool) Execute(_ context.Context, raw json.RawMessage, env ExecEnv) (Result, error) {
+func (moveFileTool) Execute(ctx context.Context, raw json.RawMessage, env ExecEnv) (Result, error) {
 	var args struct {
-		Src string `json:"src"`
-		Dst string `json:"dst"`
+		Src       string `json:"src"`
+		Dst       string `json:"dst"`
+		Workspace string `json:"workspace"`
 	}
 	if err := json.Unmarshal(raw, &args); err != nil {
 		return Result{}, err
@@ -218,21 +218,21 @@ func (moveFileTool) Execute(_ context.Context, raw json.RawMessage, env ExecEnv)
 	if args.Src == "" || args.Dst == "" {
 		return Result{}, fmt.Errorf("src and dst required")
 	}
-	src, err := resolveInWorkspace(env.WorkspaceRoot, args.Src)
+	ws, src, err := env.target(ctx, args.Workspace, args.Src)
 	if err != nil {
 		return Result{}, err
 	}
-	dst, err := resolveInWorkspace(env.WorkspaceRoot, args.Dst)
+	dws, dst, err := env.target(ctx, args.Workspace, args.Dst)
 	if err != nil {
 		return Result{}, err
 	}
-	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+	if dws != ws {
+		return Result{}, fmt.Errorf("move_file cannot move between workspaces (%s -> %s); read, write and delete instead", ws.Name, dws.Name)
+	}
+	if err := ws.FS.Rename(ctx, src, dst); err != nil {
 		return Result{}, err
 	}
-	if err := os.Rename(src, dst); err != nil {
-		return Result{}, err
-	}
-	msg := fmt.Sprintf("moved %s -> %s", src, dst)
+	msg := fmt.Sprintf("moved %s -> %s", shown(ws, src), shown(ws, dst))
 	return Result{Content: msg, Preview: msg}, nil
 }
 
@@ -246,22 +246,33 @@ func (gitLogTool) Definition() client.ToolDefinition {
 			Name:        "git_log",
 			Description: "Return recent git log entries from the repository (read-only).",
 			Parameters: objectSchema([]string{"limit"}, map[string]any{
-				"limit": numberProp("Number of commits to return; default 20."),
+				"limit":     numberProp("Number of commits to return; default 20."),
+				"workspace": workspaceProp(),
 			}),
 		},
 	}
 }
 
-func (gitLogTool) Execute(_ context.Context, raw json.RawMessage, env ExecEnv) (Result, error) {
+func (gitLogTool) Execute(ctx context.Context, raw json.RawMessage, env ExecEnv) (Result, error) {
 	var args struct {
-		Limit int `json:"limit"`
+		Limit     int    `json:"limit"`
+		Workspace string `json:"workspace"`
 	}
 	_ = json.Unmarshal(raw, &args)
 	lim := "20"
 	if args.Limit > 0 {
 		lim = fmt.Sprintf("%d", args.Limit)
 	}
-	cmd := exec.Command("git", "-C", env.WorkspaceRoot, "log", "-n", lim, "--pretty=format:%h %ad %s", "--date=short")
+	ws, root, err := env.target(ctx, args.Workspace, "")
+	if err != nil {
+		return Result{}, err
+	}
+	var cmd *exec.Cmd
+	if ws.Kind == workspace.KindLocal {
+		cmd = exec.CommandContext(ctx, "git", "-C", root, "log", "-n", lim, "--pretty=format:%h %ad %s", "--date=short")
+	} else if cmd, err = ws.FS.Command(ctx, root, "git log -n "+lim+" '--pretty=format:%h %ad %s' --date=short", nil); err != nil {
+		return Result{}, err
+	}
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return Result{}, fmt.Errorf("git log failed: %v: %s", err, string(out))

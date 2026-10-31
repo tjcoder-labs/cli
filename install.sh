@@ -65,6 +65,7 @@ detect_platform() {
   case "$(uname -m)" in
     x86_64|amd64)  arch="amd64" ;;
     arm64|aarch64) arch="arm64" ;;
+    armv7l|armv6l) arch="armv7" ;;
     *) die "unsupported arch: $(uname -m)" ;;
   esac
   echo "${os}-${arch}"

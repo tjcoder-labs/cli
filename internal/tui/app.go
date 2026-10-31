@@ -17,6 +17,7 @@ import (
 	"github.com/rivo/tview"
 	"github.com/tjcoder-labs/cli/internal/agent"
 	"github.com/tjcoder-labs/cli/internal/appdir"
+	"github.com/tjcoder-labs/cli/internal/auth"
 	"github.com/tjcoder-labs/cli/internal/client"
 	ctxpkg "github.com/tjcoder-labs/cli/internal/context"
 	"github.com/tjcoder-labs/cli/internal/mcp"
@@ -30,6 +31,7 @@ import (
 	"github.com/tjcoder-labs/cli/internal/tools"
 	"github.com/tjcoder-labs/cli/internal/tracking"
 	"github.com/tjcoder-labs/cli/internal/update"
+	"github.com/tjcoder-labs/cli/internal/workspace"
 
 	"unicode"
 )
@@ -209,31 +211,37 @@ type slashCommand struct {
 // slashCommands is the ordered set of commands offered by the inline
 // palette. Keep in sync with handleSlashCommand's switch.
 var slashCommands = []slashCommand{
-	{"agent", "Open agent selector"},
-	{"agentinfo", "View current agent prompt"},
-	{"tools", "Toggle tools"},
-	{"model", "Choose model"},
-	{"scroll", "Scroll transcript"},
-	{"clear", "Clear session"},
-	{"compact", "Summarize transcript to free context"},
-	{"quit", "Quit application"},
+	{"help", "Show this command reference"},
+	{"agent", "Open the agent selector"},
+	{"agentinfo", "View the current agent prompt"},
+	{"tools", "Toggle tools on or off"},
+	{"model", "Choose a model"},
+	{"scroll", "Scroll the transcript"},
+	{"clear", "Clear the session"},
+	{"compact", "Summarize the transcript to free context"},
+	{"quit", "Quit"},
 	{"trigger", "Trigger an event"},
 	{"reminder", "Create a reminder"},
 	{"task", "Create a task"},
-	{"tasks", "Open tasks panel"},
+	{"tasks", "Toggle the tasks panel"},
+	{"reminders", "Toggle the reminders panel"},
 	{"memory", "Store a memory"},
-	{"config", "Edit user config (JSON)"},
-	{"environment", "Edit injected environment/context template"},
-	{"login", "Authenticate with ergo (API key)"},
-	{"logout", "Sign out of ergo"},
-	{"balance", "Show ergo wallet balance"},
-	{"activity", "Open activity panel"},
-	{"canvas", "Open a file/range in the canvas panel"},
-	{"about", "Open the about / welcome screen"},
+	{"memories", "Toggle the memories panel"},
+	{"config", "Edit user config"},
+	{"environment", "Edit the injected environment template"},
+	{"login", "Sign in to the TJ Coder gateway"},
+	{"logout", "Sign out of the TJ Coder gateway"},
+	{"balance", "Wallet balance and top-up"},
+	{"activity", "Open the activity panel"},
+	{"canvas", "Open a file or range in the canvas"},
+	{"add", "Add a workspace: path or ssh <host>[:<path>]"},
+	{"dirs", "List workspaces; /dirs rm <name> removes"},
+	{"use", "Set the active workspace"},
+	{"about", "Open the about screen"},
 	{"mcp", "Manage MCP integrations"},
 	{"providers", "Manage model providers"},
-	{"update", "Check for and install a coder update"},
-	{"telemetry", "Anonymous usage stats: on, off or status"},
+	{"update", "Check for and install an update"},
+	{"telemetry", "Anonymous usage stats: on, off, or status"},
 }
 
 type App struct {
@@ -260,6 +268,9 @@ type App struct {
 	// send and falls back to an activity-log warning if the buffer
 	// is saturated (per the contract documented on Runner.Steering).
 	steeringCh   chan string
+	// lastTurnPrompt is the user text of the in-flight turn, so an error
+	// card can offer to retry it.
+	lastTurnPrompt string
 	mcpClient    *mcp.Client
 	sessionState session.State
 	palette      Palette
@@ -278,8 +289,11 @@ type App struct {
 	models                    []client.ModelInfo
 	enabledTools              map[string]bool
 	livePrompt                *livePrompt // mounted prompt card, UI goroutine only
+	burstTail                 keyBurst    // tail of a keystroke paste that finished a card
+	burstTailUntil            time.Time   // swallow burstTail keys until then; UI goroutine only
 	history                   []client.Message
 	busy                      bool
+	idleQueue                 []func() // slash work deferred until the turn settles (whenIdle)
 	ctxUsage                  client.ContextUsage
 	refSet                    map[string]struct{}
 	refOrder                  []string
@@ -313,8 +327,18 @@ type App struct {
 	// Up/Down and presses Delete to remove a memory.
 	memoriesList  *tview.List
 	memoriesPanel *tview.Flex
-	testView      *tview.TextView
-	testPanel     *tview.Flex
+	// remindersList is the read-only /reminders pane: one row per
+	// reminders.json entry with its cron readout and next run.
+	// remindersStop ends the watcher that keeps it current while it
+	// is open; remindersKey/remindersDrawn record what it last drew.
+	remindersList  *tview.List
+	remindersTitle *tview.TextView
+	remindersPanel *tview.Flex
+	remindersStop  chan struct{}
+	remindersKey   string
+	remindersDrawn time.Time
+	testView       *tview.TextView
+	testPanel      *tview.Flex
 	// right is the right-column Flex (Cognition stacked over the
 	// active body). Cached so buildRightColumn can read its current
 	// size for adaptive height calculations.
@@ -341,6 +365,23 @@ type App struct {
 	hintMode     string
 	hintMatches  []slashCommand
 	hintSelected int
+
+	// Workspaces (workspaces.go): the set shared with the runner, the
+	// lazily started askpass bridge, per-host ssh backends, and the
+	// "wsargs" hint-line state for /add, /use and /dirs arguments.
+	// UI goroutine only (the Set itself is locked).
+	workspaces        *workspace.Set
+	askBridge         *workspace.Bridge
+	sshFS             map[string]*workspace.SSHFS
+	sshHosts          []workspace.SSHHost
+	sshHostsAt        time.Time
+	sshConfigOverride string // tests
+	remoteDirs        map[string]remoteDirEntry
+	remoteDirsBusy    map[string]bool
+	wsArgCmd          string
+	wsArgTitle        string
+	wsArgs            []wsArg
+	wsArgSel          int
 
 	// "@" file-mention picker state (attachments.go). refMatches holds
 	// the filtered workspace files for the trailing "@query" token;
@@ -522,6 +563,7 @@ func New(provider client.Provider, registry *tools.Registry, workspaceRoot, mode
 	app.runner.CLICommandSink = app
 	app.runner.Prompter = app
 	app.runner.Sudo = &tools.SudoPolicy{}
+	app.initWorkspaces(workspaceRoot)
 	trackReg := tracking.NewRegistry()
 	trackReg.Register(tracking.NewTaskTracker())
 	trackReg.Register(tracking.NewMemoryTracker())
@@ -588,6 +630,8 @@ func (a *App) loadMCPServers() {
 }
 
 func (a *App) Run() error {
+	defer a.closeWorkspaces()
+	defer a.stopRemindersWatch()
 	defer a.saveSession()
 	defer a.stopSpinner()
 	a.running = true
@@ -614,6 +658,9 @@ func (a *App) Run() error {
 	// stream of keystrokes. Without this, each newline in a pasted block
 	// arrives as KeyEnter and triggers submit(), splitting the paste at
 	// the first line break and dropping the remainder.
+	if err := a.installScreen(); err != nil {
+		return err
+	}
 	a.tv.EnablePaste(true)
 	bgCtx, stopBackground := context.WithCancel(context.Background())
 	defer stopBackground()
@@ -714,6 +761,7 @@ func (a *App) build() {
 		AddItem(a.memoriesTitle, 1, 0, false).
 		AddItem(a.memoriesList, 0, 1, true)
 	a.memoriesPanel.SetBackgroundColor(a.palette.BgReasoning)
+	a.buildRemindersPanel()
 
 	a.testView = tview.NewTextView().
 		SetDynamicColors(true).
@@ -741,7 +789,8 @@ func (a *App) build() {
 	// two read as one cohesive component.
 	a.contextBar = tview.NewTextView().
 		SetDynamicColors(true).
-		SetTextAlign(tview.AlignLeft)
+		SetTextAlign(tview.AlignLeft).
+		SetWrap(false)
 	a.contextBar.SetBackgroundColor(a.palette.BgInput)
 	a.contextBar.SetTextColor(a.palette.TextDim)
 	a.contextBar.SetBorderPadding(1, 1, 2, 2)
@@ -804,6 +853,24 @@ func (a *App) build() {
 		// "@" file picker: Up/Down move, Tab/Enter select, Esc cancels.
 		if ev, handled := a.handleReferenceKey(event); handled {
 			return ev
+		}
+		// Esc in the input closes a side pane (tasks, reminders,
+		// canvas, …) and returns the right column to activity.
+		if event.Key() == tcell.KeyEscape && a.closeSidePanel() {
+			return nil
+		}
+		// /add, /use, /dirs argument hints: Tab completes the
+		// highlighted suggestion, Shift+Tab moves the highlight.
+		if a.hintMode == "wsargs" && len(a.wsArgs) > 0 {
+			switch event.Key() {
+			case tcell.KeyTab:
+				a.completeWorkspaceArg()
+				return nil
+			case tcell.KeyBacktab:
+				a.wsArgSel = (a.wsArgSel + 1) % len(a.wsArgs)
+				a.refreshContextBar()
+				return nil
+			}
 		}
 		// Tab hops to a mounted question card, unless the slash
 		// palette is using Tab to cycle its matches.
@@ -1392,15 +1459,20 @@ func (a *App) refreshStatusIndicator() {
 	if agentName == "" {
 		agentName = "coder"
 	}
+	// Always "agent · provider/model", for tjcoder and ollama alike.
+	// If the model id already starts with the provider, don't double it.
+	providerName := client.ProviderKey(a.provider)
 	modelName := a.currentModel
 	if modelName == "" {
 		modelName = "—"
 	}
-	// Shorten the model name for the status bar so it doesn't eat
-	// horizontal space. Keep the last meaningful segment after any
-	// "/" prefix.
-	if idx := strings.LastIndex(modelName, "/"); idx >= 0 && idx < len(modelName)-1 {
-		modelName = modelName[idx+1:]
+	switch {
+	case providerName != "" && strings.HasPrefix(modelName, providerName+"/"):
+		// already provider/model
+	case providerName != "" && modelName != "—":
+		modelName = providerName + "/" + modelName
+	case providerName != "":
+		modelName = providerName
 	}
 	state := a.agentStateLabel()
 	stateColor := a.palette.HexLavender
@@ -1420,12 +1492,41 @@ func (a *App) refreshStatusIndicator() {
 		stateTag = fmt.Sprintf("[%s]%s[-]", stateColor, state)
 	}
 	a.statusBar.SetTextAlign(tview.AlignLeft)
-	a.statusBar.SetText(fmt.Sprintf(
-		"[%s]agent:[-] [%s::b]%s[-:-:-] [%s]·[-] [%s]model:[-] [%s::b]%s[-:-:-] · %s   [%s][Ctl+A][-] switch agent",
-		a.palette.HexDim, a.palette.HexLavender, agentName,
-		a.palette.HexDim, a.palette.HexDim, a.palette.HexLavender, modelName,
-		stateTag, a.palette.HexLavender,
-	))
+	// Identity + wallet take the place of the old online/thinking word.
+	// Thinking still shows as a bold suffix when a turn is in flight.
+	account := a.accountStatus()
+	if account == "" {
+		account = stateTag
+	} else if state == "thinking" || state == "replying" {
+		account = account + " · " + stateTag
+	}
+	status := fmt.Sprintf(
+		"[%s::b]%s[-:-:-] [%s]·[-] [%s::b]%s[-:-:-] · %s   [%s][Ctl+A][-] switch agent",
+		a.palette.HexLavender, agentName,
+		a.palette.HexDim, a.palette.HexLavender, modelName,
+		account, a.palette.HexLavender,
+	)
+	a.statusBar.SetText(status)
+}
+
+// accountStatus is "email · $balance" for a signed-in ergo user, or "".
+func (a *App) accountStatus() string {
+	id, ok := auth.LoadErgoIdentity()
+	email := ""
+	if ok {
+		email = strings.TrimSpace(id.Email)
+	}
+	if email == "" && !a.ergoBalanceKnown {
+		return ""
+	}
+	var parts []string
+	if email != "" {
+		parts = append(parts, fmt.Sprintf("[%s]%s[-]", a.palette.HexLavender, tview.Escape(email)))
+	}
+	if a.ergoBalanceKnown {
+		parts = append(parts, fmt.Sprintf("[%s]%s[-]", a.palette.HexDim, formatCents(a.ergoBalanceCents)))
+	}
+	return strings.Join(parts, fmt.Sprintf(" [%s]·[-] ", a.palette.HexDim))
 }
 
 // refreshHeaderRight updates the right-aligned [Alt+I] / [Ctl+F] /
@@ -1456,6 +1557,8 @@ func (a *App) refreshContextBar() string {
 	switch a.hintMode {
 	case "command":
 		line = a.renderCommandPalette()
+	case "wsargs":
+		line = a.renderWorkspaceArgPalette()
 	case "reference":
 		line = a.renderReferencePalette()
 	case "multiline":
@@ -1482,6 +1585,8 @@ func (a *App) updateInputHint(text string) {
 		a.hintMode = "multiline"
 		a.hintMatches = nil
 		a.hintSelected = 0
+	case strings.HasPrefix(text, "/") && a.wsArgHint(text):
+		// "/add …", "/use …", "/dirs rm …": argument palette.
 	case strings.HasPrefix(text, "/"):
 		q := strings.ToLower(strings.TrimPrefix(text, "/"))
 		// Match on the first token only so arguments don't disturb the
@@ -1664,11 +1769,64 @@ func (a *App) renderMetaBar() string {
 				accent, a.progressGlyph(), a.palette.HexDim, cwd, accent, a.palette.HexDim, contextText, accent, a.palette.HexDim, refsText)
 		}
 	}
-	line += a.ergoBalanceSegment()
+	if ws := a.workspaceStatus(); ws != "" {
+		line += fmt.Sprintf("[%s]%s[-]   ", a.palette.HexFaint, tview.Escape(ws))
+	}
+	line = a.fitMetaLine(line, cwd, refsText)
 	if a.contextBar != nil {
 		a.contextBar.SetText(line)
+		a.contextBar.ScrollToBeginning()
 	}
 	return line
+}
+
+// fitMetaLine keeps the file names fully visible. A line longer than the
+// bar was scrolling to its tail, so a short name like AGENTS.md rendered
+// as ENTS.md. Shorten the cwd only when the line truly does not fit, and
+// keep the project name (the tail) rather than the prefix.
+func (a *App) fitMetaLine(line, cwd, refs string) string {
+	width := a.paletteWidth()
+	if width <= 0 || tview.TaggedStringWidth(line) <= width {
+		return line
+	}
+	if cwd == "" || !strings.Contains(line, cwd) {
+		return line
+	}
+	over := tview.TaggedStringWidth(line) - width
+	// Leave a little slack so a borderline path is not cut.
+	over -= 4
+	if over < 1 {
+		return line
+	}
+	short := shortenPath(cwd, utf8.RuneCountInString(cwd)-over)
+	if short == cwd {
+		return line
+	}
+	return strings.Replace(line, cwd, short, 1)
+}
+
+// shortenPath middle-ellipsizes a path, always keeping the last segment.
+func shortenPath(path string, keep int) string {
+	runes := []rune(path)
+	if keep >= len(runes) {
+		return path
+	}
+	if keep < 12 {
+		keep = 12
+	}
+	base := path
+	if i := strings.LastIndex(path, "/"); i >= 0 && i < len(path)-1 {
+		base = path[i+1:]
+	}
+	tail := "…/" + base
+	if utf8.RuneCountInString(tail) >= keep {
+		return tail
+	}
+	head := keep - utf8.RuneCountInString(tail)
+	if head > len(runes) {
+		head = len(runes)
+	}
+	return string(runes[:head]) + tail
 }
 
 // renderProgressBar builds a compact 12-segment bar with a highlighted
@@ -1783,6 +1941,40 @@ func (a *App) stopSpinner() {
 	}
 }
 
+// altPanel maps Alt/Option+letter to a panel. On macOS the Option key
+// usually arrives as the composed character (å for Option+A) with no
+// ModAlt bit, so both forms are accepted.
+func altPanel(event *tcell.EventKey) string {
+	r := event.Rune()
+	if event.Modifiers()&tcell.ModAlt != 0 {
+		switch unicode.ToLower(r) {
+		case 'a':
+			return "activity"
+		case 't':
+			return "tasks"
+		case 'c':
+			return "canvas"
+		case 'i':
+			return "about"
+		case 'f':
+			return "fullscreen"
+		}
+	}
+	switch r {
+	case 'å', 'Å': // Option+A
+		return "activity"
+	case '†': // Option+T
+		return "tasks"
+	case 'ç', 'Ç': // Option+C
+		return "canvas"
+	case 'ˆ': // Option+I
+		return "about"
+	case 'ƒ': // Option+F
+		return "fullscreen"
+	}
+	return ""
+}
+
 func (a *App) globalKeys(event *tcell.EventKey) *tcell.EventKey {
 	if os.Getenv("CODER_DEBUG_FOCUS") == "1" && a.leftPane != nil {
 		f := a.tv.GetFocus()
@@ -1792,25 +1984,24 @@ func (a *App) globalKeys(event *tcell.EventKey) *tcell.EventKey {
 		a.tv.Stop()
 		return nil
 	}
+	if a.swallowBurstTail(event) {
+		return nil
+	}
 	// Alt-letter shortcuts for panel display (informational only, focus stays on input).
-	if event.Modifiers()&tcell.ModAlt != 0 {
-		switch unicode.ToLower(event.Rune()) {
-		case 'a':
+	if panel := altPanel(event); panel != "" {
+		switch panel {
+		case "activity":
 			a.showPanel("activity")
-			return nil
-		case 't':
+		case "tasks":
 			a.showPanel("tasks")
-			return nil
-		case 'c':
+		case "canvas":
 			a.showPanel("canvas")
-			return nil
-		case 'i':
+		case "about":
 			a.setReasoningSplash()
-			return nil
-		case 'f':
+		case "fullscreen":
 			a.toggleFullscreen()
-			return nil
 		}
+		return nil
 	}
 	if event.Key() == tcell.KeyCtrlA {
 		a.openAgentModal()
@@ -1825,7 +2016,7 @@ func (a *App) globalKeys(event *tcell.EventKey) *tcell.EventKey {
 		return nil
 	}
 	if event.Key() == tcell.KeyCtrlL {
-		a.clearSession()
+		a.dispatchSlash("/clear") // same mid-turn policy as /clear
 		return nil
 	}
 	// Ctrl-U edits text (readline "kill to start of line") when a text
@@ -1946,6 +2137,8 @@ func (a *App) handleSlashCommand(cmd string) {
 		}
 	}
 	switch command {
+	case "help", "?":
+		a.showHelp()
 	case "agent":
 		a.openAgentModal()
 	case "about":
@@ -2005,14 +2198,11 @@ func (a *App) handleSlashCommand(cmd string) {
 		a.handleProvidersCommand(parts)
 	case "environment", "env":
 		a.openEnvironmentModal()
-	case "tasks":
-		a.showPanel("tasks")
+	case "tasks", "reminders", "test", "articles":
+		// Running a pane command again closes the pane.
+		a.togglePanel(command)
 	case "activity":
 		a.showPanel("activity")
-	case "test":
-		a.showPanel("test")
-	case "articles":
-		a.showPanel("articles")
 	case "canvas", "code", "reference":
 		// /canvas [path] [start[-end]] — open a file (optionally a
 		// line range) in the canvas panel. With no path it shows the
@@ -2024,7 +2214,7 @@ func (a *App) handleSlashCommand(cmd string) {
 			}
 			a.openCanvas(parts[1], start, end)
 		} else {
-			a.showPanel("canvas")
+			a.togglePanel("canvas")
 		}
 	case "mcp":
 		a.handleMCPCommand(parts)
@@ -2034,9 +2224,52 @@ func (a *App) handleSlashCommand(cmd string) {
 		a.handleLogoutCommand()
 	case "balance":
 		a.handleBalanceCommand()
+	case "add", "add-dir":
+		a.handleAddCommand(commandArgs(cmd))
+	case "dirs", "workspaces":
+		a.handleDirsCommand(commandArgs(cmd))
+	case "use":
+		a.handleUseCommand(commandArgs(cmd))
 	default:
-		a.appendActivity(fmt.Sprintf("Unknown command: /%s. Try /login, /agent, /tools, /model, /config, /environment, /scroll, /clear, /quit, /task, /memory, /tasks", command))
+		a.appendActivity(fmt.Sprintf("Unknown command: /%s. Type /help for the command reference.", command))
 	}
+}
+
+// showHelp writes a grouped command reference to the activity pane.
+func (a *App) showHelp() {
+	const help = "" +
+		"Commands  (type / and Tab to browse)\n" +
+		"  /help                 this reference\n" +
+		"  /agent                switch agent          /agentinfo  view the prompt\n" +
+		"  /model                choose a model        /tools      toggle tools\n" +
+		"  /clear                clear the session     /compact    free context\n" +
+		"  /scroll up|down [n]   scroll the transcript /quit       quit\n" +
+		"\n" +
+		"Work\n" +
+		"  /task                 create a task         /tasks      toggle tasks\n" +
+		"  /reminder             create a reminder     /reminders  toggle reminders\n" +
+		"  /memory               store a memory        /memories   same\n" +
+		"  /canvas [path] [a-b]  open a file or range in the canvas\n" +
+		"\n" +
+		"Workspace\n" +
+		"  /add <path|ssh host>  add a workspace\n" +
+		"  /dirs                 list workspaces       /dirs rm <name>  remove\n" +
+		"  /use <name>           set the active workspace\n" +
+		"\n" +
+		"Gateway\n" +
+		"  /login                sign in               /logout     sign out\n" +
+		"  /balance              wallet and top-up     /providers  manage providers\n" +
+		"\n" +
+		"Session\n" +
+		"  /config               edit config           /environment  edit the env template\n" +
+		"  /mcp                  MCP integrations      /telemetry    on, off, or status\n" +
+		"  /update               check for an update   /about        about screen\n" +
+		"  /activity             activity panel\n" +
+		"\n" +
+		"Mid-turn: send another message to steer the running agent. It appears\n" +
+		"immediately as 'you steered'. Thinking streams in the Cognition pane.\n" +
+		"Keys: Alt+I about  Ctl+F/F11 fullscreen  Alt+A activity  Alt+T tasks  Alt+C code  Ctl+A switch agent"
+	a.appendActivity(help)
 }
 
 // InvokeCLICommand implements the tools.CLICommandSink interface,
@@ -2295,7 +2528,10 @@ func (a *App) openConfigModal() {
 			}
 		}
 		a.config = work
-		a.runner.MaxSteps = work.ToolMax
+		// The runner reads MaxSteps on every step of a running
+		// turn; apply the new cap once the turn settles.
+		maxSteps := work.ToolMax
+		a.whenIdle(func() { a.runner.MaxSteps = maxSteps })
 		a.appendActivity(fmt.Sprintf("Saved config to %s (toolMax=%d, compactModel=%s)", a.configPath(), work.ToolMax, work.CompactModel))
 		a.closeModal()
 	}
@@ -2432,6 +2668,9 @@ func (a *App) openAgentInfoModal() {
 // setActivePanel records which right-column body is currently
 // showing so the panel shortcuts can highlight the active entry.
 func (a *App) setActivePanel(name string) {
+	if name != "reminders" {
+		a.stopRemindersWatch()
+	}
 	a.activePanel = name
 }
 
@@ -2498,6 +2737,13 @@ func (a *App) showPanel(name string) {
 	case "tasks":
 		a.refreshTasksList()
 		a.setActivePanel("tasks")
+		a.rebuildLayout()
+		a.restoreDefaultFocus()
+		return
+	case "reminders":
+		a.refreshRemindersList()
+		a.setActivePanel("reminders")
+		a.startRemindersWatch()
 		a.rebuildLayout()
 		a.restoreDefaultFocus()
 		return
@@ -3027,6 +3273,8 @@ func (a *App) compactHistory(parts []string) {
 		newHistory, err := a.runner.Run(ctx, history, prompt, agentCfg, model, nil, nil)
 
 		a.postUI(func() {
+			// Work deferred while compacting runs once this settles.
+			defer a.runIdleQueue()
 			a.mu.Lock()
 			a.busy = false
 			a.mu.Unlock()
@@ -3164,9 +3412,23 @@ func (a *App) submit() {
 		}
 		// Record in global input history (non-blocking best-effort).
 		a.recordInputHistory(prompt)
+		// A slash command is never steering text: run it now, queue it
+		// for the end of the turn, or refuse it (see slashModeFor).
+		if isSlashCommandLine(prompt) {
+			a.mu.Unlock()
+			a.input.SetText("")
+			a.setInputPlaceholder()
+			a.dispatchSlash(prompt)
+			return
+		}
 		select {
 		case a.steeringCh <- prompt:
 			a.appendActivity(fmt.Sprintf("[%s::b]steering[-::B]: queued %q for the in-flight turn", a.palette.HexPurple, truncateForActivity(prompt)))
+			// Render immediately. The runner emits EventSteering only when it
+			// drains the channel (after the in-flight model call aborts or
+			// finishes). With long tjcoder/ergo reasoning that delay is large;
+			// the user must see their steer in the transcript at once.
+			a.appendSteeredMessage(prompt)
 		default:
 			a.appendActivity(fmt.Sprintf("[%s::b]! steering[-::B]: queue full, message dropped; wait for the current turn to settle and try again", a.palette.HexPurple))
 		}
@@ -3189,11 +3451,11 @@ func (a *App) submit() {
 	// message even if it begins with "/" (a pasted snippet shouldn't be
 	// misinterpreted as a command), and an exact single-line "/cmd" is
 	// routed to the command dispatcher.
-	if strings.HasPrefix(prompt, "/") && !strings.Contains(prompt, "\n") {
+	if isSlashCommandLine(prompt) {
 		a.mu.Unlock()
 		a.input.SetText("")
 		a.setInputPlaceholder()
-		a.handleSlashCommand(prompt)
+		a.dispatchSlash(prompt)
 		return
 	}
 
@@ -3206,7 +3468,7 @@ func (a *App) submit() {
 	// "@path" mentions become attachments (persisted with the message so
 	// follow-ups still see the file). The <tui_context> block is built now,
 	// from the live layout, and is ephemeral: it rides on the request only.
-	atts := loadAttachments(a.workspaceRoot, mentionedPaths(prompt), attachMaxFileBytes, attachMaxTotalBytes)
+	atts := loadAttachmentsMulti(a.workspaceRoot, a.localWorkspaceRoots(), mentionedPaths(prompt), attachMaxFileBytes, attachMaxTotalBytes)
 	turnCtx := a.buildTurnContext(atts)
 	modelPrompt := prompt
 	if block := formatAttachmentsBlock(atts); block != "" {
@@ -3244,6 +3506,61 @@ func (a *App) submit() {
 	a.launchTurnWithContext(modelPrompt, "", turnCtx)
 }
 
+// friendlyError turns a raw provider error into a short sentence. HTML
+// bodies (nginx 502 pages) are never shown.
+func friendlyError(err error) string {
+	if err == nil {
+		return "something went wrong"
+	}
+	msg := err.Error()
+	lower := strings.ToLower(msg)
+	switch {
+	case strings.Contains(lower, "502") || strings.Contains(lower, "bad gateway"):
+		return "The gateway didn't respond (502)."
+	case strings.Contains(lower, "503") || strings.Contains(lower, "504") || strings.Contains(lower, "timeout") || strings.Contains(lower, "connection refused"):
+		return "The gateway is unavailable."
+	}
+	if i := strings.Index(lower, "<html"); i >= 0 {
+		msg = strings.TrimSpace(msg[:i])
+		if msg == "" {
+			return "The gateway returned an error page."
+		}
+	}
+	if len(msg) > 180 {
+		msg = msg[:180] + "…"
+	}
+	return msg
+}
+
+// offerRetry mounts a red error card asking the user to retry the last
+// message. Called off the UI goroutine (Ask blocks).
+func (a *App) offerRetry(prompt string, err error) {
+	if a.tv == nil {
+		return
+	}
+	reason := friendlyError(err)
+	ans, askErr := a.Ask(context.Background(), tools.PromptRequest{
+		Kind:     tools.PromptError,
+		Title:    "ERROR",
+		Question: reason,
+		Detail:   "Retry sending this message?",
+		Options:  []string{"Retry"},
+	})
+	if askErr != nil || ans.Cancelled || ans.Index != 0 || strings.TrimSpace(prompt) == "" {
+		return
+	}
+	a.postUI(func() {
+		a.busy = true
+		a.assistantState = "thinking"
+		a.assistantStamp = ""
+		a.startSpinner()
+		a.refreshFooter()
+		a.appendAssistantTurnLabel()
+		a.transcript.ScrollToEnd()
+		a.launchTurnWithContext(prompt, "", "")
+	})
+}
+
 // launchTurn runs one agent turn as a background goroutine against a
 // snapshot of the current history, then merges the result back onto
 // the UI thread. agentNameOverride selects a different agent persona
@@ -3260,6 +3577,7 @@ func (a *App) launchTurn(prompt, agentNameOverride string) {
 // block that the runner attaches to the latest user message of each
 // request (never to stored history). "" sends no block.
 func (a *App) launchTurnWithContext(prompt, agentNameOverride, turnContext string) {
+	a.lastTurnPrompt = prompt
 	enabled := a.enabledToolList()
 	history := append([]client.Message(nil), a.history...)
 	agentCfg := a.currentAgent
@@ -3301,7 +3619,7 @@ func (a *App) launchTurnWithContext(prompt, agentNameOverride, turnContext strin
 		nextHistory, err := a.runner.Run(ctx, history, prompt, agentCfg, model, enabled, a.handleEvent)
 		a.postUI(func() {
 			a.flushMarkdownStreams()
-			if err != nil {
+				if err != nil {
 				errText := fmt.Sprintf("error: %v", err)
 				if isReasoningRelated(errText) {
 					fmt.Fprintf(a.reasoning, "\n["+a.palette.HexAlert+"::b]✗ %s[-:-:-]\n", tview.Escape(errText))
@@ -3310,12 +3628,14 @@ func (a *App) launchTurnWithContext(prompt, agentNameOverride, turnContext strin
 					a.appendActivity(fmt.Sprintf("[%s::b]! %s[-::B]", a.palette.HexPurple, tview.Escape(note)))
 					fmt.Fprintf(a.transcript, "\n[%s::b]! model[-:-:-] [%s]%s[-]\n", a.palette.HexPurple, a.palette.HexLavender, tview.Escape(note))
 				} else {
-					a.appendActivity(fmt.Sprintf("["+a.palette.HexAlert+"::b]✗ error[-:-:-]: %s", tview.Escape(err.Error())))
-					fmt.Fprintf(a.transcript, "\n["+a.palette.HexAlert+"::b]✗ error[-:-:-]: %s\n", tview.Escape(err.Error()))
+					a.appendActivity(fmt.Sprintf("["+a.palette.HexAlert+"::b]✗ error[-:-:-]: %s", tview.Escape(friendlyError(err))))
 					if note := a.ergoRunErrorNote(err); note != "" {
 						a.appendActivity(note)
-						fmt.Fprintf(a.transcript, "["+a.palette.HexLavender+"]%s[-]\n", tview.Escape(note))
 					}
+					// Red error card with a retry, instead of dumping the raw
+					// body (nginx HTML, etc.) into the transcript.
+					retryPrompt := a.lastTurnPrompt
+					go a.offerRetry(retryPrompt, err)
 				}
 			} else {
 				a.assistantState = "replied"
@@ -3336,6 +3656,8 @@ func (a *App) launchTurnWithContext(prompt, agentNameOverride, turnContext strin
 
 			// Auto-refresh tasks pane if visible and tasks were modified by the agent
 			a.reloadTasksIfChanged()
+			// Slash commands deferred mid-turn run now.
+			a.runIdleQueue()
 		})
 	}()
 }
@@ -3356,6 +3678,7 @@ func (a *App) submitScheduled(agentName, prompt string) {
 			case a.steeringCh <- prompt:
 				a.appendActivity(fmt.Sprintf("[%s::b]schedule[-::B]: turn in flight; prompt steered into the running turn",
 					a.palette.HexPurple))
+				a.appendSteeredMessage(prompt)
 			default:
 				a.appendActivity("[" + a.palette.HexPurple + "::b]! warning[-:-:-]: schedule fired while busy and steering queue is full; prompt dropped")
 			}
@@ -3485,17 +3808,11 @@ func (a *App) handleEvent(event tooling.Event) {
 			}
 			a.refreshContextBar()
 		case tooling.EventSteering:
-			// Mid-turn user steering. Render as a transcript line
-			// distinct from a fresh-turn user message: same body
-			// styling but a "steered:" prefix and a dimmed
-			// "mid-turn" tag so the user can see exactly what was
-			// injected into the in-flight conversation. The
-			// activity log already records the queue event from
-			// submit(), so we don't double-log here.
-			stamp := formatTimestamp(time.Now())
-			fmt.Fprintf(a.transcript, "[%s]%s[-]\n", a.palette.HexDim, stamp)
-			fmt.Fprintf(a.transcript, "[%s::b]you steered[-:-:-] %s\n", a.palette.HexLavender, tview.Escape(event.Text))
-			a.transcript.ScrollToEnd()
+			// Transcript line was already drawn at queue time
+			// (submit / submitScheduled) so the user sees it
+			// immediately. Emitting again here would duplicate it.
+			// The runner still injects the text into history for the
+			// next model call, including tjcoder/ergo gateway models.
 		}
 	})
 }
@@ -3915,6 +4232,21 @@ func (a *App) appendUserMessage(prompt string) {
 	fmt.Fprint(a.transcript, a.renderUserTurn(prompt))
 }
 
+// appendSteeredMessage renders a mid-turn user steer immediately.
+// Distinct from a fresh-turn bubble so the user can see exactly what
+// was injected into the in-flight conversation. Called at queue time
+// (not when the runner later drains the channel) so long tjcoder/ergo
+// reasoning does not hide the message.
+func (a *App) appendSteeredMessage(prompt string) {
+	if a.transcript == nil || strings.TrimSpace(prompt) == "" {
+		return
+	}
+	a.clearStartupSplash()
+	fmt.Fprintf(a.transcript, "[%s]%s[-]\n", a.palette.HexDim, formatTimestamp(time.Now()))
+	fmt.Fprintf(a.transcript, "[%s::b]you steered[-:-:-] %s\n", a.palette.HexLavender, tview.Escape(prompt))
+	a.transcript.ScrollToEnd()
+}
+
 func (a *App) clearStartupSplash() {
 	if !a.startupSplashVisible || a.transcript == nil {
 		return
@@ -4057,13 +4389,14 @@ func (a *App) buildRightColumn() *tview.Flex {
 	// and content. Using flex proportions (1:2 or 2:3) instead of fixed heights
 	// allows content to adapt without leaving empty space.
 	cogProp := 1  // Cognition gets 1 part
-	bodyProp := 2 // Body gets 2 parts by default (2:3 ratio)
+	bodyProp := 2 // Activity gets 2 parts (1:2)
 
-	// When viewing a non-activity panel, give more space to the body since it's
-	// the primary focus (1:1.5 ratio instead of 1:2)
+	// A non-activity pane (tasks, reminders, memories, test, articles)
+	// is what the user asked to look at, so it takes the larger share
+	// and cognition contracts to a third of the column. Canvas takes
+	// the whole column (below).
 	if a.activePanel != "" && a.activePanel != "activity" {
-		bodyProp = 1
-		cogProp = 1
+		cogProp, bodyProp = rightColumnSidePaneRatio()
 	}
 
 	// Pick the body primitive that matches the active panel.
@@ -4075,6 +4408,8 @@ func (a *App) buildRightColumn() *tview.Flex {
 		bodyPrim = a.tasksPanel
 	case "memories":
 		bodyPrim = a.memoriesPanel
+	case "reminders":
+		bodyPrim = a.remindersPanel
 	case "test":
 		bodyPrim = a.testPanel
 	case "articles", "code", "canvas", "reference":
@@ -4239,9 +4574,10 @@ func (a *App) renderAboutIntro() string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "[%s::b]%s[-:-:-]\n", a.palette.HexLavender, handle)
 	fmt.Fprintf(&b, "[%s]%s[-]\n\n", a.palette.HexFaint, product)
-	fmt.Fprintf(&b, "[%s]A terminal-first coding TUI that talks to local and remote[-]\n", a.palette.HexDim)
-	fmt.Fprintf(&b, "[%s]models, streams its thinking in a side panel, and routes tool[-]\n", a.palette.HexDim)
-	fmt.Fprintf(&b, "[%s]calls through a curated terminal/code toolkit.[-]\n\n", a.palette.HexDim)
+	fmt.Fprintf(&b, "[%s]A terminal-first coding TUI for the TJ Coder gateway[-]\n", a.palette.HexDim)
+	fmt.Fprintf(&b, "[%s](tjcoder/ergo-flash, ergo-pro, ergo-genius) and local models.[-]\n", a.palette.HexDim)
+	fmt.Fprintf(&b, "[%s]Thinking streams in the Cognition pane. Send a message mid-turn[-]\n", a.palette.HexDim)
+	fmt.Fprintf(&b, "[%s]to steer the running agent. Type /help for every command.[-]\n\n", a.palette.HexDim)
 	fmt.Fprintf(&b, "[%s]Made with love in Salt Lake City by TJ Coder AI Labs.[-]\n\n", a.palette.HexFaint)
 	if a.appVersion != "" {
 		fmt.Fprintf(&b, "[%s]version  %s[-]\n", a.palette.HexPurple, a.appVersion)
@@ -4539,7 +4875,6 @@ func (a *App) openModelModal() {
 		// Unified catalogue grouped by provider prefix, ergo tiers first.
 		// Group headers are inert rows.
 		for _, g := range groupErgoModels(a.models) {
-			list.AddItem(fmt.Sprintf("[%s::b]── %s ──[-:-:-]", a.palette.HexDim, g.Name), "", 0, nil)
 			for _, m := range g.Models {
 				addModel(m)
 			}
@@ -4773,13 +5108,23 @@ func (a *App) referenceSummary() string {
 	if len(a.refOrder) == 0 {
 		return "refs: -"
 	}
+	// Next to the context indicator we only have room for the file name
+	// and extension. Full paths get clipped mid-name (src/config/agents/ergo.ace).
+	base := func(ref string) string {
+		name := filepath.Base(strings.TrimSpace(ref))
+		if name == "." || name == "/" || name == "" {
+			return ref
+		}
+		return name
+	}
 	mdRefs := make([]string, 0, len(a.refOrder))
 	otherRefs := make([]string, 0, len(a.refOrder))
 	for _, ref := range a.refOrder {
-		if strings.HasSuffix(strings.ToLower(ref), ".md") || strings.HasSuffix(strings.ToLower(ref), ".markdown") {
-			mdRefs = append(mdRefs, ref)
+		name := base(ref)
+		if strings.HasSuffix(strings.ToLower(name), ".md") || strings.HasSuffix(strings.ToLower(name), ".markdown") {
+			mdRefs = append(mdRefs, name)
 		} else {
-			otherRefs = append(otherRefs, ref)
+			otherRefs = append(otherRefs, name)
 		}
 	}
 	ordered := append(mdRefs, otherRefs...)

@@ -10,9 +10,59 @@ import (
 	"strings"
 
 	"github.com/tjcoder-labs/cli/internal/client"
+	"github.com/tjcoder-labs/cli/internal/workspace"
 )
 
 type inspectProjectTool struct{}
+
+var stackMarkers = []struct {
+	file string
+	name string
+}{
+	{"go.mod", "Go"},
+	{"package.json", "Node.js"},
+	{"tsconfig.json", "TypeScript"},
+	{"Cargo.toml", "Rust"},
+	{"pyproject.toml", "Python"},
+	{"requirements.txt", "Python"},
+	{"Dockerfile", "Docker"},
+}
+
+// inspectRemoteProject is inspect_project over an SSH workspace.
+func inspectRemoteProject(ctx context.Context, ws *workspace.Workspace, root string) (Result, error) {
+	ents, err := ws.FS.Walk(ctx, root, 1)
+	if err != nil {
+		return Result{}, err
+	}
+	have := map[string]bool{}
+	for _, e := range ents {
+		have[e.Rel] = !e.IsDir
+	}
+	detected := []string{}
+	for _, c := range stackMarkers {
+		if have[c.file] {
+			detected = append(detected, c.name)
+		}
+	}
+	sort.Strings(detected)
+	sort.Slice(ents, func(i, j int) bool { return ents[i].Rel < ents[j].Rel })
+	files := []string{}
+	for _, e := range ents {
+		if strings.HasPrefix(e.Rel, ".") {
+			continue
+		}
+		name := e.Rel
+		if e.IsDir {
+			name += "/"
+		}
+		files = append(files, name)
+		if len(files) >= 20 {
+			break
+		}
+	}
+	out := fmt.Sprintf("root: %s:%s\nstack: %s\nentries:\n- %s", ws.Host, root, strings.Join(detected, ", "), strings.Join(files, "\n- "))
+	return Result{Content: out, Preview: preview(out)}, nil
+}
 
 func (inspectProjectTool) Definition() client.ToolDefinition {
 	return client.ToolDefinition{
@@ -21,33 +71,30 @@ func (inspectProjectTool) Definition() client.ToolDefinition {
 			Name:        "inspect_project",
 			Description: "Detect the current project stack and important files.",
 			Parameters: objectSchema(nil, map[string]any{
-				"path": stringProp("Optional project path."),
+				"path":      stringProp("Optional project path."),
+				"workspace": workspaceProp(),
 			}),
 		},
 	}
 }
 
-func (inspectProjectTool) Execute(_ context.Context, raw json.RawMessage, env ExecEnv) (Result, error) {
+func (inspectProjectTool) Execute(ctx context.Context, raw json.RawMessage, env ExecEnv) (Result, error) {
 	var args struct {
-		Path string `json:"path"`
+		Path      string `json:"path"`
+		Workspace string `json:"workspace"`
 	}
 	if err := json.Unmarshal(raw, &args); err != nil {
 		return Result{}, err
 	}
-	root := resolvePath(env.WorkspaceRoot, args.Path)
+	ws, root, err := env.pickDir(args.Workspace, args.Path)
+	if err != nil {
+		return Result{}, err
+	}
+	if ws.Kind == workspace.KindSSH {
+		return inspectRemoteProject(ctx, ws, root)
+	}
 	detected := []string{}
-	for _, candidate := range []struct {
-		file string
-		name string
-	}{
-		{"go.mod", "Go"},
-		{"package.json", "Node.js"},
-		{"tsconfig.json", "TypeScript"},
-		{"Cargo.toml", "Rust"},
-		{"pyproject.toml", "Python"},
-		{"requirements.txt", "Python"},
-		{"Dockerfile", "Docker"},
-	} {
+	for _, candidate := range stackMarkers {
 		if _, err := os.Stat(filepath.Join(root, candidate.file)); err == nil {
 			detected = append(detected, candidate.name)
 		}

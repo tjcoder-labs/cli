@@ -15,6 +15,7 @@ import (
 	"github.com/creack/pty"
 	"github.com/tjcoder-labs/cli/internal/client"
 	"github.com/tjcoder-labs/cli/internal/session"
+	"github.com/tjcoder-labs/cli/internal/workspace"
 )
 
 const maxOutput = 50000
@@ -78,6 +79,7 @@ func (runCommandTool) Definition() client.ToolDefinition {
 				"timeout_seconds": numberProp("Optional timeout in seconds. Default 20, max 1800."),
 				"background":      boolProp("If true, start the command in the background and return immediately with a job id. For interactive scans, prefer a command's native timeout and set timeout_seconds slightly higher."),
 				"use_pty":         boolProp("If true, run the command in a pseudo-terminal (PTY). This is required for tools that detect if they are running in a real terminal, like bluetoothctl."),
+				"workspace":       workspaceProp(),
 			}),
 		},
 	}
@@ -90,6 +92,7 @@ func (runCommandTool) Execute(ctx context.Context, raw json.RawMessage, env Exec
 		TimeoutSeconds int    `json:"timeout_seconds"`
 		Background     bool   `json:"background"`
 		UsePty         bool   `json:"use_pty"`
+		Workspace      string `json:"workspace"`
 	}
 	if err := json.Unmarshal(raw, &args); err != nil {
 		return Result{}, err
@@ -105,6 +108,16 @@ func (runCommandTool) Execute(ctx context.Context, raw json.RawMessage, env Exec
 	}
 	if ctx == nil {
 		ctx = context.Background()
+	}
+	// The target workspace: the "workspace" param, a name: prefix on
+	// cwd, or the active one. cwd is not confined (the command could cd
+	// anywhere anyway); file tools are.
+	ws, dir, err := env.pickDir(args.Workspace, args.Cwd)
+	if err != nil {
+		return Result{}, err
+	}
+	if ws.Kind == workspace.KindSSH {
+		return runRemoteCommand(ctx, ws, dir, args.Command, args.TimeoutSeconds, args.Background, env)
 	}
 	shellCmd := args.Command
 	var sudoGrantEnv []string
@@ -127,93 +140,20 @@ func (runCommandTool) Execute(ctx context.Context, raw json.RawMessage, env Exec
 	// it cannot reuse the ticket.
 	detach := sudoGrantEnv == nil && env.Sudo.TicketMayBeLive()
 	if args.Background {
-		if env.SessionState == nil || env.PersistSession == nil {
-			return Result{Content: "Background execution unavailable: session persistence is not configured.", Preview: "background unavailable"}, nil
-		}
-		jobID := fmt.Sprintf("job-%d", time.Now().UnixNano())
-		jobDir := filepath.Join(env.WorkspaceRoot, ".ergo-cli-go", "jobs", jobID)
-		if err := os.MkdirAll(jobDir, 0o700); err != nil {
-			return Result{}, fmt.Errorf("create job dir: %w", err)
-		}
-		logPath := filepath.Join(jobDir, "output.log")
-		job := session.BackgroundJob{
-			ID:          jobID,
-			Command:     args.Command,
-			Cwd:         args.Cwd,
-			Status:      "running",
-			StartedAt:   time.Now().UTC().Format(time.RFC3339),
-			OutputPath:  logPath,
-			SessionPath: filepath.Join(jobDir, "session.json"),
-		}
-		env.SessionState.BackgroundJobs = append(env.SessionState.BackgroundJobs, job)
-		if err := env.PersistSession(); err != nil {
-			return Result{}, fmt.Errorf("persist background job: %w", err)
-		}
-
-		// Background jobs must outlive the current conversation turn, so
-		// they are detached from the turn context. Tying them to ctx
-		// caused the job to be cancelled the moment the turn ended,
-		// defeating the purpose of background execution. A generous
-		// independent timeout still guards against runaway processes.
-		bgTimeout := time.Duration(args.TimeoutSeconds) * time.Second
-		if bgTimeout < time.Hour {
-			bgTimeout = time.Hour
-		}
-		runCtx, cancel := context.WithTimeout(context.Background(), bgTimeout)
-		cmd := exec.CommandContext(runCtx, "bash", "-lc", args.Command)
-		if detach {
-			detachFromTerminal(cmd, false)
-		}
-		if args.Cwd != "" {
-			cmd.Dir = resolvePath(env.WorkspaceRoot, args.Cwd)
-		} else {
-			cmd.Dir = filepath.Clean(env.WorkspaceRoot)
-		}
-		logFile, err := os.Create(logPath)
-		if err != nil {
-			cancel()
-			job.Status = "failed"
-			job.Error = fmt.Sprintf("create log file: %v", err)
-			job.CompletedAt = time.Now().UTC().Format(time.RFC3339)
-			updateBackgroundJob(env, jobID, job)
-			return Result{}, fmt.Errorf("create log file: %w", err)
-		}
-		cmd.Stdout = logFile
-		cmd.Stderr = logFile
-		if err := cmd.Start(); err != nil {
-			cancel()
-			logFile.Close()
-			job.Status = "failed"
-			job.Error = fmt.Sprintf("start command: %v", err)
-			job.CompletedAt = time.Now().UTC().Format(time.RFC3339)
-			updateBackgroundJob(env, jobID, job)
-			return Result{}, fmt.Errorf("start background command: %w", err)
-		}
-		go func() {
-			defer logFile.Close()
-			defer cancel()
-			err := cmd.Wait()
-			if err != nil {
-				job.Status = "failed"
-				job.Error = err.Error()
-			} else {
-				job.Status = "completed"
+		return startBackgroundJob(env, args.Command, args.Cwd, args.TimeoutSeconds, func(runCtx context.Context) (*exec.Cmd, error) {
+			cmd := exec.CommandContext(runCtx, "bash", "-lc", args.Command)
+			if detach {
+				detachFromTerminal(cmd, false)
 			}
-			job.CompletedAt = time.Now().UTC().Format(time.RFC3339)
-			updateBackgroundJob(env, jobID, job)
-		}()
-		msg := fmt.Sprintf("Started background job %s. Use background_job with job_id %s to read its status and output.", jobID, jobID)
-		return Result{Content: msg, Preview: msg}, nil
+			cmd.Dir = dir
+			return cmd, nil
+		})
 	}
 
 	runCtx, cancel := context.WithTimeout(ctx, time.Duration(args.TimeoutSeconds)*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(runCtx, "bash", "-lc", shellCmd)
-	if args.Cwd != "" {
-		cmd.Dir = resolvePath(env.WorkspaceRoot, args.Cwd)
-	} else {
-		cmd.Dir = filepath.Clean(env.WorkspaceRoot)
-	}
+	cmd.Dir = dir
 	if sudoGrantEnv != nil {
 		cmd.Env = append(os.Environ(), sudoGrantEnv...)
 	}
@@ -276,6 +216,88 @@ func (runCommandTool) Execute(ctx context.Context, raw json.RawMessage, env Exec
 		return Result{Content: text, Preview: preview(text)}, fmt.Errorf("command failed: %w", err)
 	}
 	return Result{Content: text, Preview: preview(text)}, nil
+}
+
+// startBackgroundJob runs the command built by mk detached from the
+// turn, logging to the job dir, and records it in the session.
+func startBackgroundJob(env ExecEnv, command, cwd string, timeoutSeconds int, mk func(context.Context) (*exec.Cmd, error)) (Result, error) {
+	if env.SessionState == nil || env.PersistSession == nil {
+		return Result{Content: "Background execution unavailable: session persistence is not configured.", Preview: "background unavailable"}, nil
+	}
+	jobID := fmt.Sprintf("job-%d", time.Now().UnixNano())
+	jobDir := filepath.Join(env.WorkspaceRoot, ".ergo-cli-go", "jobs", jobID)
+	if err := os.MkdirAll(jobDir, 0o700); err != nil {
+		return Result{}, fmt.Errorf("create job dir: %w", err)
+	}
+	logPath := filepath.Join(jobDir, "output.log")
+	job := session.BackgroundJob{
+		ID:          jobID,
+		Command:     command,
+		Cwd:         cwd,
+		Status:      "running",
+		StartedAt:   time.Now().UTC().Format(time.RFC3339),
+		OutputPath:  logPath,
+		SessionPath: filepath.Join(jobDir, "session.json"),
+	}
+	env.SessionState.BackgroundJobs = append(env.SessionState.BackgroundJobs, job)
+	if err := env.PersistSession(); err != nil {
+		return Result{}, fmt.Errorf("persist background job: %w", err)
+	}
+
+	// Background jobs must outlive the current conversation turn, so
+	// they are detached from the turn context. Tying them to ctx
+	// caused the job to be cancelled the moment the turn ended,
+	// defeating the purpose of background execution. A generous
+	// independent timeout still guards against runaway processes.
+	bgTimeout := time.Duration(timeoutSeconds) * time.Second
+	if bgTimeout < time.Hour {
+		bgTimeout = time.Hour
+	}
+	runCtx, cancel := context.WithTimeout(context.Background(), bgTimeout)
+	cmd, err := mk(runCtx)
+	if err != nil {
+		cancel()
+		job.Status = "failed"
+		job.Error = err.Error()
+		job.CompletedAt = time.Now().UTC().Format(time.RFC3339)
+		updateBackgroundJob(env, jobID, job)
+		return Result{}, err
+	}
+	logFile, err := os.Create(logPath)
+	if err != nil {
+		cancel()
+		job.Status = "failed"
+		job.Error = fmt.Sprintf("create log file: %v", err)
+		job.CompletedAt = time.Now().UTC().Format(time.RFC3339)
+		updateBackgroundJob(env, jobID, job)
+		return Result{}, fmt.Errorf("create log file: %w", err)
+	}
+	cmd.Stdout = logFile
+	cmd.Stderr = logFile
+	if err := cmd.Start(); err != nil {
+		cancel()
+		logFile.Close()
+		job.Status = "failed"
+		job.Error = fmt.Sprintf("start command: %v", err)
+		job.CompletedAt = time.Now().UTC().Format(time.RFC3339)
+		updateBackgroundJob(env, jobID, job)
+		return Result{}, fmt.Errorf("start background command: %w", err)
+	}
+	go func() {
+		defer logFile.Close()
+		defer cancel()
+		err := cmd.Wait()
+		if err != nil {
+			job.Status = "failed"
+			job.Error = err.Error()
+		} else {
+			job.Status = "completed"
+		}
+		job.CompletedAt = time.Now().UTC().Format(time.RFC3339)
+		updateBackgroundJob(env, jobID, job)
+	}()
+	msg := fmt.Sprintf("Started background job %s. Use background_job with job_id %s to read its status and output.", jobID, jobID)
+	return Result{Content: msg, Preview: msg}, nil
 }
 
 // withSudoNote prefixes command output with the recorded sudo decision
@@ -373,7 +395,8 @@ func (gitStatusTool) Definition() client.ToolDefinition {
 			Name:        "git_status",
 			Description: "Show concise git status and diff stat for the current workspace.",
 			Parameters: objectSchema(nil, map[string]any{
-				"path": stringProp("Optional repository path."),
+				"path":      stringProp("Optional repository path."),
+				"workspace": workspaceProp(),
 			}),
 		},
 	}
@@ -381,17 +404,20 @@ func (gitStatusTool) Definition() client.ToolDefinition {
 
 func (gitStatusTool) Execute(ctx context.Context, raw json.RawMessage, env ExecEnv) (Result, error) {
 	var args struct {
-		Path string `json:"path"`
+		Path      string `json:"path"`
+		Workspace string `json:"workspace"`
 	}
 	if err := json.Unmarshal(raw, &args); err != nil {
 		return Result{}, err
 	}
-	cwd := env.WorkspaceRoot
-	if args.Path != "" {
-		cwd = resolvePath(env.WorkspaceRoot, args.Path)
+	ws, cwd, err := env.pickDir(args.Workspace, args.Path)
+	if err != nil {
+		return Result{}, err
 	}
-	cmd := exec.CommandContext(ctx, "bash", "-lc", "git --no-pager status --short --branch && echo '---' && git --no-pager diff --stat")
-	cmd.Dir = cwd
+	cmd, err := shellIn(ctx, ws, cwd, "git --no-pager status --short --branch && echo '---' && git --no-pager diff --stat")
+	if err != nil {
+		return Result{}, err
+	}
 	out, err := cmd.CombinedOutput()
 	text := truncateOutput(string(out))
 	if err != nil {
@@ -412,6 +438,7 @@ func (runTestTool) Definition() client.ToolDefinition {
 				"command":         stringProp("Test command to execute."),
 				"cwd":             stringProp("Optional working directory."),
 				"timeout_seconds": numberProp("Optional timeout in seconds."),
+				"workspace":       workspaceProp(),
 			}),
 		},
 	}

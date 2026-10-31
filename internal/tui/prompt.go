@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -36,6 +37,7 @@ type promptState struct {
 	secret   bool   // masked single-line input (passwords)
 	label    string
 	buf      []byte // secret bytes; zeroed by the consumer / on cancel
+	notice   string // short muted note under the input (e.g. paste ignored)
 }
 
 func newChoicePrompt(req tools.PromptRequest) *promptState {
@@ -82,6 +84,61 @@ func (s *promptState) zeroSecret() {
 	s.buf = nil
 }
 
+// appendSecret appends p to the masked buffer, growing the backing
+// array manually so the old one can be wiped rather than left for the
+// GC with secret bytes still in it.
+func (s *promptState) appendSecret(p []byte) {
+	if len(p) == 0 {
+		return
+	}
+	if cap(s.buf)-len(s.buf) < len(p) {
+		nb := make([]byte, len(s.buf), 2*cap(s.buf)+len(p)+16)
+		copy(nb, s.buf)
+		s.zeroSecret()
+		s.buf = nb
+	}
+	s.buf = append(s.buf, p...)
+}
+
+// paste appends pasted text to the active input line and reports
+// whether anything changed. For secret prompts the bytes go into the
+// masked buffer with every CR/LF dropped, so a key copied with its
+// trailing newline (or a terminal that turns the newline into Enter)
+// never smuggles a line break into the secret. For an open free-text
+// line the text goes into the visible answer: trailing newlines are
+// trimmed and embedded ones become spaces, because the answer is a
+// single line and a raw newline would break the card frame. Choice
+// rows (not editing) ignore paste.
+func (s *promptState) paste(text string) bool {
+	if s.secret {
+		clean := make([]byte, 0, len(text))
+		for i := 0; i < len(text); i++ {
+			if c := text[i]; c != '\r' && c != '\n' {
+				clean = append(clean, c)
+			}
+		}
+		s.appendSecret(clean)
+		if len(clean) > 0 {
+			s.notice = ""
+		}
+		for i := range clean {
+			clean[i] = 0
+		}
+		return len(clean) > 0
+	}
+	if !s.editing {
+		return false
+	}
+	text = strings.TrimRight(text, "\r\n")
+	text = strings.NewReplacer("\r\n", " ", "\n", " ", "\r", " ").Replace(text)
+	s.notice = ""
+	if text == "" {
+		return false
+	}
+	s.other = append(s.other, []rune(text)...)
+	return true
+}
+
 // handleKey applies one key. done reports the prompt finished; ans is
 // the result for choice prompts; for secret prompts the caller takes
 // s.buf (nil when cancelled).
@@ -106,15 +163,7 @@ func (s *promptState) handleKey(ev *tcell.EventKey) (done bool, ans tools.Prompt
 		case tcell.KeyRune:
 			var tmp [utf8.UTFMax]byte
 			n := utf8.EncodeRune(tmp[:], ev.Rune())
-			if cap(s.buf)-len(s.buf) < n {
-				// Grow manually so the old backing array can be wiped
-				// rather than left for the GC with secret bytes in it.
-				nb := make([]byte, len(s.buf), 2*cap(s.buf)+n+16)
-				copy(nb, s.buf)
-				s.zeroSecret()
-				s.buf = nb
-			}
-			s.buf = append(s.buf, tmp[:n]...)
+			s.appendSecret(tmp[:n])
 		}
 		return false, tools.PromptAnswer{}
 	}
@@ -243,6 +292,8 @@ func promptHeading(req tools.PromptRequest) string {
 		return "AUTHORIZATION"
 	case tools.PromptNextSteps:
 		return "NEXT STEPS"
+	case tools.PromptError:
+		return "ERROR"
 	default:
 		return "QUESTION"
 	}
@@ -251,7 +302,11 @@ func promptHeading(req tools.PromptRequest) string {
 // cardHeader is the shared top of every prompt card: heading,
 // question and detail.
 func cardHeader(th theme.Theme, req tools.PromptRequest, secret bool) []render.Line {
-	head := render.Line{{Text: promptHeading(req), Fg: th.Primary, Attr: "b"}}
+	headFg := th.Primary
+	if req.Kind == tools.PromptError {
+		headFg = cardErrorAccent
+	}
+	head := render.Line{{Text: promptHeading(req), Fg: headFg, Attr: "b"}}
 	if req.MultiSelect && !secret {
 		head = append(head, render.Span{Text: "  · choose any", Fg: th.Dim})
 	}
@@ -271,6 +326,18 @@ func cardHeader(th theme.Theme, req tools.PromptRequest, secret bool) []render.L
 	return out
 }
 
+// secretMaskMax caps the bullets shown for a secret so a long pasted
+// credential (a 4 KiB token is ~100 wrapped rows) cannot grow the card
+// past the screen; longer secrets show the capped mask plus a count.
+const secretMaskMax = 32
+
+func secretMask(n int) string {
+	if n <= secretMaskMax {
+		return strings.Repeat("•", n)
+	}
+	return strings.Repeat("•", secretMaskMax) + "… " + strconv.Itoa(n) + " chars"
+}
+
 // content returns the live card's rows (before boxing).
 func (s *promptState) content(th theme.Theme) []render.Line {
 	out := cardHeader(th, s.req, s.secret)
@@ -279,8 +346,8 @@ func (s *promptState) content(th theme.Theme) []render.Line {
 	if s.secret {
 		out = append(out,
 			render.Line{{Text: s.label, Fg: th.Text}},
-			render.Line{{Text: "› ", Fg: th.Bright, Attr: "b"}, {Text: strings.Repeat("•", utf8.RuneCount(s.buf)), Fg: th.Text}, cursor},
-			nil,
+			render.Line{{Text: "› ", Fg: th.Bright, Attr: "b"}, {Text: secretMask(utf8.RuneCount(s.buf)), Fg: th.Text}, cursor},
+			s.noticeLine(th),
 			render.Line{{Text: "Enter to submit · Esc to cancel · input is hidden and never sent to the model", Fg: th.Faint}})
 		return out
 	}
@@ -317,8 +384,16 @@ func (s *promptState) content(th theme.Theme) []render.Line {
 			out = append(out, render.Line{{Text: lead, Fg: th.Bright, Attr: "b"}, {Text: string(s.other), Fg: th.Text}, cursor})
 		}
 	}
-	out = append(out, nil, render.Line{{Text: s.hint(), Fg: th.Faint}})
+	out = append(out, s.noticeLine(th), render.Line{{Text: s.hint(), Fg: th.Faint}})
 	return out
+}
+
+// noticeLine is the (usually empty) muted row above the key hints.
+func (s *promptState) noticeLine(th theme.Theme) render.Line {
+	if s.notice == "" {
+		return nil
+	}
+	return render.Line{{Text: s.notice, Fg: th.Dim}}
 }
 
 func (s *promptState) hint() string {
@@ -339,7 +414,16 @@ func (s *promptState) hint() string {
 
 // render returns the boxed live card, width cells wide.
 func (s *promptState) render(p Palette, width int) string {
-	return renderCard(p.Theme, s.content(p.Theme), width)
+	return renderCard(p.Theme, s.content(p.Theme), width, cardAccentFor(s.req))
+}
+
+// cardAccentFor picks the left-rule colour. Error cards are red; every
+// other card keeps the brand purple.
+func cardAccentFor(req tools.PromptRequest) string {
+	if req.Kind == tools.PromptError {
+		return cardErrorAccent
+	}
+	return ""
 }
 
 // promptOutcome is how a prompt ended, for the answered card.
@@ -386,6 +470,131 @@ func answeredContent(th theme.Theme, req tools.PromptRequest, ans tools.PromptAn
 
 var _ tools.Prompter = (*App)(nil)
 
+// promptGuard is the focus guard shared by keys and paste: for
+// promptArmDelay after the card gains focus, everything except Esc is
+// ignored, so an Enter, digit or paste aimed at the chat input (or the
+// modal that just closed) can never answer the card.
+type promptGuard struct{ armedAt atomic.Int64 }
+
+// arm records that the card just gained focus.
+func (g *promptGuard) arm() { g.armedAt.Store(promptNow().UnixNano()) }
+
+// settling reports whether the card is still inside the guard window.
+func (g *promptGuard) settling() bool {
+	return promptNow().Sub(time.Unix(0, g.armedAt.Load())) < promptArmDelay
+}
+
+// promptNow is the guard's clock. Tests replace it.
+var promptNow = time.Now
+
+// burstGap is the longest pause between two key events that still
+// counts as one burst. A terminal without bracketed paste delivers a
+// paste as keystrokes parsed from the same read, microseconds apart;
+// even very fast typing is tens of milliseconds per key. Zero disables
+// burst detection (the package tests do, since simulated typing is
+// instantaneous; the burst tests turn it back on).
+var burstGap = 8 * time.Millisecond
+
+// burstSwallow is how long, at most, the rest of a burst is swallowed
+// after it finished a card, so it never spills into the chat input.
+const burstSwallow = 150 * time.Millisecond
+
+// pasteIgnoredNotice is shown when a keystroke paste hit the guard.
+const pasteIgnoredNotice = "paste ignored · try again"
+
+// keyBurst groups key events that arrive back to back (a paste typed
+// out by a terminal without bracketed paste) by their tcell timestamps.
+type keyBurst struct {
+	last     time.Time
+	n        int  // keys in the current burst
+	dropping bool // the burst started inside the guard: drop all of it
+}
+
+// step records a key at t and reports whether it continues the burst
+// of the previous key.
+func (b *keyBurst) step(t time.Time) bool {
+	d := t.Sub(b.last)
+	cont := burstGap > 0 && !b.last.IsZero() && d >= 0 && d < burstGap
+	b.last = t
+	if !cont {
+		b.n, b.dropping = 0, false
+	}
+	b.n++
+	return cont
+}
+
+// burstFilter applies the keystroke-paste rules before a key reaches
+// the state machine and returns the key to apply, or nil to drop it:
+//   - a burst whose first key lands inside the focus guard is dropped
+//     whole, even the part after the guard expires, with a short notice,
+//     so a paste is never half-captured;
+//   - Enter (or LF) inside a burst is a pasted newline, never a submit:
+//     dropped for secrets and choice rows, a space in free text.
+//
+// Esc always passes.
+func (v *promptView) burstFilter(ev *tcell.EventKey) *tcell.EventKey {
+	inBurst := v.burst.step(ev.When())
+	if ev.Key() == tcell.KeyEscape {
+		return ev
+	}
+	if v.guard.settling() {
+		v.burst.dropping = true
+	}
+	if v.burst.dropping {
+		if v.burst.n == 2 && v.st != nil {
+			v.st.notice = pasteIgnoredNotice
+			if v.redraw != nil {
+				v.redraw()
+			}
+		}
+		return nil
+	}
+	if inBurst && (ev.Key() == tcell.KeyEnter || ev.Key() == tcell.KeyCtrlJ) {
+		if v.st != nil && !v.st.secret && v.st.editing {
+			return tcell.NewEventKey(tcell.KeyRune, ' ', tcell.ModNone)
+		}
+		return nil
+	}
+	return ev
+}
+
+// promptView is a TextView that carries a paste handler. tview.TextView
+// defines no PasteHandler (it always returns nil), so a bracketed paste
+// would otherwise be dropped before it reaches the prompt's input
+// capture. Embedding the TextView and overriding PasteHandler lets the
+// live prompt card receive pasted text while keeping every other
+// TextView behaviour intact.
+type promptView struct {
+	*tview.TextView
+	st       *promptState
+	guard    *promptGuard
+	burst    keyBurst
+	finished func() bool // card already answered / unmounted
+	redraw   func()
+}
+
+func newPromptView(tv *tview.TextView, st *promptState) *promptView {
+	v := &promptView{TextView: tv, st: st, guard: &promptGuard{}}
+	tv.SetFocusFunc(v.guard.arm)
+	return v
+}
+
+// paste routes pasted text into the card's state machine, honouring
+// the same rules as keys: nothing once finished, nothing unless the
+// card holds focus, and nothing inside the focus guard window.
+func (v *promptView) paste(text string) {
+	if v.st == nil || (v.finished != nil && v.finished()) || !v.HasFocus() || v.guard.settling() {
+		return
+	}
+	if v.st.paste(text) && v.redraw != nil {
+		v.redraw()
+	}
+}
+
+func (v *promptView) PasteHandler() func(string, func(tview.Primitive)) {
+	return v.WrapPasteHandler(func(text string, _ func(tview.Primitive)) { v.paste(text) })
+}
+
 // runPrompt mounts st as a card at the bottom of the Conversation
 // panel (aligned with the transcript text), takes focus, and blocks (on
 // the caller's goroutine, never the UI one) until the user finishes or
@@ -402,18 +611,15 @@ func (a *App) runPrompt(ctx context.Context, st *promptState) (tools.PromptAnswe
 		return cancelled, outcomeCancelled, fmt.Errorf("interactive prompt requested on the UI goroutine")
 	}
 	result := make(chan tools.PromptAnswer, 1)
-	view := tview.NewTextView().SetDynamicColors(true).SetWrap(false)
-	view.SetBackgroundColor(a.palette.BgRoot)
+	tv := tview.NewTextView().SetDynamicColors(true).SetWrap(false)
+	tv.SetBackgroundColor(a.palette.BgRoot)
 	// Same horizontal padding as the transcript body, so the live card
 	// sits exactly where its answered copy will be printed.
-	view.SetBorderPadding(0, 1, 3, 2)
+	// One blank row above and below the live card so it does not run
+	// into the transcript text above or the input below.
+	tv.SetBorderPadding(1, 1, 3, 2)
+	view := newPromptView(tv, st)
 	var finished bool
-	// armedAt is when the card last gained focus (unix nanos). Keys
-	// other than Esc that arrive within promptArmDelay of that are
-	// dropped, so an Enter or digit typed for the chat input (or the
-	// modal that just closed) can never pick the pre-selected default.
-	var armedAt atomic.Int64
-	view.SetFocusFunc(func() { armedAt.Store(time.Now().UnixNano()) })
 	unmount := func() {
 		hadFocus := a.tv.GetFocus() == view
 		a.transcriptPanel.RemoveItem(view)
@@ -437,12 +643,18 @@ func (a *App) runPrompt(ctx context.Context, st *promptState) (tools.PromptAnswe
 		if finished {
 			return nil
 		}
-		if ev.Key() != tcell.KeyEscape && time.Since(time.Unix(0, armedAt.Load())) < promptArmDelay {
+		if ev = view.burstFilter(ev); ev == nil {
 			return nil
+		}
+		if ev.Key() == tcell.KeyRune || ev.Key() == tcell.KeyCtrlU {
+			st.notice = ""
 		}
 		done, ans := st.handleKey(ev)
 		if done {
 			finished = true
+			// Keys still arriving in this burst belong to the card,
+			// not the chat input that is about to take focus.
+			a.swallowBurstAfter(view.burst.last)
 			unmount()
 			result <- ans
 			return nil
@@ -450,6 +662,13 @@ func (a *App) runPrompt(ctx context.Context, st *promptState) (tools.PromptAnswe
 		lp.redraw()
 		return nil
 	})
+	// A bracketed paste is delivered to the focused primitive's
+	// PasteHandler, not its InputHandler. Route it into the same state
+	// machine (view.paste applies the focus guard) so secret prompts
+	// accept a pasted key and free-text prompts accept pasted answers.
+	// Both closures run on the UI goroutine only.
+	view.finished = func() bool { return finished }
+	view.redraw = lp.redraw
 	a.postUI(func() {
 		if finished {
 			return
@@ -488,13 +707,35 @@ func (a *App) runPrompt(ctx context.Context, st *promptState) (tools.PromptAnswe
 	}
 }
 
-// promptArmDelay is how long a freshly focused card ignores keys other
-// than Esc. Tests set it to 0.
+// swallowBurstAfter drops keys that continue a burst ending at t (gaps
+// under burstGap, at most burstSwallow in total), so the tail of a
+// keystroke paste that finished a card never reaches the chat input.
+// UI goroutine only.
+func (a *App) swallowBurstAfter(t time.Time) {
+	a.burstTail = keyBurst{last: t}
+	a.burstTailUntil = t.Add(burstSwallow)
+}
+
+// swallowBurstTail reports (and records) a key that continues the burst
+// that just finished a card. Called from globalKeys. UI goroutine only.
+func (a *App) swallowBurstTail(ev *tcell.EventKey) bool {
+	if a.burstTailUntil.IsZero() {
+		return false
+	}
+	if !ev.When().Before(a.burstTailUntil) || !a.burstTail.step(ev.When()) {
+		a.burstTailUntil = time.Time{}
+		return false
+	}
+	return true
+}
+
+// promptArmDelay is how long a freshly focused card ignores keys and
+// pastes (everything except Esc). Tests set it to 0.
 var promptArmDelay = 300 * time.Millisecond
 
 // livePrompt is the card currently mounted under the transcript.
 type livePrompt struct {
-	view      *tview.TextView
+	view      *promptView
 	width     int
 	redraw    func()
 	queued    bool
@@ -504,7 +745,7 @@ type livePrompt struct {
 // liveCardView returns the mounted card when it is actually on screen
 // (no modal pane, fullscreen or /about hiding the Conversation panel),
 // else nil. UI goroutine only.
-func (a *App) liveCardView() *tview.TextView {
+func (a *App) liveCardView() *promptView {
 	if a.livePrompt == nil || a.leftPane != nil || a.fullscreen || a.aboutMode {
 		return nil
 	}
@@ -554,8 +795,10 @@ func (a *App) recordCard(req tools.PromptRequest, ans tools.PromptAnswer, how pr
 		return
 	}
 	a.postUI(func() {
-		card := renderCard(a.palette.Theme, answeredContent(a.palette.Theme, req, ans, how), innerWidth(a.transcript))
-		fmt.Fprintf(a.transcript, "\n%s\n", card)
+		card := renderCard(a.palette.Theme, answeredContent(a.palette.Theme, req, ans, how), innerWidth(a.transcript), cardAccentFor(req))
+		// One blank line above and below so the card never runs into the
+		// previous or next transcript line.
+		fmt.Fprintf(a.transcript, "\n\n%s\n\n", card)
 		a.transcript.ScrollToEnd()
 		if a.activity != nil {
 			q := req.Question

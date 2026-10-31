@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/tjcoder-labs/cli/internal/telemetry"
 )
 
 // ErgoDefaultBaseURL is the public ergo AI gateway. Override per-process
@@ -39,9 +41,13 @@ var ergoContextWindows = map[string]int{
 	"gemini-2.5-pro":   1048576,
 	"gemini-2.5-flash": 1048576,
 	// Ergo tiers (fallback only; the gateway's /api/show is authoritative)
-	"ergo/flash":  131072,
-	"ergo/pro":    262144,
-	"ergo/genius": 262144,
+	"tjcoder/ergo-flash:cloud":      131072,
+	"tjcoder/ergo-pro:cloud":        262144,
+	"tjcoder/ergo-genius:cloud":     262144,
+	"tjcoder/deepseek-v4-pro:cloud": 262144,
+	"ergo/flash":                    131072,
+	"ergo/pro":                      262144,
+	"ergo/genius":                   262144,
 	// xAI via gateway
 	"xai/grok-4.7":   500000,
 	"xai/grok-4.5":   1000000,
@@ -216,9 +222,12 @@ func (e *Ergo) Protocol() string {
 // A negative/zero timeout disables the client deadline (long streams).
 func NewErgo(baseURL, apiKey string, timeout time.Duration) *Ergo {
 	return &Ergo{
-		baseURL:    strings.TrimRight(baseURL, "/"),
-		apiKey:     apiKey,
-		httpClient: &http.Client{Timeout: timeout},
+		baseURL: strings.TrimRight(baseURL, "/"),
+		apiKey:  apiKey,
+		httpClient: &http.Client{
+			Timeout:   timeout,
+			Transport: &http.Transport{ExpectContinueTimeout: 0},
+		},
 	}
 }
 
@@ -267,6 +276,7 @@ func (e *Ergo) Chat(ctx context.Context, request ChatRequest, onEvent func(Strea
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+e.apiKey)
+	httpReq.Close = true
 
 	resp, err := e.httpClient.Do(httpReq)
 	if err != nil {
@@ -287,7 +297,11 @@ func (e *Ergo) Chat(ctx context.Context, request ChatRequest, onEvent func(Strea
 		if mnf := parseErgoModelNotFound(resp.StatusCode, errBody, request.Model); mnf != nil {
 			return Message{}, mnf
 		}
-		return Message{}, fmt.Errorf("ergo chat: %s: %s", resp.Status, strings.TrimSpace(string(errBody)))
+		err := fmt.Errorf("ergo chat: %s: %s", resp.Status, strings.TrimSpace(string(errBody)))
+		if tel := telemetry.Default(); tel != nil {
+			tel.Error("ergo_chat", err)
+		}
+		return Message{}, err
 	}
 
 	// ---- consume the SSE stream ----
@@ -351,6 +365,7 @@ func (e *Ergo) Chat(ctx context.Context, request ChatRequest, onEvent func(Strea
 		}
 	}
 
+	_, _ = io.Copy(io.Discard, resp.Body)
 	return Message{
 		Role:            "assistant",
 		Content:         contentBuf.String(),

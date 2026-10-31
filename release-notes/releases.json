@@ -1,0 +1,241 @@
+{
+  "$schema": "./schema.json",
+  "schema_version": 1,
+  "releases": [
+    {
+      "version": "0.9.219",
+      "date": "2026-10-31",
+      "title": "Product name update",
+      "summary": "The TUI header now shows @tjcoder as the program name.",
+      "changes": {
+        "changed": [
+          {
+            "text": "The program name in the TUI header is now @tjcoder."
+          }
+        ]
+      }
+    },
+    {
+      "version": "0.9.202",
+      "date": "2026-10-30",
+      "title": "Structured release notes",
+      "summary": "Release notes now live in one machine-readable file that ships inside coder, so a future update can show you what changed.",
+      "changes": {
+        "added": [
+          {
+            "text": "Release notes are kept in release-notes/releases.json, and CHANGELOG.md is generated from it.",
+            "details": "coder carries its own copy of the notes. The updater does not show them yet."
+          }
+        ]
+      }
+    },
+    {
+      "version": "0.9.201",
+      "covers_from": "0.9.196",
+      "date": "2026-10-30",
+      "title": "Multiple workspaces, SSH folders and slash commands mid-turn",
+      "summary": "Work across several local or SSH folders in one session, run slash commands while the agent is still working, and open a reminders pane.",
+      "changes": {
+        "added": [
+          {
+            "text": "Add more project folders to a session with /add <folder>. The agent's tools can work in all of them.",
+            "commands": ["/add"],
+            "highlight": true
+          },
+          {
+            "text": "Add a folder on another machine with /add ssh <host>[:<path>].",
+            "details": "Hosts come from ~/.ssh/config. Without a path you start in the remote home folder.",
+            "commands": ["/add"],
+            "highlight": true
+          },
+          {
+            "text": "List workspaces with /dirs (or /workspaces), remove one with /dirs rm <name>, and pick the active one with /use <name>.",
+            "commands": ["/dirs", "/workspaces", "/use"]
+          },
+          {
+            "text": "Typing /add shows hints as you type: a folder path or ssh <host>, your SSH hosts, and folder completion for local and connected remote folders.",
+            "commands": ["/add"]
+          },
+          {
+            "text": "When you have more than one workspace, the status bar shows the active one, like ⌂ name · 2."
+          },
+          {
+            "text": "The @ file picker also lists files in added local folders, as name:path."
+          },
+          {
+            "text": "Workspaces are saved with the session and come back when you resume it."
+          },
+          {
+            "text": "New /reminders pane lists your reminders and when each runs next.",
+            "commands": ["/reminders"]
+          }
+        ],
+        "changed": [
+          {
+            "text": "Slash commands typed while the agent is working now run instead of being sent to the agent as text.",
+            "details": "Most commands, such as /model, run right away and apply from the next request. /compact, /login, /logout, /update and changes to providers or MCP servers wait until the turn ends. /clear and Ctrl-L are refused until the turn ends.",
+            "commands": ["/model", "/compact", "/login", "/logout", "/update", "/providers", "/mcp", "/clear"],
+            "highlight": true
+          },
+          {
+            "text": "Running a pane command again closes that pane, and Esc closes an open side pane.",
+            "commands": ["/tasks", "/reminders", "/canvas"]
+          },
+          {
+            "text": "Side panes now get two thirds of the right column's height."
+          }
+        ],
+        "security": [
+          {
+            "text": "SSH passwords, key passphrases and one-time codes are asked for in the secure input card and are never saved or logged."
+          },
+          {
+            "text": "A new SSH host key needs your approval in a Yes/No card that defaults to No and is never answered automatically."
+          },
+          {
+            "text": "sudo on an SSH workspace uses the same approval card as local sudo."
+          }
+        ]
+      },
+      "notes": [
+        "SSH support has been tested against a simulated ssh, not yet against a live server.",
+        "Remote login shells must be bash, zsh or sh. fish and csh are not supported.",
+        "Remote sudo asks for the password for each command unless the remote account has NOPASSWD set.",
+        "The @ file picker does not list files in SSH workspaces yet."
+      ]
+    },
+    {
+      "version": "0.9.195",
+      "covers_from": "0.9.193",
+      "date": "2026-10-30",
+      "title": "Paste into question and secret cards",
+      "summary": "You can now paste into the agent's question cards and into password or token cards, safely.",
+      "changes": {
+        "added": [
+          {
+            "text": "Paste into question cards and secret (password or token) cards.",
+            "highlight": true
+          }
+        ],
+        "fixed": [
+          {
+            "text": "A pasted secret no longer keeps its trailing line break.",
+            "details": "Line breaks pasted into a typed answer become spaces, so \"one\" and \"two\" on two lines reads \"one two\"."
+          },
+          {
+            "text": "Very long pasted secrets show at most 32 dots and a character count, so the card stays on screen."
+          }
+        ],
+        "security": [
+          {
+            "text": "In terminals without bracketed paste, a line break inside a fast paste never submits a card.",
+            "details": "A paste that starts in the first 0.3 seconds after a card appears is ignored with \"paste ignored · try again\", and leftover pasted text is not typed into the chat input."
+          },
+          {
+            "text": "The hidden buffer for a secret is wiped as it grows, so no stray copy stays in memory."
+          }
+        ]
+      }
+    },
+    {
+      "version": "0.9.192",
+      "date": "2026-10-30",
+      "title": "Question cards are never answered for you",
+      "summary": "Questions and approvals from the agent always wait for your answer, and focus returns to an open card after menus.",
+      "changes": {
+        "security": [
+          {
+            "text": "The agent's questions are never answered automatically from a default.",
+            "details": "When nobody can answer, such as in a headless run, the agent is told no answer is available, and approval questions count as not approved. A default only pre-selects a choice.",
+            "highlight": true
+          },
+          {
+            "text": "sudo and update prompts need an exact choice. An empty answer means no."
+          }
+        ],
+        "fixed": [
+          {
+            "text": "A card ignores keys other than Esc for 0.3 seconds after it appears, so text you were typing cannot answer it by accident."
+          },
+          {
+            "text": "Focus goes back to an open card after you close a menu, form or pane. Tab from the input reaches the card, and Ctrl-U clears the card's text."
+          }
+        ]
+      }
+    },
+    {
+      "version": "0.9.191",
+      "covers_from": "0.9.171",
+      "date": "2026-10-29",
+      "title": "ergo by default, updates, reminders and a new look",
+      "summary": "Everything since 0.9.170: the ergo provider is the default, coder can update itself, and the TUI gained question cards, a file picker, reminders and refreshed colours.",
+      "changes": {
+        "added": [
+          {
+            "text": "ergo is now the default provider, ahead of local Ollama and Ollama Cloud. Sign in with /login, sign out with /logout, and check your wallet with /balance.",
+            "details": "Sign-in uses a device code. Your token is kept in the system keychain or a private file. Running out of balance shows a clear message.",
+            "commands": ["/login", "/logout", "/balance"],
+            "highlight": true
+          },
+          {
+            "text": "ergo models come in flash, pro and genius tiers, and the /model picker remembers your choice for each provider.",
+            "commands": ["/model"]
+          },
+          {
+            "text": "New Ollama Cloud provider, using OLLAMA_API_KEY.",
+            "commands": ["/providers"]
+          },
+          {
+            "text": "coder checks for updates in the background. Install them with /update or coder update, or turn on automatic installs with coder update auto on.",
+            "commands": ["/update"],
+            "highlight": true
+          },
+          {
+            "text": "The agent can ask you questions in a card in the transcript, and sudo commands need your approval first."
+          },
+          {
+            "text": "Attach files to a message with the @ file picker."
+          },
+          {
+            "text": "The reminder form has a schedule dropdown, date and time fields, a live preview of the schedule, and one-time reminders.",
+            "commands": ["/reminder"]
+          },
+          {
+            "text": "New coder reminders and coder tasks commands for the terminal."
+          },
+          {
+            "text": "Anonymous usage statistics and crash reports, controlled with /telemetry on, off or status.",
+            "commands": ["/telemetry"]
+          },
+          {
+            "text": "The /compact hint shows which model compacts and how full its context window is.",
+            "commands": ["/compact"]
+          }
+        ],
+        "changed": [
+          {
+            "text": "Colours follow your colour scheme, Markdown and code blocks render better, and the canvas uses the full height."
+          }
+        ],
+        "fixed": [
+          {
+            "text": "Provider selection and API version compatibility problems."
+          },
+          {
+            "text": "Slash commands and plain messages could freeze the UI."
+          },
+          {
+            "text": "The context-usage indicator is accurate."
+          },
+          {
+            "text": "Esc closes modal forms, and Ctrl-U deletes back to the start of the line."
+          },
+          {
+            "text": "/config keeps its Save and Cancel buttons visible, and the /about intro uses the normal pane width.",
+            "commands": ["/config", "/about"]
+          }
+        ]
+      }
+    }
+  ]
+}

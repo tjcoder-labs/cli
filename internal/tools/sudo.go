@@ -48,6 +48,7 @@ type SudoPolicy struct {
 	mu              sync.Mutex
 	sessionApproved bool
 	primed          bool
+	hosts           map[string]bool // ssh aliases approved for this session
 }
 
 // SessionApproved reports whether the user chose "allow for this session".

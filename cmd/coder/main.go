@@ -9,6 +9,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/tjcoder-labs/cli/internal/workspace"
 	"io"
 	"os"
 	"path/filepath"
@@ -79,12 +80,9 @@ var (
 		return "dev"
 	}()
 
-	productName = func() string {
-		if n := loadPackageMeta().Name; n != "" {
-			return n
-		}
-		return "TJ Coder CLI"
-	}()
+	// Plain string so the Makefile -X flag sticks. A function initializer
+	// runs at init and overwrites the injected value.
+	productName = "@tjcoder"
 
 	author = func() string {
 		if a := loadPackageMeta().Author; a != "" {
@@ -95,6 +93,12 @@ var (
 )
 
 func main() {
+	// Hidden SSH_ASKPASS helper: relays an ssh prompt to the running TUI
+	// over its private socket. Must run before flag parsing and
+	// telemetry; it prints only the answer, for ssh.
+	if len(os.Args) > 1 && os.Args[1] == workspace.AskpassSubcommand {
+		os.Exit(workspace.AskpassMain(os.Args[2:], os.Stdout))
+	}
 	versionFlag := flag.Bool("version", false, "print version and exit")
 	flag.BoolVar(versionFlag, "v", false, "print version and exit (shorthand)")
 	host := flag.String("host", defaultHost, "Ollama base URL (used by ollama / ollama-cloud; ignored for ergo and gemini)")
@@ -102,7 +106,7 @@ func main() {
 	model := flag.String("model", "", "override the default model")
 	timeout := flag.Duration("timeout", defaultTimeout(), "HTTP request timeout (e.g. 30s, 10m, 0 to disable)")
 	workspaceRoot := flag.String("workspace-root", mustCWD(), "workspace root")
-	providerName := flag.String("provider", "", "provider: ergo, ollama, ollama-cloud, gemini (default: ergo if signed in or in the TUI; headless falls back to ollama, then ollama-cloud)")
+	providerName := flag.String("provider", "", "provider: ergo, tjcoder, ollama, ollama-cloud, gemini (ergo-gateway is accepted; default: ergo if signed in or in the TUI; headless falls back to ollama, then ollama-cloud)")
 
 	// Headless (non-interactive) flags. Setting any of these — or providing a
 	// positional "ask" subcommand — routes execution through cmdAsk instead of
@@ -505,7 +509,23 @@ func cmdModelsList(providerName, host, geminiKey string, timeout time.Duration) 
 		fatal("list models: %v", err)
 	}
 	for _, m := range models {
-		fmt.Printf("%-36s  %s\n", m.Name, cmp.Or(m.ParameterSize, m.Family))
+		fmt.Println(m.Name)
+		if m.Tier != "" {
+			fmt.Printf("  tier: %s\n", m.Tier)
+		}
+		if m.Reasoning != "" {
+			fmt.Printf("  reasoning: %s\n", m.Reasoning)
+		}
+		if m.Tier != "" || m.IdealFor != "" {
+			fmt.Printf("  vision: %s\n", map[bool]string{true: "yes", false: "no"}[m.Vision])
+		}
+		if m.IdealFor != "" {
+			fmt.Printf("  ideal for: %s\n", m.IdealFor)
+		}
+		if m.Tier == "" && m.IdealFor == "" {
+			fmt.Printf("  %s\n", cmp.Or(m.ParameterSize, m.Family))
+		}
+		fmt.Println()
 	}
 }
 
