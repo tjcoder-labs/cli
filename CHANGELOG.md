@@ -4,6 +4,36 @@
 
 All notable changes to Coder CLI. The source of truth is [release-notes/releases.json](release-notes/releases.json).
 
+## 0.9.222 — 2026-10-31
+
+**Cloud release: workspaces, wallet and the tjcoder models.** Everything from feat/cloud since 0.9.192 reaches main: multiple local and SSH workspaces, the tjcoder model catalogue, wallet balance and top-ups, clearer error and tool-budget cards, and steadier question cards.
+
+### Added
+
+- The tjcoder model catalogue (ergo-flash, ergo-pro and ergo-genius) is available from the ergo provider.
+- See your wallet balance in the status bar and top up from the /balance pane, choosing an amount by number or with the arrow keys. (`/balance`)
+- A failed reply shows a red error card with a Retry option, and running out of tool steps shows a Continue card that grants the configured number of extra steps.
+- Work across several local or SSH folders in one session with /add, /dirs and /use, and run slash commands while the agent is still working. (`/add`, `/dirs`, `/use`)
+  Covered in detail in 0.9.201.
+- The shell installer supports 32-bit ARM (armv7l and armv6l) machines.
+- Errors from ergo chat requests, including 400 responses, are reported to Sentry, and coder models shows each model's tier, reasoning, vision and best use.
+
+### Changed
+
+- The status bar always shows agent · provider/model, and the working folder is shortened later so the project name stays visible.
+- The npm package's version now matches the coder release it downloads.
+
+### Fixed
+
+- Esc closes the wallet pane.
+- Messages you send while the agent is working appear in the transcript right away.
+- A saved legacy ergo-gateway provider no longer stops the TUI from starting; it is renamed to tjcoder.
+- Chat requests close their connection and drain the response stream when they finish.
+
+### Known limits
+
+- Publishing to npm needs the GitHub release v0.9.222 with its five prebuilt archives first: the npm package downloads its binary from there during install.
+
 ## 0.9.221 — 2026-10-31
 
 **Question cards answer reliably.** Picking an option on a question card no longer sometimes does nothing, and a card left under another one can be answered again.

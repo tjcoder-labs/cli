@@ -3,6 +3,70 @@
   "schema_version": 1,
   "releases": [
     {
+      "version": "0.9.222",
+      "date": "2026-10-31",
+      "title": "Cloud release: workspaces, wallet and the tjcoder models",
+      "summary": "Everything from feat/cloud since 0.9.192 reaches main: multiple local and SSH workspaces, the tjcoder model catalogue, wallet balance and top-ups, clearer error and tool-budget cards, and steadier question cards.",
+      "changes": {
+        "added": [
+          {
+            "text": "The tjcoder model catalogue (ergo-flash, ergo-pro and ergo-genius) is available from the ergo provider.",
+            "highlight": true
+          },
+          {
+            "text": "See your wallet balance in the status bar and top up from the /balance pane, choosing an amount by number or with the arrow keys.",
+            "commands": [
+              "/balance"
+            ],
+            "highlight": true
+          },
+          {
+            "text": "A failed reply shows a red error card with a Retry option, and running out of tool steps shows a Continue card that grants the configured number of extra steps."
+          },
+          {
+            "text": "Work across several local or SSH folders in one session with /add, /dirs and /use, and run slash commands while the agent is still working.",
+            "details": "Covered in detail in 0.9.201.",
+            "commands": [
+              "/add",
+              "/dirs",
+              "/use"
+            ]
+          },
+          {
+            "text": "The shell installer supports 32-bit ARM (armv7l and armv6l) machines."
+          },
+          {
+            "text": "Errors from ergo chat requests, including 400 responses, are reported to Sentry, and coder models shows each model's tier, reasoning, vision and best use."
+          }
+        ],
+        "changed": [
+          {
+            "text": "The status bar always shows agent · provider/model, and the working folder is shortened later so the project name stays visible."
+          },
+          {
+            "text": "The npm package's version now matches the coder release it downloads."
+          }
+        ],
+        "fixed": [
+          {
+            "text": "Esc closes the wallet pane."
+          },
+          {
+            "text": "Messages you send while the agent is working appear in the transcript right away."
+          },
+          {
+            "text": "A saved legacy ergo-gateway provider no longer stops the TUI from starting; it is renamed to tjcoder."
+          },
+          {
+            "text": "Chat requests close their connection and drain the response stream when they finish."
+          }
+        ]
+      },
+      "notes": [
+        "Publishing to npm needs the GitHub release v0.9.222 with its five prebuilt archives first: the npm package downloads its binary from there during install."
+      ]
+    },
+    {
       "version": "0.9.221",
       "date": "2026-10-31",
       "title": "Question cards answer reliably",
