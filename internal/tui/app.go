@@ -1753,7 +1753,8 @@ func (a *App) renderMetaBar() string {
 
 // fitMetaLine keeps the file names fully visible. A line longer than the
 // bar was scrolling to its tail, so a short name like AGENTS.md rendered
-// as ENTS.md. Truncate the cwd (the long, least important part) instead.
+// as ENTS.md. Shorten the cwd only when the line truly does not fit, and
+// keep the project name (the tail) rather than the prefix.
 func (a *App) fitMetaLine(line, cwd, refs string) string {
 	width := a.paletteWidth()
 	if width <= 0 || tview.TaggedStringWidth(line) <= width {
@@ -1763,15 +1764,40 @@ func (a *App) fitMetaLine(line, cwd, refs string) string {
 		return line
 	}
 	over := tview.TaggedStringWidth(line) - width
-	keep := utf8.RuneCountInString(cwd) - over - 1
-	if keep < 8 {
-		keep = 8
-	}
-	if keep >= utf8.RuneCountInString(cwd) {
+	// Leave a little slack so a borderline path is not cut.
+	over -= 4
+	if over < 1 {
 		return line
 	}
-	short := string([]rune(cwd)[:keep]) + "…"
+	short := shortenPath(cwd, utf8.RuneCountInString(cwd)-over)
+	if short == cwd {
+		return line
+	}
 	return strings.Replace(line, cwd, short, 1)
+}
+
+// shortenPath middle-ellipsizes a path, always keeping the last segment.
+func shortenPath(path string, keep int) string {
+	runes := []rune(path)
+	if keep >= len(runes) {
+		return path
+	}
+	if keep < 12 {
+		keep = 12
+	}
+	base := path
+	if i := strings.LastIndex(path, "/"); i >= 0 && i < len(path)-1 {
+		base = path[i+1:]
+	}
+	tail := "…/" + base
+	if utf8.RuneCountInString(tail) >= keep {
+		return tail
+	}
+	head := keep - utf8.RuneCountInString(tail)
+	if head > len(runes) {
+		head = len(runes)
+	}
+	return string(runes[:head]) + tail
 }
 
 // renderProgressBar builds a compact 12-segment bar with a highlighted
