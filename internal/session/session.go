@@ -18,6 +18,7 @@ import (
 	"strings"
 
 	"github.com/tjcoder-labs/cli/internal/client"
+	"github.com/tjcoder-labs/cli/internal/workspace"
 )
 
 // DirName is the directory created under each workspace root for
@@ -128,6 +129,11 @@ type State struct {
 	Articles       []Article       `json:"articles,omitempty"`
 	Memories       []Memory        `json:"memories,omitempty"`
 	BackgroundJobs []BackgroundJob `json:"background_jobs,omitempty"`
+
+	// Workspaces are the directories added with /add (local or ssh),
+	// primary excluded; ActiveWorkspace is the /use choice.
+	Workspaces      []workspace.Spec `json:"workspaces,omitempty"`
+	ActiveWorkspace string           `json:"active_workspace,omitempty"`
 }
 
 // Load reads the session file for the given workspace root. If the file

@@ -42,6 +42,7 @@ func (a *App) loadSession() {
 		return
 	}
 
+	a.restoreWorkspaces(state.Workspaces, state.ActiveWorkspace)
 	if cfg, ok := agent.FindWithWorkspace(state.CurrentAgent, a.workspaceRoot); ok {
 		a.currentAgent = cfg
 	}
@@ -176,6 +177,10 @@ func (a *App) saveSession() error {
 		Articles:       append([]session.Article(nil), a.sessionState.Articles...),
 		Memories:       append([]session.Memory(nil), a.sessionState.Memories...),
 		BackgroundJobs: append([]session.BackgroundJob(nil), a.sessionState.BackgroundJobs...),
+	}
+	if a.workspaces != nil {
+		newState.Workspaces = a.workspaces.Specs()
+		newState.ActiveWorkspace = a.workspaces.ActiveName()
 	}
 
 	// Safety check: prevent overwriting a valid session with empty data.

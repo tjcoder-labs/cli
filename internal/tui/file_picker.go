@@ -7,7 +7,23 @@ import (
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
+	"github.com/tjcoder-labs/cli/internal/workspace"
 )
+
+// localWorkspaceRoots maps the lower-cased names of added local
+// workspaces to their roots (for "@name:path" attachments).
+func (a *App) localWorkspaceRoots() map[string]string {
+	if a.workspaces == nil {
+		return nil
+	}
+	out := map[string]string{}
+	for _, w := range a.workspaces.Extra() {
+		if w.Kind == workspace.KindLocal {
+			out[strings.ToLower(w.Name)] = w.Root
+		}
+	}
+	return out
+}
 
 // workspaceFileIndex returns the cached picker index, rebuilding it when
 // older than fileIndexTTL.
@@ -21,6 +37,19 @@ func (a *App) workspaceFileIndex() []string {
 	a.fileIndex = listWorkspaceFiles(a.workspaceRoot)
 	if a.fileIndex == nil {
 		a.fileIndex = []string{}
+	}
+	// Added local workspaces join the picker as "name:rel/path" (the
+	// same form the tools accept). SSH workspaces are left out: a
+	// remote walk per keystroke-driven refresh would be too slow.
+	if a.workspaces != nil {
+		for _, w := range a.workspaces.Extra() {
+			if w.Kind != workspace.KindLocal {
+				continue
+			}
+			for _, f := range listWorkspaceFiles(w.Root) {
+				a.fileIndex = append(a.fileIndex, w.Name+":"+f)
+			}
+		}
 	}
 	a.fileIndexAt = time.Now()
 	return a.fileIndex

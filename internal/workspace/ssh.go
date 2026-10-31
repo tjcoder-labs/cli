@@ -139,6 +139,13 @@ func (s *SSHFS) Connect(ctx context.Context) error {
 	return nil
 }
 
+// MasterUp reports whether a ControlMaster for the host is already
+// running, without starting one or prompting (used by path completion,
+// which must never trigger an authentication card).
+func (s *SSHFS) MasterUp(ctx context.Context) bool {
+	return s.cmd(ctx, append(append([]string{"-O", "check"}, s.commonOpts()...), s.Host)...).Run() == nil
+}
+
 // Close stops the ControlMaster (best effort).
 func (s *SSHFS) Close() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -422,6 +429,9 @@ func (s *SSHFS) Command(ctx context.Context, dir, script string, env []string) (
 // ("" or "~" = remote $HOME; relative and ~/ paths are under $HOME).
 // The root must exist and be a directory.
 func NewSSH(ctx context.Context, alias, remotePath string, fs *SSHFS) (*Workspace, error) {
+	if err := ValidHostAlias(alias); err != nil {
+		return nil, err
+	}
 	if fs == nil {
 		fs = NewSSHFS(alias, nil)
 	}
@@ -448,6 +458,19 @@ func NewSSH(ctx context.Context, alias, remotePath string, fs *SSHFS) (*Workspac
 		return nil, fmt.Errorf("%s:%s is not a directory", alias, p)
 	}
 	return &Workspace{Name: alias, Kind: KindSSH, Root: real, Host: alias, FS: fs}, nil
+}
+
+// hostAliasRe is what /add ssh accepts as a host: an ssh_config alias or
+// [user@]host. No leading "-" (it would be parsed as an ssh option) and
+// no whitespace or shell metacharacters.
+var hostAliasRe = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.@%+\-]*$`)
+
+// ValidHostAlias rejects host strings that are not a plain alias.
+func ValidHostAlias(alias string) error {
+	if !hostAliasRe.MatchString(alias) {
+		return fmt.Errorf("invalid ssh host %q", alias)
+	}
+	return nil
 }
 
 // ParseSSHTarget splits "host[:path]".

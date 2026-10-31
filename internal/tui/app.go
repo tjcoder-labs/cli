@@ -30,6 +30,7 @@ import (
 	"github.com/tjcoder-labs/cli/internal/tools"
 	"github.com/tjcoder-labs/cli/internal/tracking"
 	"github.com/tjcoder-labs/cli/internal/update"
+	"github.com/tjcoder-labs/cli/internal/workspace"
 
 	"unicode"
 )
@@ -229,6 +230,9 @@ var slashCommands = []slashCommand{
 	{"balance", "Show ergo wallet balance"},
 	{"activity", "Open activity panel"},
 	{"canvas", "Open a file/range in the canvas panel"},
+	{"add", "Add a workspace: folder path or ssh <host>[:<path>]"},
+	{"dirs", "List workspaces (rm <name> removes); alias /workspaces"},
+	{"use", "Set the active workspace"},
 	{"about", "Open the about / welcome screen"},
 	{"mcp", "Manage MCP integrations"},
 	{"providers", "Manage model providers"},
@@ -344,6 +348,23 @@ type App struct {
 	hintMode     string
 	hintMatches  []slashCommand
 	hintSelected int
+
+	// Workspaces (workspaces.go): the set shared with the runner, the
+	// lazily started askpass bridge, per-host ssh backends, and the
+	// "wsargs" hint-line state for /add, /use and /dirs arguments.
+	// UI goroutine only (the Set itself is locked).
+	workspaces        *workspace.Set
+	askBridge         *workspace.Bridge
+	sshFS             map[string]*workspace.SSHFS
+	sshHosts          []workspace.SSHHost
+	sshHostsAt        time.Time
+	sshConfigOverride string // tests
+	remoteDirs        map[string]remoteDirEntry
+	remoteDirsBusy    map[string]bool
+	wsArgCmd          string
+	wsArgTitle        string
+	wsArgs            []wsArg
+	wsArgSel          int
 
 	// "@" file-mention picker state (attachments.go). refMatches holds
 	// the filtered workspace files for the trailing "@query" token;
@@ -525,6 +546,7 @@ func New(provider client.Provider, registry *tools.Registry, workspaceRoot, mode
 	app.runner.CLICommandSink = app
 	app.runner.Prompter = app
 	app.runner.Sudo = &tools.SudoPolicy{}
+	app.initWorkspaces(workspaceRoot)
 	trackReg := tracking.NewRegistry()
 	trackReg.Register(tracking.NewTaskTracker())
 	trackReg.Register(tracking.NewMemoryTracker())
@@ -591,6 +613,7 @@ func (a *App) loadMCPServers() {
 }
 
 func (a *App) Run() error {
+	defer a.closeWorkspaces()
 	defer a.saveSession()
 	defer a.stopSpinner()
 	a.running = true
@@ -810,6 +833,19 @@ func (a *App) build() {
 		// "@" file picker: Up/Down move, Tab/Enter select, Esc cancels.
 		if ev, handled := a.handleReferenceKey(event); handled {
 			return ev
+		}
+		// /add, /use, /dirs argument hints: Tab completes the
+		// highlighted suggestion, Shift+Tab moves the highlight.
+		if a.hintMode == "wsargs" && len(a.wsArgs) > 0 {
+			switch event.Key() {
+			case tcell.KeyTab:
+				a.completeWorkspaceArg()
+				return nil
+			case tcell.KeyBacktab:
+				a.wsArgSel = (a.wsArgSel + 1) % len(a.wsArgs)
+				a.refreshContextBar()
+				return nil
+			}
 		}
 		// Tab hops to a mounted question card, unless the slash
 		// palette is using Tab to cycle its matches.
@@ -1462,6 +1498,8 @@ func (a *App) refreshContextBar() string {
 	switch a.hintMode {
 	case "command":
 		line = a.renderCommandPalette()
+	case "wsargs":
+		line = a.renderWorkspaceArgPalette()
 	case "reference":
 		line = a.renderReferencePalette()
 	case "multiline":
@@ -1488,6 +1526,8 @@ func (a *App) updateInputHint(text string) {
 		a.hintMode = "multiline"
 		a.hintMatches = nil
 		a.hintSelected = 0
+	case strings.HasPrefix(text, "/") && a.wsArgHint(text):
+		// "/add …", "/use …", "/dirs rm …": argument palette.
 	case strings.HasPrefix(text, "/"):
 		q := strings.ToLower(strings.TrimPrefix(text, "/"))
 		// Match on the first token only so arguments don't disturb the
@@ -1669,6 +1709,9 @@ func (a *App) renderMetaBar() string {
 			line = fmt.Sprintf("[%s]%s[-] [%s]%s[-]   [%s]●[-] [%s]%s[-]   [%s]●[-] [%s]%s[-] ",
 				accent, a.progressGlyph(), a.palette.HexDim, cwd, accent, a.palette.HexDim, contextText, accent, a.palette.HexDim, refsText)
 		}
+	}
+	if ws := a.workspaceStatus(); ws != "" {
+		line += fmt.Sprintf("[%s]%s[-]   ", a.palette.HexFaint, tview.Escape(ws))
 	}
 	line += a.ergoBalanceSegment()
 	if a.contextBar != nil {
@@ -2043,6 +2086,12 @@ func (a *App) handleSlashCommand(cmd string) {
 		a.handleLogoutCommand()
 	case "balance":
 		a.handleBalanceCommand()
+	case "add", "add-dir":
+		a.handleAddCommand(commandArgs(cmd))
+	case "dirs", "workspaces":
+		a.handleDirsCommand(commandArgs(cmd))
+	case "use":
+		a.handleUseCommand(commandArgs(cmd))
 	default:
 		a.appendActivity(fmt.Sprintf("Unknown command: /%s. Try /login, /agent, /tools, /model, /config, /environment, /scroll, /clear, /quit, /task, /memory, /tasks", command))
 	}
@@ -3229,7 +3278,7 @@ func (a *App) submit() {
 	// "@path" mentions become attachments (persisted with the message so
 	// follow-ups still see the file). The <tui_context> block is built now,
 	// from the live layout, and is ephemeral: it rides on the request only.
-	atts := loadAttachments(a.workspaceRoot, mentionedPaths(prompt), attachMaxFileBytes, attachMaxTotalBytes)
+	atts := loadAttachmentsMulti(a.workspaceRoot, a.localWorkspaceRoots(), mentionedPaths(prompt), attachMaxFileBytes, attachMaxTotalBytes)
 	turnCtx := a.buildTurnContext(atts)
 	modelPrompt := prompt
 	if block := formatAttachmentsBlock(atts); block != "" {

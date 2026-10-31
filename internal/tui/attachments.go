@@ -482,6 +482,14 @@ func resolveAttachmentPath(root, mention string) (abs, rel string, ok bool) {
 // loadAttachments reads every mentioned file under root, applying the
 // per-file and total caps. Binary files carry metadata only.
 func loadAttachments(root string, mentions []string, perFile, total int) []fileAttachment {
+	return loadAttachmentsMulti(root, nil, mentions, perFile, total)
+}
+
+// loadAttachmentsMulti is loadAttachments across workspaces: a mention
+// "name:rel/path" whose name is an added local workspace (extra maps
+// lower-cased names to roots) resolves inside that root, confined the
+// same way, and keeps the "name:" prefix in the attachment path.
+func loadAttachmentsMulti(root string, extra map[string]string, mentions []string, perFile, total int) []fileAttachment {
 	var out []fileAttachment
 	remaining := total
 	seen := map[string]bool{}
@@ -489,7 +497,14 @@ func loadAttachments(root string, mentions []string, perFile, total int) []fileA
 		if len(out) >= attachMaxFiles {
 			break
 		}
-		abs, rel, ok := resolveAttachmentPath(root, m)
+		base, mention, prefix := root, m, ""
+		if name, rest, ok := strings.Cut(m, ":"); ok && rest != "" {
+			if r, found := extra[strings.ToLower(name)]; found {
+				base, mention, prefix = r, rest, name+":"
+			}
+		}
+		abs, rel, ok := resolveAttachmentPath(base, mention)
+		rel = prefix + rel
 		if !ok || seen[rel] {
 			continue
 		}
