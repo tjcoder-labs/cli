@@ -9,6 +9,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/tjcoder-labs/cli/internal/workspace"
 	"io"
 	"os"
 	"path/filepath"
@@ -95,6 +96,12 @@ var (
 )
 
 func main() {
+	// Hidden SSH_ASKPASS helper: relays an ssh prompt to the running TUI
+	// over its private socket. Must run before flag parsing and
+	// telemetry; it prints only the answer, for ssh.
+	if len(os.Args) > 1 && os.Args[1] == workspace.AskpassSubcommand {
+		os.Exit(workspace.AskpassMain(os.Args[2:], os.Stdout))
+	}
 	versionFlag := flag.Bool("version", false, "print version and exit")
 	flag.BoolVar(versionFlag, "v", false, "print version and exit (shorthand)")
 	host := flag.String("host", defaultHost, "Ollama base URL (used by ollama / ollama-cloud; ignored for ergo and gemini)")
