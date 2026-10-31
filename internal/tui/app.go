@@ -4156,13 +4156,14 @@ func (a *App) buildRightColumn() *tview.Flex {
 	// and content. Using flex proportions (1:2 or 2:3) instead of fixed heights
 	// allows content to adapt without leaving empty space.
 	cogProp := 1  // Cognition gets 1 part
-	bodyProp := 2 // Body gets 2 parts by default (2:3 ratio)
+	bodyProp := 2 // Activity gets 2 parts (1:2)
 
-	// When viewing a non-activity panel, give more space to the body since it's
-	// the primary focus (1:1.5 ratio instead of 1:2)
+	// A non-activity pane (tasks, reminders, memories, test, articles)
+	// is what the user asked to look at, so it takes the larger share
+	// and cognition contracts to a third of the column. Canvas takes
+	// the whole column (below).
 	if a.activePanel != "" && a.activePanel != "activity" {
-		bodyProp = 1
-		cogProp = 1
+		cogProp, bodyProp = rightColumnSidePaneRatio()
 	}
 
 	// Pick the body primitive that matches the active panel.

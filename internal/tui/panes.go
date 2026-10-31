@@ -236,3 +236,8 @@ func (a *App) refreshRemindersIfOpen() {
 		a.refreshRemindersList()
 	}
 }
+
+// rightColumnSidePaneRatio is the cognition : body split used while a
+// non-activity pane is showing. Activity stays at 1:2 with cognition
+// as the live stream; side panes previously split 1:1.
+func rightColumnSidePaneRatio() (cognition, body int) { return 1, 2 }

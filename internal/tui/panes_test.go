@@ -122,3 +122,29 @@ func TestPaneCommandsToggle(t *testing.T) {
 	typeLine(sim, "/reminders")
 	waitFor(t, a, "reminders replaces tasks", func() bool { return a.activePanel == "reminders" })
 }
+
+// Side panes take two thirds of the right column (cognition one
+// third); activity keeps its split and canvas the full height.
+func TestSidePaneGetsLargerShare(t *testing.T) {
+	a, sim := startSimApp(t)
+	sim.SetSize(160, 61)
+	heights := func() (cog, body int) {
+		a.tv.Draw()
+		onLoop(t, a, func() {
+			_, _, _, cog = a.reasoningPanel.GetRect()
+			_, _, _, body = a.right.GetItem(1).GetRect()
+		})
+		return
+	}
+	typeLine(sim, "/tasks")
+	waitFor(t, a, "tasks", func() bool { return a.activePanel == "tasks" })
+	cog, body := heights()
+	if cog <= 0 || body < 2*cog-2 || body > 2*cog+2 {
+		t.Fatalf("tasks pane: cognition %d, body %d; want ≈1:2", cog, body)
+	}
+	typeLine(sim, "/reminders")
+	waitFor(t, a, "reminders", func() bool { return a.activePanel == "reminders" })
+	if c2, b2 := heights(); c2 != cog || b2 != body {
+		t.Fatalf("reminders pane split %d:%d differs from tasks %d:%d", c2, b2, cog, body)
+	}
+}
