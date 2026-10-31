@@ -988,10 +988,26 @@ func cmdAsk(opts askOptions) {
 	// The last message in history is the final assistant reply (the runner
 	// only returns when msg.ToolCalls is empty).
 	final := lastAssistantMessage(newHistory)
-	if final == "" {
-		return
+	if err := emitFinalReply(stdoutWriter, stderrWriter, opts.Format, final, opts.Quiet); err != nil {
+		// Exit non-zero so scripts and CI can tell "no answer" from a
+		// real reply; fatal writes the reason to stderr even with --quiet.
+		fatal("ask: %v", err)
 	}
-	emitFormatted(stdoutWriter, stderrWriter, opts.Format, final, opts.Quiet)
+}
+
+// errEmptyReply is returned by emitFinalReply when the model's final
+// message has no visible text.
+var errEmptyReply = errors.New("the model returned an empty reply (nothing written to stdout); retry, or try another --model")
+
+// emitFinalReply prints the final assistant reply in the requested
+// format, or returns errEmptyReply (printing nothing) when the reply is
+// empty or whitespace only.
+func emitFinalReply(stdoutWriter, stderrWriter io.Writer, format, final string, quiet bool) error {
+	if strings.TrimSpace(final) == "" {
+		return errEmptyReply
+	}
+	emitFormatted(stdoutWriter, stderrWriter, format, final, quiet)
+	return nil
 }
 
 func resolveAvailableModel(preferred, fallback string, available []client.ModelInfo) string {

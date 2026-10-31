@@ -4,6 +4,15 @@
 
 All notable changes to Coder CLI. The source of truth is [release-notes/releases.json](release-notes/releases.json).
 
+## 0.9.223 — 2026-10-31
+
+**Empty replies fail headless runs.** A headless run (coder -p or coder ask) whose final reply is empty now exits with an error instead of succeeding silently.
+
+### Fixed
+
+- coder -p and coder ask exit with status 1 and explain on stderr when the model's final reply is empty, so scripts and CI no longer mistake no answer for success.
+  Before, an empty or whitespace-only reply printed nothing and exited 0. The message is shown even with --quiet.
+
 ## 0.9.222 — 2026-10-31
 
 **Cloud release: workspaces, wallet and the tjcoder models.** Everything from feat/cloud since 0.9.192 reaches main: multiple local and SSH workspaces, the tjcoder model catalogue, wallet balance and top-ups, clearer error and tool-budget cards, and steadier question cards.

@@ -3,6 +3,20 @@
   "schema_version": 1,
   "releases": [
     {
+      "version": "0.9.223",
+      "date": "2026-10-31",
+      "title": "Empty replies fail headless runs",
+      "summary": "A headless run (coder -p or coder ask) whose final reply is empty now exits with an error instead of succeeding silently.",
+      "changes": {
+        "fixed": [
+          {
+            "text": "coder -p and coder ask exit with status 1 and explain on stderr when the model's final reply is empty, so scripts and CI no longer mistake no answer for success.",
+            "details": "Before, an empty or whitespace-only reply printed nothing and exited 0. The message is shown even with --quiet."
+          }
+        ]
+      }
+    },
+    {
       "version": "0.9.222",
       "date": "2026-10-31",
       "title": "Cloud release: workspaces, wallet and the tjcoder models",

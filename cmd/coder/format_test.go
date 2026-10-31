@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 )
@@ -140,3 +142,29 @@ func TestFormatInstructionFor(t *testing.T) {
 }
 
 
+
+func TestEmitFinalReplyEmptyIsError(t *testing.T) {
+	for _, final := range []string{"", "   ", "\n\t\n"} {
+		var out, errOut bytes.Buffer
+		err := emitFinalReply(&out, &errOut, "text", final, false)
+		if !errors.Is(err, errEmptyReply) {
+			t.Fatalf("emitFinalReply(%q) err = %v, want errEmptyReply", final, err)
+		}
+		if out.Len() != 0 {
+			t.Fatalf("emitFinalReply(%q) wrote %q to stdout, want nothing", final, out.String())
+		}
+	}
+	if !strings.Contains(errEmptyReply.Error(), "empty reply") {
+		t.Fatalf("errEmptyReply message %q does not say the reply was empty", errEmptyReply)
+	}
+}
+
+func TestEmitFinalReplyPrintsReply(t *testing.T) {
+	var out, errOut bytes.Buffer
+	if err := emitFinalReply(&out, &errOut, "text", "OK\n", true); err != nil {
+		t.Fatalf("emitFinalReply: %v", err)
+	}
+	if got := out.String(); got != "OK\n" {
+		t.Fatalf("stdout = %q, want %q", got, "OK\n")
+	}
+}
