@@ -509,7 +509,23 @@ func cmdModelsList(providerName, host, geminiKey string, timeout time.Duration) 
 		fatal("list models: %v", err)
 	}
 	for _, m := range models {
-		fmt.Printf("%-36s  %s\n", m.Name, cmp.Or(m.ParameterSize, m.Family))
+		fmt.Println(m.Name)
+		if m.Tier != "" {
+			fmt.Printf("  tier: %s\n", m.Tier)
+		}
+		if m.Reasoning != "" {
+			fmt.Printf("  reasoning: %s\n", m.Reasoning)
+		}
+		if m.Tier != "" || m.IdealFor != "" {
+			fmt.Printf("  vision: %s\n", map[bool]string{true: "yes", false: "no"}[m.Vision])
+		}
+		if m.IdealFor != "" {
+			fmt.Printf("  ideal for: %s\n", m.IdealFor)
+		}
+		if m.Tier == "" && m.IdealFor == "" {
+			fmt.Printf("  %s\n", cmp.Or(m.ParameterSize, m.Family))
+		}
+		fmt.Println()
 	}
 }
 

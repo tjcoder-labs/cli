@@ -249,8 +249,12 @@ func (e *Ergo) ListAllModels(ctx context.Context) ([]ModelInfo, error) {
 		Providers []struct {
 			ID     string `json:"id"`
 			Models []struct {
-				ID   string `json:"id"`
-				Name string `json:"name"`
+				ID        string `json:"id"`
+				Name      string `json:"name"`
+				Tier      string `json:"tier"`
+				Reasoning string `json:"reasoning"`
+				Vision    bool   `json:"vision"`
+				IdealFor  string `json:"ideal_for"`
 			} `json:"models"`
 		} `json:"providers"`
 	}
@@ -267,7 +271,10 @@ func (e *Ergo) ListAllModels(ctx context.Context) ([]ModelInfo, error) {
 			if id == "" || !strings.HasPrefix(strings.ToLower(id), "tjcoder/") {
 				continue
 			}
-			models = append(models, ModelInfo{Name: id, Family: "tjcoder"})
+			models = append(models, ModelInfo{
+				Name: id, Family: "tjcoder",
+				Tier: m.Tier, Reasoning: m.Reasoning, Vision: m.Vision, IdealFor: m.IdealFor,
+			})
 		}
 	}
 	if len(models) == 0 {

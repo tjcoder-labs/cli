@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/tjcoder-labs/cli/internal/telemetry"
 )
 
 // ErgoDefaultBaseURL is the public ergo AI gateway. Override per-process
@@ -291,7 +293,11 @@ func (e *Ergo) Chat(ctx context.Context, request ChatRequest, onEvent func(Strea
 		if mnf := parseErgoModelNotFound(resp.StatusCode, errBody, request.Model); mnf != nil {
 			return Message{}, mnf
 		}
-		return Message{}, fmt.Errorf("ergo chat: %s: %s", resp.Status, strings.TrimSpace(string(errBody)))
+		err := fmt.Errorf("ergo chat: %s: %s", resp.Status, strings.TrimSpace(string(errBody)))
+		if tel := telemetry.Default(); tel != nil {
+			tel.Error("ergo_chat", err)
+		}
+		return Message{}, err
 	}
 
 	// ---- consume the SSE stream ----

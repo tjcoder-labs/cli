@@ -54,6 +54,10 @@ type ModelInfo struct {
 	Name          string
 	ParameterSize string
 	Family        string
+	Tier          string
+	Reasoning     string
+	Vision        bool
+	IdealFor      string
 }
 
 // ModelDetails captures the provenance / configuration of a model as

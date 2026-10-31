@@ -183,6 +183,9 @@ func Load() Registry {
 	if len(reg.Providers) == 0 {
 		return Defaults()
 	}
+	if migrateGatewaySlug(&reg) {
+		_ = saveUnlocked(reg)
+	}
 	return reg
 }
 
@@ -300,4 +303,42 @@ func Active() Config {
 		return reg.Providers[0]
 	}
 	return Config{Name: "ergo-gateway", BaseURL: "https://api.tjcoder.com", Auth: AuthDeviceCode}
+}
+
+// migrateGatewaySlug renames a saved ergo-gateway entry to tjcoder.
+// Existing installs persist the registry, so a Defaults() change does not
+// reach them until this runs.
+func migrateGatewaySlug(reg *Registry) bool {
+	changed := false
+	for i := range reg.Providers {
+		if reg.Providers[i].Name == "ergo-gateway" {
+			reg.Providers[i].Name = "tjcoder"
+			changed = true
+		}
+	}
+	if reg.Active == "ergo-gateway" {
+		reg.Active = "tjcoder"
+		changed = true
+	}
+	return changed
+}
+
+// saveUnlocked writes the registry. Caller must hold mu.
+func saveUnlocked(reg Registry) error {
+	p, err := path()
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(reg, "", "  ")
+	if err != nil {
+		return err
+	}
+	tmp := p + ".tmp"
+	if err := os.WriteFile(tmp, append(data, '\n'), 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, p)
 }
