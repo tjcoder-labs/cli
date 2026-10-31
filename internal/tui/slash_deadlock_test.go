@@ -30,10 +30,16 @@ func startSimApp(t *testing.T) (*App, tcell.SimulationScreen) {
 // by wrap (e.g. the production lfPasteScreen).
 func startSimAppOn(t *testing.T, wrap func(tcell.SimulationScreen) tcell.Screen) (*App, tcell.SimulationScreen) {
 	t.Helper()
+	return startSimAppWith(t, client.NewOllama("http://127.0.0.1:1"), wrap)
+}
+
+// startSimAppWith is startSimAppOn with a caller-supplied provider.
+func startSimAppWith(t *testing.T, p client.Provider, wrap func(tcell.SimulationScreen) tcell.Screen) (*App, tcell.SimulationScreen) {
+	t.Helper()
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("CODER_TELEMETRY", "")
-	a := New(client.NewOllama("http://127.0.0.1:1"), tools.NewRegistry(nil), t.TempDir(), "m", "coder", "TJ", "0.0.0")
+	a := New(p, tools.NewRegistry(nil), t.TempDir(), "m", "coder", "TJ", "0.0.0")
 	sim := tcell.NewSimulationScreen("UTF-8")
 	if err := sim.Init(); err != nil {
 		t.Fatal(err)

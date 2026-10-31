@@ -282,6 +282,7 @@ type App struct {
 	burstTailUntil            time.Time   // swallow burstTail keys until then; UI goroutine only
 	history                   []client.Message
 	busy                      bool
+	idleQueue                 []func() // slash work deferred until the turn settles (whenIdle)
 	ctxUsage                  client.ContextUsage
 	refSet                    map[string]struct{}
 	refOrder                  []string
@@ -1833,7 +1834,7 @@ func (a *App) globalKeys(event *tcell.EventKey) *tcell.EventKey {
 		return nil
 	}
 	if event.Key() == tcell.KeyCtrlL {
-		a.clearSession()
+		a.dispatchSlash("/clear") // same mid-turn policy as /clear
 		return nil
 	}
 	// Ctrl-U edits text (readline "kill to start of line") when a text
@@ -2303,7 +2304,10 @@ func (a *App) openConfigModal() {
 			}
 		}
 		a.config = work
-		a.runner.MaxSteps = work.ToolMax
+		// The runner reads MaxSteps on every step of a running
+		// turn; apply the new cap once the turn settles.
+		maxSteps := work.ToolMax
+		a.whenIdle(func() { a.runner.MaxSteps = maxSteps })
 		a.appendActivity(fmt.Sprintf("Saved config to %s (toolMax=%d, compactModel=%s)", a.configPath(), work.ToolMax, work.CompactModel))
 		a.closeModal()
 	}
@@ -3035,6 +3039,8 @@ func (a *App) compactHistory(parts []string) {
 		newHistory, err := a.runner.Run(ctx, history, prompt, agentCfg, model, nil, nil)
 
 		a.postUI(func() {
+			// Work deferred while compacting runs once this settles.
+			defer a.runIdleQueue()
 			a.mu.Lock()
 			a.busy = false
 			a.mu.Unlock()
@@ -3172,6 +3178,15 @@ func (a *App) submit() {
 		}
 		// Record in global input history (non-blocking best-effort).
 		a.recordInputHistory(prompt)
+		// A slash command is never steering text: run it now, queue it
+		// for the end of the turn, or refuse it (see slashModeFor).
+		if isSlashCommandLine(prompt) {
+			a.mu.Unlock()
+			a.input.SetText("")
+			a.setInputPlaceholder()
+			a.dispatchSlash(prompt)
+			return
+		}
 		select {
 		case a.steeringCh <- prompt:
 			a.appendActivity(fmt.Sprintf("[%s::b]steering[-::B]: queued %q for the in-flight turn", a.palette.HexPurple, truncateForActivity(prompt)))
@@ -3197,11 +3212,11 @@ func (a *App) submit() {
 	// message even if it begins with "/" (a pasted snippet shouldn't be
 	// misinterpreted as a command), and an exact single-line "/cmd" is
 	// routed to the command dispatcher.
-	if strings.HasPrefix(prompt, "/") && !strings.Contains(prompt, "\n") {
+	if isSlashCommandLine(prompt) {
 		a.mu.Unlock()
 		a.input.SetText("")
 		a.setInputPlaceholder()
-		a.handleSlashCommand(prompt)
+		a.dispatchSlash(prompt)
 		return
 	}
 
@@ -3344,6 +3359,8 @@ func (a *App) launchTurnWithContext(prompt, agentNameOverride, turnContext strin
 
 			// Auto-refresh tasks pane if visible and tasks were modified by the agent
 			a.reloadTasksIfChanged()
+			// Slash commands deferred mid-turn run now.
+			a.runIdleQueue()
 		})
 	}()
 }
