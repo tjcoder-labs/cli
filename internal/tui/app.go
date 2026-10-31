@@ -278,6 +278,8 @@ type App struct {
 	models                    []client.ModelInfo
 	enabledTools              map[string]bool
 	livePrompt                *livePrompt // mounted prompt card, UI goroutine only
+	burstTail                 keyBurst    // tail of a keystroke paste that finished a card
+	burstTailUntil            time.Time   // swallow burstTail keys until then; UI goroutine only
 	history                   []client.Message
 	busy                      bool
 	ctxUsage                  client.ContextUsage
@@ -614,6 +616,9 @@ func (a *App) Run() error {
 	// stream of keystrokes. Without this, each newline in a pasted block
 	// arrives as KeyEnter and triggers submit(), splitting the paste at
 	// the first line break and dropping the remainder.
+	if err := a.installScreen(); err != nil {
+		return err
+	}
 	a.tv.EnablePaste(true)
 	bgCtx, stopBackground := context.WithCancel(context.Background())
 	defer stopBackground()
@@ -1790,6 +1795,9 @@ func (a *App) globalKeys(event *tcell.EventKey) *tcell.EventKey {
 	}
 	if event.Key() == tcell.KeyCtrlC {
 		a.tv.Stop()
+		return nil
+	}
+	if a.swallowBurstTail(event) {
 		return nil
 	}
 	// Alt-letter shortcuts for panel display (informational only, focus stays on input).

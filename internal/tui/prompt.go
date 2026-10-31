@@ -37,6 +37,7 @@ type promptState struct {
 	secret   bool   // masked single-line input (passwords)
 	label    string
 	buf      []byte // secret bytes; zeroed by the consumer / on cancel
+	notice   string // short muted note under the input (e.g. paste ignored)
 }
 
 func newChoicePrompt(req tools.PromptRequest) *promptState {
@@ -117,6 +118,9 @@ func (s *promptState) paste(text string) bool {
 			}
 		}
 		s.appendSecret(clean)
+		if len(clean) > 0 {
+			s.notice = ""
+		}
 		for i := range clean {
 			clean[i] = 0
 		}
@@ -127,6 +131,7 @@ func (s *promptState) paste(text string) bool {
 	}
 	text = strings.TrimRight(text, "\r\n")
 	text = strings.NewReplacer("\r\n", " ", "\n", " ", "\r", " ").Replace(text)
+	s.notice = ""
 	if text == "" {
 		return false
 	}
@@ -336,7 +341,7 @@ func (s *promptState) content(th theme.Theme) []render.Line {
 		out = append(out,
 			render.Line{{Text: s.label, Fg: th.Text}},
 			render.Line{{Text: "› ", Fg: th.Bright, Attr: "b"}, {Text: secretMask(utf8.RuneCount(s.buf)), Fg: th.Text}, cursor},
-			nil,
+			s.noticeLine(th),
 			render.Line{{Text: "Enter to submit · Esc to cancel · input is hidden and never sent to the model", Fg: th.Faint}})
 		return out
 	}
@@ -373,8 +378,16 @@ func (s *promptState) content(th theme.Theme) []render.Line {
 			out = append(out, render.Line{{Text: lead, Fg: th.Bright, Attr: "b"}, {Text: string(s.other), Fg: th.Text}, cursor})
 		}
 	}
-	out = append(out, nil, render.Line{{Text: s.hint(), Fg: th.Faint}})
+	out = append(out, s.noticeLine(th), render.Line{{Text: s.hint(), Fg: th.Faint}})
 	return out
+}
+
+// noticeLine is the (usually empty) muted row above the key hints.
+func (s *promptState) noticeLine(th theme.Theme) render.Line {
+	if s.notice == "" {
+		return nil
+	}
+	return render.Line{{Text: s.notice, Fg: th.Dim}}
 }
 
 func (s *promptState) hint() string {
@@ -459,6 +472,77 @@ func (g *promptGuard) settling() bool {
 // promptNow is the guard's clock. Tests replace it.
 var promptNow = time.Now
 
+// burstGap is the longest pause between two key events that still
+// counts as one burst. A terminal without bracketed paste delivers a
+// paste as keystrokes parsed from the same read, microseconds apart;
+// even very fast typing is tens of milliseconds per key. Zero disables
+// burst detection (the package tests do, since simulated typing is
+// instantaneous; the burst tests turn it back on).
+var burstGap = 8 * time.Millisecond
+
+// burstSwallow is how long, at most, the rest of a burst is swallowed
+// after it finished a card, so it never spills into the chat input.
+const burstSwallow = 150 * time.Millisecond
+
+// pasteIgnoredNotice is shown when a keystroke paste hit the guard.
+const pasteIgnoredNotice = "paste ignored · try again"
+
+// keyBurst groups key events that arrive back to back (a paste typed
+// out by a terminal without bracketed paste) by their tcell timestamps.
+type keyBurst struct {
+	last     time.Time
+	n        int  // keys in the current burst
+	dropping bool // the burst started inside the guard: drop all of it
+}
+
+// step records a key at t and reports whether it continues the burst
+// of the previous key.
+func (b *keyBurst) step(t time.Time) bool {
+	d := t.Sub(b.last)
+	cont := burstGap > 0 && !b.last.IsZero() && d >= 0 && d < burstGap
+	b.last = t
+	if !cont {
+		b.n, b.dropping = 0, false
+	}
+	b.n++
+	return cont
+}
+
+// burstFilter applies the keystroke-paste rules before a key reaches
+// the state machine and returns the key to apply, or nil to drop it:
+//   - a burst whose first key lands inside the focus guard is dropped
+//     whole, even the part after the guard expires, with a short notice,
+//     so a paste is never half-captured;
+//   - Enter (or LF) inside a burst is a pasted newline, never a submit:
+//     dropped for secrets and choice rows, a space in free text.
+//
+// Esc always passes.
+func (v *promptView) burstFilter(ev *tcell.EventKey) *tcell.EventKey {
+	inBurst := v.burst.step(ev.When())
+	if ev.Key() == tcell.KeyEscape {
+		return ev
+	}
+	if v.guard.settling() {
+		v.burst.dropping = true
+	}
+	if v.burst.dropping {
+		if v.burst.n == 2 && v.st != nil {
+			v.st.notice = pasteIgnoredNotice
+			if v.redraw != nil {
+				v.redraw()
+			}
+		}
+		return nil
+	}
+	if inBurst && (ev.Key() == tcell.KeyEnter || ev.Key() == tcell.KeyCtrlJ) {
+		if v.st != nil && !v.st.secret && v.st.editing {
+			return tcell.NewEventKey(tcell.KeyRune, ' ', tcell.ModNone)
+		}
+		return nil
+	}
+	return ev
+}
+
 // promptView is a TextView that carries a paste handler. tview.TextView
 // defines no PasteHandler (it always returns nil), so a bracketed paste
 // would otherwise be dropped before it reaches the prompt's input
@@ -469,6 +553,7 @@ type promptView struct {
 	*tview.TextView
 	st       *promptState
 	guard    *promptGuard
+	burst    keyBurst
 	finished func() bool // card already answered / unmounted
 	redraw   func()
 }
@@ -541,12 +626,18 @@ func (a *App) runPrompt(ctx context.Context, st *promptState) (tools.PromptAnswe
 		if finished {
 			return nil
 		}
-		if ev.Key() != tcell.KeyEscape && view.guard.settling() {
+		if ev = view.burstFilter(ev); ev == nil {
 			return nil
+		}
+		if ev.Key() == tcell.KeyRune || ev.Key() == tcell.KeyCtrlU {
+			st.notice = ""
 		}
 		done, ans := st.handleKey(ev)
 		if done {
 			finished = true
+			// Keys still arriving in this burst belong to the card,
+			// not the chat input that is about to take focus.
+			a.swallowBurstAfter(view.burst.last)
 			unmount()
 			result <- ans
 			return nil
@@ -597,6 +688,28 @@ func (a *App) runPrompt(ctx context.Context, st *promptState) (tools.PromptAnswe
 		}
 		return cancelled, how, err
 	}
+}
+
+// swallowBurstAfter drops keys that continue a burst ending at t (gaps
+// under burstGap, at most burstSwallow in total), so the tail of a
+// keystroke paste that finished a card never reaches the chat input.
+// UI goroutine only.
+func (a *App) swallowBurstAfter(t time.Time) {
+	a.burstTail = keyBurst{last: t}
+	a.burstTailUntil = t.Add(burstSwallow)
+}
+
+// swallowBurstTail reports (and records) a key that continues the burst
+// that just finished a card. Called from globalKeys. UI goroutine only.
+func (a *App) swallowBurstTail(ev *tcell.EventKey) bool {
+	if a.burstTailUntil.IsZero() {
+		return false
+	}
+	if !ev.When().Before(a.burstTailUntil) || !a.burstTail.step(ev.When()) {
+		a.burstTailUntil = time.Time{}
+		return false
+	}
+	return true
 }
 
 // promptArmDelay is how long a freshly focused card ignores keys and

@@ -202,7 +202,8 @@ func TestPromptPaste_SimBracketedPasteIntoSecretCard(t *testing.T) {
 // does before it enters the UI loop (startSimApp calls runUI directly).
 func startPasteSimApp(t *testing.T) (*App, tcell.SimulationScreen) {
 	t.Helper()
-	a, sim := startSimApp(t)
+	// Same screen wrapper and paste mode as App.Run.
+	a, sim := startSimAppOn(t, func(s tcell.SimulationScreen) tcell.Screen { return &lfPasteScreen{Screen: s} })
 	a.tv.EnablePaste(true)
 	return a, sim
 }

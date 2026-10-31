@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -110,13 +111,12 @@ func TestPromptPasteTerminal_LineEndings(t *testing.T) {
 	}
 }
 
-// Free-text answers: CR (what macOS terminals send) and CRLF become a
-// space; a bare LF is dropped by tview's paste assembly (tcell reports
-// it as Ctrl-J, which tview does not collect), joining the lines.
+// Free-text answers: CR (what macOS terminals send), CRLF and a bare LF
+// all become a space; trailing newlines are dropped.
 func TestPromptPasteTerminal_FreeTextLineEndings(t *testing.T) {
 	noArmDelay(t)
 	for raw, want := range map[string]string{
-		"one\rtwo\r": "one two", "one\r\ntwo\r\n": "one two", "one\ntwo\n": "onetwo",
+		"one\rtwo\r": "one two", "one\r\ntwo\r\n": "one two", "one\ntwo\n": "one two",
 	} {
 		a, sim := startPasteSimApp(t)
 		res := mountCard(t, a, t.Context(), freeTextPrompt().req)
@@ -142,25 +142,130 @@ func TestPromptPasteTerminal_ControlBytesDropped(t *testing.T) {
 	}
 }
 
-// Without bracketed paste (terminal or tmux not forwarding it) the paste
-// arrives as ordinary keystrokes. A single-line token still lands in the
-// hidden buffer, and a trailing CR acts as Enter and submits it. A CR in
-// the middle would submit early; that is inherent to keystroke input.
+// withBurstDetection turns keystroke-burst detection back on (the
+// package tests disable it because simulated typing is instantaneous).
+func withBurstDetection(t *testing.T) {
+	old := burstGap
+	burstGap = 8 * time.Millisecond
+	t.Cleanup(func() { burstGap = old })
+}
+
+func init() { burstGap = 0 }
+
+// Without bracketed paste (terminal or tmux not forwarding it) a paste
+// arrives as keystrokes from one tty read, microseconds apart. A CR in
+// the middle or at the end of that burst is a pasted newline, not a
+// submit: the whole token lands in the hidden buffer, nothing leaks
+// into the chat input, and the user's own Enter submits.
 func TestPromptPasteTerminal_RawKeystrokesWithoutBracketedPaste(t *testing.T) {
 	noArmDelay(t)
+	withBurstDetection(t)
+	for name, raw := range map[string]string{"trailing CR": "%s\r", "mid CR": "%s\r%s\r", "CRLF": "%s\r\n%s"} {
+		t.Run(name, func(t *testing.T) {
+			a, sim := startPasteSimApp(t)
+			out := askSecretAsync(a)
+			waitFor(t, a, "card focused", func() bool { return cardFocused(a) })
+			half := tokenOf(64)
+			var want string
+			var bytes string
+			if strings.Count(raw, "%s") == 2 {
+				bytes, want = fmt.Sprintf(raw, half[:32], half[32:]), half
+			} else {
+				bytes, want = fmt.Sprintf(raw, half), half
+			}
+			feedTerminal(t, sim, []byte(bytes))
+			waitSecretLen(t, a, len(want))
+			select {
+			case <-out:
+				t.Fatal("a CR inside the keystroke paste submitted the secret")
+			default:
+			}
+			var chat string
+			onLoop(t, a, func() { chat = a.input.GetText() })
+			if chat != "" {
+				t.Fatalf("paste leaked into the chat input: %q", chat)
+			}
+			if got := submitSecret(t, sim, out); string(got) != want {
+				t.Fatalf("got %q, want %q", got, want)
+			}
+		})
+	}
+}
+
+// Keystroke paste into a free-text answer: pasted CRs become spaces
+// instead of sending a partial answer.
+func TestPromptPasteTerminal_RawKeystrokesFreeText(t *testing.T) {
+	noArmDelay(t)
+	withBurstDetection(t)
+	a, sim := startPasteSimApp(t)
+	res := mountCard(t, a, t.Context(), freeTextPrompt().req)
+	waitFor(t, a, "card focused", func() bool { return cardFocused(a) })
+	feedTerminal(t, sim, []byte("one\rtwo\r"))
+	injectKey(sim, tcell.KeyEnter, 0)
+	if r := <-res; r.ans.Other != "one two" {
+		t.Fatalf("answer %q", r.ans.Other)
+	}
+}
+
+// A keystroke paste that starts inside the focus guard is dropped whole
+// (all or nothing), even the part arriving after the guard expires, and
+// the card says so; a later paste is accepted.
+func TestPromptPasteTerminal_RawBurstInsideGuardDroppedWhole(t *testing.T) {
+	withBurstDetection(t)
+	old := promptArmDelay
+	promptArmDelay = 40 * time.Millisecond
+	t.Cleanup(func() { promptArmDelay = old })
 	a, sim := startPasteSimApp(t)
 	out := askSecretAsync(a)
 	waitFor(t, a, "card focused", func() bool { return cardFocused(a) })
-	tok := tokenOf(64)
-	feedTerminal(t, sim, []byte(tok+"\r"))
-	select {
-	case b := <-out:
-		if string(b) != tok {
-			t.Fatalf("got %q, want %q", b, tok)
-		}
-	case <-time.After(slashDeadlockTimeout):
-		t.Fatal("trailing CR did not submit the secret")
+	// ~120 keys 1 ms apart: the burst outlasts the 40 ms guard.
+	for _, r := range tokenOf(120) {
+		simPost(sim, tcell.NewEventKey(tcell.KeyRune, r, tcell.ModNone))
+		time.Sleep(time.Millisecond)
 	}
+	time.Sleep(50 * time.Millisecond)
+	var n int
+	var shown string
+	onLoop(t, a, func() { n, shown = len(a.livePrompt.view.st.buf), a.livePrompt.view.GetText(true) })
+	if n != 0 {
+		t.Fatalf("guard let %d bytes of the burst through (partial capture)", n)
+	}
+	if !strings.Contains(shown, pasteIgnoredNotice) {
+		t.Fatalf("no notice shown:\n%s", shown)
+	}
+	feedTerminal(t, sim, []byte("good-token"))
+	waitSecretLen(t, a, len("good-token"))
+	onLoop(t, a, func() { shown = a.livePrompt.view.GetText(true) })
+	if strings.Contains(shown, pasteIgnoredNotice) {
+		t.Fatal("notice not cleared by the accepted paste")
+	}
+	if got := submitSecret(t, sim, out); string(got) != "good-token" {
+		t.Fatalf("got %q", got)
+	}
+}
+
+// When a keystroke burst finishes a card (a digit picks an option), the
+// rest of the burst is swallowed instead of landing in the chat input;
+// typing afterwards reaches the input normally.
+func TestPromptPasteTerminal_BurstTailAfterFinishSwallowed(t *testing.T) {
+	noArmDelay(t)
+	withBurstDetection(t)
+	a, sim := startPasteSimApp(t)
+	res := mountCard(t, a, t.Context(), authReq())
+	waitFor(t, a, "card focused", func() bool { return cardFocused(a) })
+	feedTerminal(t, sim, []byte("1secret-tail\r"))
+	if r := <-res; r.ans.Index != 0 {
+		t.Fatalf("answer %+v", r.ans)
+	}
+	var chat string
+	onLoop(t, a, func() { chat = a.input.GetText() })
+	if chat != "" {
+		t.Fatalf("burst tail leaked into the chat input: %q", chat)
+	}
+	waitFor(t, a, "input focused", func() bool { return a.tv.GetFocus() == a.input })
+	injectKey(sim, tcell.KeyRune, 'h')
+	injectKey(sim, tcell.KeyRune, 'i')
+	waitFor(t, a, "typing reaches chat input", func() bool { return a.input.GetText() == "hi" })
 }
 
 // A bracketed paste arriving inside the 0.3 s focus guard is dropped
@@ -213,5 +318,35 @@ func TestSecretMask(t *testing.T) {
 	}
 	if got := secretMask(200); got != strings.Repeat("•", secretMaskMax)+"… 200 chars" {
 		t.Fatalf("%q", got)
+	}
+}
+
+// The screen wrapper turns a bare LF inside a bracketed paste into a
+// newline (tview would drop it), keeps CRLF a single newline, and leaves
+// Ctrl-J outside a paste alone.
+func TestLFPasteScreen(t *testing.T) {
+	sim := tcell.NewSimulationScreen("UTF-8")
+	if err := sim.Init(); err != nil {
+		t.Fatal(err)
+	}
+	defer sim.Fini()
+	w := &lfPasteScreen{Screen: sim}
+	ch := make(chan tcell.Event, 64)
+	ip := tcell.NewInputProcessor(ch)
+	ip.ScanUTF8([]byte("\n" + "\x1b[200~a\nb\r\nc\x1b[201~" + "\n"))
+	var got []string
+	for len(got) < 9 {
+		ev := <-ch
+		simPost(sim, ev)
+		switch e := w.PollEvent().(type) {
+		case *tcell.EventKey:
+			got = append(got, e.Name())
+		case *tcell.EventPaste:
+			got = append(got, map[bool]string{true: "start", false: "end"}[e.Start()])
+		}
+	}
+	want := "Ctrl+J start Rune[a] Enter Rune[b] Enter Ctrl+J Rune[c] end"
+	if strings.Join(got, " ") != want {
+		t.Fatalf("got  %s\nwant %s", strings.Join(got, " "), want)
 	}
 }
