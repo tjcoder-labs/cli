@@ -17,6 +17,7 @@ import (
 	"github.com/rivo/tview"
 	"github.com/tjcoder-labs/cli/internal/agent"
 	"github.com/tjcoder-labs/cli/internal/appdir"
+	"github.com/tjcoder-labs/cli/internal/auth"
 	"github.com/tjcoder-labs/cli/internal/client"
 	ctxpkg "github.com/tjcoder-labs/cli/internal/context"
 	"github.com/tjcoder-labs/cli/internal/mcp"
@@ -230,7 +231,7 @@ var slashCommands = []slashCommand{
 	{"environment", "Edit the injected environment template"},
 	{"login", "Sign in to the TJ Coder gateway"},
 	{"logout", "Sign out of the TJ Coder gateway"},
-	{"balance", "Show the TJ Coder wallet balance"},
+	{"balance", "Wallet balance and top-up"},
 	{"activity", "Open the activity panel"},
 	{"canvas", "Open a file or range in the canvas"},
 	{"add", "Add a workspace: path or ssh <host>[:<path>]"},
@@ -1488,13 +1489,41 @@ func (a *App) refreshStatusIndicator() {
 		stateTag = fmt.Sprintf("[%s]%s[-]", stateColor, state)
 	}
 	a.statusBar.SetTextAlign(tview.AlignLeft)
+	// Identity + wallet take the place of the old online/thinking word.
+	// Thinking still shows as a bold suffix when a turn is in flight.
+	account := a.accountStatus()
+	if account == "" {
+		account = stateTag
+	} else if state == "thinking" || state == "replying" {
+		account = account + " · " + stateTag
+	}
 	status := fmt.Sprintf(
 		"[%s::b]%s[-:-:-] [%s]·[-] [%s::b]%s[-:-:-] · %s   [%s][Ctl+A][-] switch agent",
 		a.palette.HexLavender, agentName,
 		a.palette.HexDim, a.palette.HexLavender, modelName,
-		stateTag, a.palette.HexLavender,
+		account, a.palette.HexLavender,
 	)
 	a.statusBar.SetText(status)
+}
+
+// accountStatus is "email · $balance" for a signed-in ergo user, or "".
+func (a *App) accountStatus() string {
+	id, ok := auth.LoadErgoIdentity()
+	email := ""
+	if ok {
+		email = strings.TrimSpace(id.Email)
+	}
+	if email == "" && !a.ergoBalanceKnown {
+		return ""
+	}
+	var parts []string
+	if email != "" {
+		parts = append(parts, fmt.Sprintf("[%s]%s[-]", a.palette.HexLavender, tview.Escape(email)))
+	}
+	if a.ergoBalanceKnown {
+		parts = append(parts, fmt.Sprintf("[%s]%s[-]", a.palette.HexDim, formatCents(a.ergoBalanceCents)))
+	}
+	return strings.Join(parts, fmt.Sprintf(" [%s]·[-] ", a.palette.HexDim))
 }
 
 // refreshHeaderRight updates the right-aligned [Alt+I] / [Ctl+F] /
@@ -1740,7 +1769,6 @@ func (a *App) renderMetaBar() string {
 	if ws := a.workspaceStatus(); ws != "" {
 		line += fmt.Sprintf("[%s]%s[-]   ", a.palette.HexFaint, tview.Escape(ws))
 	}
-	line += a.ergoBalanceSegment()
 	line = a.fitMetaLine(line, cwd, refsText)
 	if a.contextBar != nil {
 		a.contextBar.SetText(line)
@@ -2227,7 +2255,7 @@ func (a *App) showHelp() {
 		"\n" +
 		"Gateway\n" +
 		"  /login                sign in               /logout     sign out\n" +
-		"  /balance              wallet balance        /providers  manage providers\n" +
+		"  /balance              wallet and top-up     /providers  manage providers\n" +
 		"\n" +
 		"Session\n" +
 		"  /config               edit config           /environment  edit the env template\n" +

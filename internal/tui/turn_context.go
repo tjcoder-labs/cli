@@ -79,6 +79,7 @@ func WordBudget(cols, lines int) int {
 type turnContextInfo struct {
 	User            string
 	Email           string
+	Wallet          string
 	Model           string
 	Agent           string
 	OS              string
@@ -111,6 +112,7 @@ func formatTurnContext(info turnContextInfo) string {
 	line("note", "ephemeral client metadata for this turn only; not written by the user; do not quote it unless asked")
 	line("user", info.User)
 	line("email", info.Email)
+	line("wallet", info.Wallet)
 	line("model", info.Model)
 	line("agent", info.Agent)
 	line("os", info.OS)
@@ -284,6 +286,12 @@ func (a *App) buildTurnContext(atts []fileAttachment) string {
 	}
 	info.Model = a.currentModel
 	info.Agent = a.currentAgent.Name
+	if a.ergoBalanceKnown {
+		info.Wallet = formatCents(a.ergoBalanceCents) + " remaining (last known)"
+		if a.ergoBalanceCents <= 0 {
+			info.Wallet = formatCents(a.ergoBalanceCents) + " — top up with /balance before a long task"
+		}
+	}
 	info.OS = clientOS()
 	now := time.Now()
 	info.Timezone = now.Location().String()
