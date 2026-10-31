@@ -4,6 +4,15 @@
 
 All notable changes to Coder CLI. The source of truth is [release-notes/releases.json](release-notes/releases.json).
 
+## 0.9.224 — 2026-10-31
+
+**npm package names the right default provider.** The npm package description and README now say coder uses the TJCoder ergo gateway by default, with local Ollama as an option.
+
+### Fixed
+
+- The @tjcoder/cli description and npm README name the TJCoder ergo gateway as the default provider instead of local Ollama.
+  Sign in with /login; local Ollama, Ollama Cloud and Gemini are listed as options. The root README already described the ergo gateway as the default and is unchanged.
+
 ## 0.9.223 — 2026-10-31
 
 **Empty replies fail headless runs.** A headless run (coder -p or coder ask) whose final reply is empty now exits with an error instead of succeeding silently.

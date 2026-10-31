@@ -3,6 +3,20 @@
   "schema_version": 1,
   "releases": [
     {
+      "version": "0.9.224",
+      "date": "2026-10-31",
+      "title": "npm package names the right default provider",
+      "summary": "The npm package description and README now say coder uses the TJCoder ergo gateway by default, with local Ollama as an option.",
+      "changes": {
+        "fixed": [
+          {
+            "text": "The @tjcoder/cli description and npm README name the TJCoder ergo gateway as the default provider instead of local Ollama.",
+            "details": "Sign in with /login; local Ollama, Ollama Cloud and Gemini are listed as options. The root README already described the ergo gateway as the default and is unchanged."
+          }
+        ]
+      }
+    },
+    {
       "version": "0.9.223",
       "date": "2026-10-31",
       "title": "Empty replies fail headless runs",

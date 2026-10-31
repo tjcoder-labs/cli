@@ -4,9 +4,11 @@
 
 `coder` is a Go TUI that pairs a conversational AI agent with real
 developer tools, streams the model's reasoning live in a "cognition"
-pane, and ships 7 specialized agents plus 31 tools. It defaults to local
-Ollama models (your code never leaves your machine) and optionally uses
-Google Gemini. This package is the npm distribution: it downloads the
+pane, and ships 7 specialized agents plus 31 tools. It defaults to the
+TJCoder ergo gateway (sign in with `/login`; models `ergo-flash`,
+`ergo-pro` and `ergo-genius`), and can instead use local Ollama models
+(`--provider ollama`, so your code never leaves your machine), Ollama
+Cloud or Google Gemini. This package is the npm distribution: it downloads the
 right prebuilt binary for your platform on `npm install`, so you don't
 need a Go toolchain.
 
@@ -26,13 +28,15 @@ coder --version
 
 `coder` itself is a self-contained Go binary — the only requirement is
 `node >= 18` (to run the postinstall downloader). To actually use the
-TUI you'll also need:
+TUI you'll also need one LLM provider:
 
-- An [Ollama](https://ollama.com) server running locally
-  (default: `http://localhost:11434`)
-- At least one model pulled (`ollama pull gemma4:cloud` or similar)
+- **TJCoder ergo gateway (default)** — run `coder`, then `/login` to sign
+  in. Nothing else to install.
+- **Local Ollama (optional)** — an [Ollama](https://ollama.com) server
+  (default: `http://localhost:11434`) with at least one model pulled
+  (`ollama pull gemma4:cloud` or similar), used with `--provider ollama`.
 
-Don't have Ollama yet? The shell installer can set it up in one go:
+Want local Ollama too? The shell installer can set it up in one go:
 
 ```bash
 INSTALL_OLLAMA=1 curl -fsSL https://raw.githubusercontent.com/tjcoder-labs/cli/main/install.sh | bash
