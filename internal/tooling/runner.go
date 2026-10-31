@@ -310,6 +310,9 @@ func (r *Runner) run(ctx context.Context, history []client.Message, prompt strin
 	if r.MaxSteps <= 0 {
 		r.MaxSteps = defaultMaxToolSteps
 	}
+	// stepGrant is the configured cap. Continue adds this many steps,
+	// not a hardcoded default, so /config toolMax is what the user gets.
+	stepGrant := r.MaxSteps
 	history = append(history, client.Message{Role: "user", Content: prompt})
 	defs := r.Registry.Definitions(enabledTools)
 	offered := make(map[string]bool, len(defs))
@@ -538,11 +541,12 @@ budget:
 			Kind:     tools.PromptNextSteps,
 			Title:    "TOOL BUDGET",
 			Question: fmt.Sprintf("Tool-call budget reached (%d steps).", r.MaxSteps),
+			Detail:   fmt.Sprintf("Continue adds %d more steps.", stepGrant),
 			Options:  []string{"Continue"},
 		})
 		if askErr == nil && !ans.Cancelled && ans.Index == 0 {
 			start = r.MaxSteps
-			r.MaxSteps += defaultMaxToolSteps
+			r.MaxSteps += stepGrant
 			goto budget
 		}
 	}
