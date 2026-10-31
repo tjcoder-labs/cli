@@ -8,7 +8,6 @@ import (
 
 	"github.com/rivo/tview"
 
-	"sync/atomic"
 
 	"github.com/tjcoder-labs/cli/internal/session"
 	"github.com/tjcoder-labs/cli/internal/tasks"
@@ -284,13 +283,10 @@ func TestToggleTaskRestoresCursorByIndex(t *testing.T) {
 		}
 	}
 
-	// The minimal App is enough to exercise the cursor capture and
-	// the index restore inside the QueueUpdateDraw closure. We
-	// call the closure synchronously by reaching into the queued
-	// draw via a fake tview.Application: tview.NewApplication()
-	// without Run() returns immediately, and QueueUpdateDraw is
-	// safe to call but its function is dropped. So we drive the
-	// inner path directly to validate the index math.
+	// toggleTask runs from the list's item callback, i.e. already on
+	// the event loop, so it refreshes the list and restores the cursor
+	// synchronously (no QueueUpdateDraw since b31550f). A bare App with
+	// a list is enough to drive it directly.
 	app := &App{
 		tv:           tview.NewApplication(),
 		palette:      darkPalette(),
@@ -309,34 +305,27 @@ func TestToggleTaskRestoresCursorByIndex(t *testing.T) {
 		t.Fatalf("expected current=1 after SetCurrentItem(1), got %d", got)
 	}
 
-	// Re-implement the inner index-restore math (the same logic
-	// QueueUpdateDraw runs) so the test is hermetic and doesn't
-	// depend on tview's event loop being active.
-	prevIndex := app.tasksList.GetCurrentItem()
-	_, _, _, err = store.ToggleDone(app.sessionState, first.Task.ID)
-	if err != nil {
-		t.Fatalf("ToggleDone failed: %v", err)
+	app.toggleTask(first.Task.ID)
+	if got := app.tasksList.GetItemCount(); got != 3 {
+		t.Fatalf("expected 3 items after toggle, got %d", got)
 	}
-	app.refreshTasksList()
-	count := app.tasksList.GetItemCount()
-	next := prevIndex
-	if next < 0 {
-		next = 0
-	}
-	if next >= count {
-		next = count - 1
-	}
-	app.tasksList.SetCurrentItem(next)
 	if got := app.tasksList.GetCurrentItem(); got != 1 {
 		t.Fatalf("expected cursor restored to index 1, got %d", got)
 	}
-	// And no goroutine leak: the tview Application QueueUpdateDraw
-	// queue is a buffered channel; ensure the call did not block.
-	var ran atomic.Bool
-	app.tv.QueueUpdateDraw(func() { ran.Store(true) })
-	if ran.Load() {
-		// Synchronous path is fine; the test simply confirms the
-		// queued function ran without panicking.
-		_ = ran.Load()
+	toggled := false
+	for _, task := range app.sessionState.Tasks {
+		if task.ID == first.Task.ID && tasks.Status(task.Status) == tasks.StatusDone {
+			toggled = true
+		}
+	}
+	if !toggled {
+		t.Fatalf("expected %q to be done after toggleTask", first.Task.Title)
+	}
+
+	// Cursor on the last row stays clamped to the last row.
+	app.tasksList.SetCurrentItem(2)
+	app.toggleTask(first.Task.ID)
+	if got := app.tasksList.GetCurrentItem(); got != 2 {
+		t.Fatalf("expected cursor to stay on index 2, got %d", got)
 	}
 }

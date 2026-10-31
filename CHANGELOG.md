@@ -4,6 +4,16 @@
 
 All notable changes to Coder CLI. The source of truth is [release-notes/releases.json](release-notes/releases.json).
 
+## 0.9.220 — 2026-10-31
+
+**Assistant label colour fix.** The assistant's label now always starts on the normal background, and four long-failing TUI tests pass again.
+
+### Fixed
+
+- The assistant's "Coder is thinking..." label always opens with the normal background, so it can never pick up the purple from your message bubble.
+- Repaired four long-failing TUI tests (task cursor, transcript saving, label colour, timestamps).
+  Three tests had fallen behind intended behaviour; the fourth exposed the label colour bug above.
+
 ## 0.9.219 — 2026-10-31
 
 **Product name update.** The TUI header now shows @tjcoder as the program name.

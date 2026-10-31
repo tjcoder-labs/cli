@@ -3835,7 +3835,10 @@ func (a *App) appendAssistantTurnLabel() {
 	if a.assistantState == "replied" && a.assistantStamp != "" {
 		fmt.Fprintf(a.transcript, "[%s]%s[-]\n", a.palette.HexDim, a.assistantStamp)
 	}
-	fmt.Fprintf(a.transcript, "[%s::b]%s[-:-:-]\n", a.palette.HexPurple, a.assistantLabel())
+	// Explicit bg=root (not the `[purple::b]` shorthand) so the label
+	// never inherits the user bubble's purple background; this matches
+	// the label updateAssistantTurnLabel writes.
+	fmt.Fprintf(a.transcript, "[%s:%s:b]%s[-:-:-]\n", a.palette.HexPurple, a.palette.HexRoot, a.assistantLabel())
 }
 
 func (a *App) updateAssistantTurnLabel() {

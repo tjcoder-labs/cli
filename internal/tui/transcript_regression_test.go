@@ -27,6 +27,9 @@ func TestUserBubbleDoesNotLeakPurpleBackground(t *testing.T) {
 		palette:    darkPalette(),
 	}
 	app.appendUserMessage("hello world")
+	// A real turn sets "thinking" before writing the label (see
+	// submit / the turn loop in app.go).
+	app.assistantState = "thinking"
 	app.appendAssistantTurnLabel()
 
 	got := app.transcript.GetText(false)
@@ -101,8 +104,15 @@ func TestUpdateAssistantTurnLabelNoDuplicateTimestamp(t *testing.T) {
 	app.updateAssistantTurnLabel()
 
 	after := app.transcript.GetText(false)
+	// The user bubble carries its own timestamp line (added in
+	// 461eb68), so count only the stamps in the assistant turn, i.e.
+	// after the bubble's closing reset.
+	bubbleEnd := strings.Index(after, "[-:-:-]")
+	if bubbleEnd < 0 {
+		t.Fatalf("expected the user bubble's `[-:-:-]` reset, got %q", after)
+	}
 	stampRe := regexp.MustCompile(`\d{1,2}:\d{2}\s?(AM|PM)`)
-	if n := len(stampRe.FindAllString(after, -1)); n != 1 {
+	if n := len(stampRe.FindAllString(after[bubbleEnd:], -1)); n != 1 {
 		t.Fatalf("expected exactly one assistant timestamp, found %d in %q", n, after)
 	}
 	if strings.Contains(after, "5:04 PM") {

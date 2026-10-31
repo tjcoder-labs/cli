@@ -10,8 +10,11 @@ import (
 	"github.com/tjcoder-labs/cli/internal/session"
 )
 
-// TestTranscriptParsing verifies that user messages rendered to the
-// transcript can be properly parsed and persisted.
+// TestTranscriptParsing verifies that a user message is persisted to the
+// saved transcript. saveSession builds the transcript from the
+// conversation history (real user/assistant turns only, never from the
+// rendered TextView), so the message goes into history the way the
+// runner records it, and the rendered view is set alongside it.
 func TestTranscriptParsing(t *testing.T) {
 	tmpDir := t.TempDir()
 
@@ -30,9 +33,15 @@ func TestTranscriptParsing(t *testing.T) {
 
 	userMessage := "Test message for persistence"
 
-	// Render the user message to the transcript
+	// Render the user message to the transcript and record it in the
+	// history, as a real turn does, plus a tool message that must not
+	// appear in the saved transcript.
 	rendered := app.renderUserMessage(userMessage)
 	app.transcript.SetText(rendered)
+	app.history = append(app.history,
+		client.Message{Role: "user", Content: userMessage},
+		client.Message{Role: "tool", Content: "tool output"},
+	)
 
 	// Save the session
 	if err := app.saveSession(); err != nil {
@@ -52,6 +61,9 @@ func TestTranscriptParsing(t *testing.T) {
 
 	found := false
 	for _, entry := range loaded.Transcript {
+		if entry.Role != "user" && entry.Role != "assistant" {
+			t.Fatalf("non-conversation role %q persisted to transcript: %+v", entry.Role, loaded.Transcript)
+		}
 		if entry.Role == "user" {
 			// The content may have newlines if wrapped, so just check that all words are present
 			if strings.Contains(entry.Content, "Test") && strings.Contains(entry.Content, "message") {
@@ -134,9 +146,8 @@ func TestNoHistoryDuplication(t *testing.T) {
 
 func mockAgent() agent.Config {
 	return agent.Config{
-		Name:         "test-agent",
-		DisplayName:  "Test Agent",
-		ToolNames:    []string{},
+		Name:        "test-agent",
+		DisplayName: "Test Agent",
+		ToolNames:   []string{},
 	}
 }
-

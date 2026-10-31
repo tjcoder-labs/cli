@@ -3,6 +3,23 @@
   "schema_version": 1,
   "releases": [
     {
+      "version": "0.9.220",
+      "date": "2026-10-31",
+      "title": "Assistant label colour fix",
+      "summary": "The assistant's label now always starts on the normal background, and four long-failing TUI tests pass again.",
+      "changes": {
+        "fixed": [
+          {
+            "text": "The assistant's \"Coder is thinking...\" label always opens with the normal background, so it can never pick up the purple from your message bubble."
+          },
+          {
+            "text": "Repaired four long-failing TUI tests (task cursor, transcript saving, label colour, timestamps).",
+            "details": "Three tests had fallen behind intended behaviour; the fourth exposed the label colour bug above."
+          }
+        ]
+      }
+    },
+    {
       "version": "0.9.219",
       "date": "2026-10-31",
       "title": "Product name update",
