@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 	"github.com/tjcoder-labs/cli/internal/auth"
 	"github.com/tjcoder-labs/cli/internal/client"
@@ -260,7 +261,8 @@ func (a *App) handleLogoutCommand() {
 }
 
 // handleBalanceCommand opens the wallet pane: current balance and a
-// numbered top-up list that launches Stripe Checkout for that amount.
+// numbered top-up list. A digit picks an amount immediately; arrows move
+// the highlight and Enter confirms. Esc closes.
 func (a *App) handleBalanceCommand() {
 	key := auth.ResolveErgoToken()
 	if key == "" {
@@ -271,36 +273,80 @@ func (a *App) handleBalanceCommand() {
 	view.SetBackgroundColor(a.palette.BgInput)
 	view.SetTextColor(a.palette.TextMain)
 	view.SetText(fmt.Sprintf("\n  [%s]Loading wallet…[-]", a.palette.HexDim))
-	closeWallet := func() { a.closeModal() }
-	btns := a.newModalForm(closeWallet)
-	btns.AddButton("Close", closeWallet)
-	panel := tview.NewFlex().SetDirection(tview.FlexRow).
-		AddItem(view, 0, 1, false).
-		AddItem(btns, 3, 0, true)
-	panel.SetBackgroundColor(a.palette.BgInput)
-	a.showModal("TJ Coder Wallet", panel)
+	var packs []walletPack
+	var cents int64
+	selected := 0
+	redraw := func() {
+		view.SetText(walletView(a.palette, cents, packs, selected))
+	}
+	pick := func(i int) {
+		if i < 0 || i >= len(packs) {
+			return
+		}
+		a.startTopup(key, packs[i])
+	}
+	view.SetInputCapture(func(ev *tcell.EventKey) *tcell.EventKey {
+		if len(packs) == 0 {
+			if ev.Key() == tcell.KeyEsc {
+				a.closeModal()
+			}
+			return nil
+		}
+		switch ev.Key() {
+		case tcell.KeyEsc:
+			a.closeModal()
+			return nil
+		case tcell.KeyUp, tcell.KeyCtrlP:
+			if selected > 0 {
+				selected--
+				redraw()
+			}
+			return nil
+		case tcell.KeyDown, tcell.KeyCtrlN, tcell.KeyTab:
+			if selected < len(packs)-1 {
+				selected++
+				redraw()
+			}
+			return nil
+		case tcell.KeyEnter:
+			pick(selected)
+			return nil
+		case tcell.KeyRune:
+			if ev.Rune() >= '1' && ev.Rune() <= '9' {
+				pick(int(ev.Rune() - '1'))
+				return nil
+			}
+			if ev.Rune() == 'k' && selected > 0 {
+				selected--
+				redraw()
+				return nil
+			}
+			if ev.Rune() == 'j' && selected < len(packs)-1 {
+				selected++
+				redraw()
+				return nil
+			}
+		}
+		return ev
+	})
+	a.showModal("TJ Coder Wallet", view)
 
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), ergoAuthTimeout)
 		defer cancel()
-		cents, err := fetchErgoBalanceCents(ctx, key)
+		var err error
+		cents, err = fetchErgoBalanceCents(ctx, key)
 		if err != nil {
 			a.postUI(func() {
 				view.SetText(fmt.Sprintf("\n  [%s::b]✗ wallet unavailable[-::B]\n\n  %s\n", a.palette.HexAlert, tview.Escape(err.Error())))
 			})
 			return
 		}
-		packs, _ := fetchWalletPacks(ctx, key)
+		packs, _ = fetchWalletPacks(ctx, key)
 		a.postUI(func() {
 			a.setErgoBalanceCents(cents)
-			view.SetText(walletView(a.palette, cents, packs))
-			// Rebuild the button row with one button per increment.
-			btns.Clear(true)
-			for _, p := range packs {
-				p := p
-				btns.AddButton(p.Button(), func() { a.startTopup(key, p) })
-			}
-			btns.AddButton("Close", closeWallet)
+			redraw()
+			a.tv.SetFocus(view)
 		})
 	}()
 }
@@ -474,16 +520,23 @@ func defaultWalletPacks() []walletPack {
 	}
 }
 
-func walletView(pal Palette, cents int64, packs []walletPack) string {
+func walletView(pal Palette, cents int64, packs []walletPack, selected int) string {
 	if len(packs) == 0 {
 		packs = defaultWalletPacks()
+	}
+	if selected < 0 || selected >= len(packs) {
+		selected = 0
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "\n  [%s]Balance[-]\n\n", pal.HexDim)
 	fmt.Fprintf(&b, "      [%s::b]%s[-:-:-]\n\n", pal.HexPurple, formatCents(cents))
-	fmt.Fprintf(&b, "  [%s]Top up — pick an amount. Stripe Checkout opens in your browser.[-]\n\n", pal.HexDim)
-	for _, p := range packs {
-		fmt.Fprintf(&b, "[%s]%s[-]\n", pal.HexLavender, p.Line())
+	fmt.Fprintf(&b, "  [%s]Top up — 1–9 picks, ↑↓ moves, Enter confirms.[-]\n\n", pal.HexDim)
+	for i, p := range packs {
+		if i == selected {
+			fmt.Fprintf(&b, "  [%s::b]› %s[-:-:-]\n", pal.HexLavender, p.Line())
+		} else {
+			fmt.Fprintf(&b, "    [%s]%s[-]\n", pal.HexDim, p.Line())
+		}
 	}
 	fmt.Fprintf(&b, "\n  [%s]Esc to close.[-]\n", pal.HexDim)
 	return b.String()
