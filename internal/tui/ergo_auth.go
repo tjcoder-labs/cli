@@ -269,84 +269,53 @@ func (a *App) handleBalanceCommand() {
 		a.appendActivity("Not signed in to ergo — run /login first")
 		return
 	}
-	view := tview.NewTextView().SetDynamicColors(true)
-	view.SetBackgroundColor(a.palette.BgInput)
-	view.SetTextColor(a.palette.TextMain)
-	view.SetText(fmt.Sprintf("\n  [%s]Loading wallet…[-]", a.palette.HexDim))
-	var packs []walletPack
-	var cents int64
-	selected := 0
-	redraw := func() {
-		view.SetText(walletView(a.palette, cents, packs, selected))
-	}
-	pick := func(i int) {
-		if i < 0 || i >= len(packs) {
-			return
-		}
-		a.startTopup(key, packs[i])
-	}
-	view.SetInputCapture(func(ev *tcell.EventKey) *tcell.EventKey {
-		if len(packs) == 0 {
-			if ev.Key() == tcell.KeyEsc {
-				a.closeModal()
-			}
-			return nil
-		}
-		switch ev.Key() {
-		case tcell.KeyEsc:
+	header := tview.NewTextView().SetDynamicColors(true)
+	header.SetBackgroundColor(a.palette.BgInput)
+	header.SetTextColor(a.palette.TextMain)
+	header.SetText(fmt.Sprintf("\n  [%s]Loading wallet…[-]", a.palette.HexDim))
+	list := tview.NewList()
+	a.styleModalList(list)
+	list.ShowSecondaryText(true)
+	// Esc always closes. tview calls DoneFunc for Esc on a focused list.
+	list.SetDoneFunc(func() { a.closeModal() })
+	list.SetInputCapture(func(ev *tcell.EventKey) *tcell.EventKey {
+		if ev.Key() == tcell.KeyEsc {
 			a.closeModal()
 			return nil
-		case tcell.KeyUp, tcell.KeyCtrlP:
-			if selected > 0 {
-				selected--
-				redraw()
-			}
-			return nil
-		case tcell.KeyDown, tcell.KeyCtrlN, tcell.KeyTab:
-			if selected < len(packs)-1 {
-				selected++
-				redraw()
-			}
-			return nil
-		case tcell.KeyEnter:
-			pick(selected)
-			return nil
-		case tcell.KeyRune:
-			if ev.Rune() >= '1' && ev.Rune() <= '9' {
-				pick(int(ev.Rune() - '1'))
-				return nil
-			}
-			if ev.Rune() == 'k' && selected > 0 {
-				selected--
-				redraw()
-				return nil
-			}
-			if ev.Rune() == 'j' && selected < len(packs)-1 {
-				selected++
-				redraw()
-				return nil
-			}
 		}
 		return ev
 	})
-	a.showModal("TJ Coder Wallet", view)
+	panel := tview.NewFlex().SetDirection(tview.FlexRow).
+		AddItem(header, 6, 0, false).
+		AddItem(list, 0, 1, true)
+	panel.SetBackgroundColor(a.palette.BgInput)
+	a.showModal("TJ Coder Wallet", panel)
+	a.tv.SetFocus(list)
 
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), ergoAuthTimeout)
 		defer cancel()
-		var err error
-		cents, err = fetchErgoBalanceCents(ctx, key)
+		cents, err := fetchErgoBalanceCents(ctx, key)
 		if err != nil {
 			a.postUI(func() {
-				view.SetText(fmt.Sprintf("\n  [%s::b]✗ wallet unavailable[-::B]\n\n  %s\n", a.palette.HexAlert, tview.Escape(err.Error())))
+				header.SetText(fmt.Sprintf("\n  [%s::b]✗ wallet unavailable[-::B]\n\n  %s\n", a.palette.HexAlert, tview.Escape(err.Error())))
 			})
 			return
 		}
-		packs, _ = fetchWalletPacks(ctx, key)
+		packs, _ := fetchWalletPacks(ctx, key)
 		a.postUI(func() {
 			a.setErgoBalanceCents(cents)
-			redraw()
-			a.tv.SetFocus(view)
+			header.SetText(walletHeader(a.palette, cents))
+			list.Clear()
+			for _, p := range packs {
+				p := p
+				shortcut := rune(0)
+				if p.N >= 1 && p.N <= 9 {
+					shortcut = rune('0' + p.N)
+				}
+				list.AddItem(p.Button(), p.Label, shortcut, func() { a.startTopup(key, p) })
+			}
+			a.tv.SetFocus(list)
 		})
 	}()
 }
@@ -520,26 +489,10 @@ func defaultWalletPacks() []walletPack {
 	}
 }
 
-func walletView(pal Palette, cents int64, packs []walletPack, selected int) string {
-	if len(packs) == 0 {
-		packs = defaultWalletPacks()
-	}
-	if selected < 0 || selected >= len(packs) {
-		selected = 0
-	}
-	var b strings.Builder
-	fmt.Fprintf(&b, "\n  [%s]Balance[-]\n\n", pal.HexDim)
-	fmt.Fprintf(&b, "      [%s::b]%s[-:-:-]\n\n", pal.HexPurple, formatCents(cents))
-	fmt.Fprintf(&b, "  [%s]Top up — 1–9 picks, ↑↓ moves, Enter confirms.[-]\n\n", pal.HexDim)
-	for i, p := range packs {
-		if i == selected {
-			fmt.Fprintf(&b, "  [%s::b]› %s[-:-:-]\n", pal.HexLavender, p.Line())
-		} else {
-			fmt.Fprintf(&b, "    [%s]%s[-]\n", pal.HexDim, p.Line())
-		}
-	}
-	fmt.Fprintf(&b, "\n  [%s]Esc to close.[-]\n", pal.HexDim)
-	return b.String()
+func walletHeader(pal Palette, cents int64) string {
+	return fmt.Sprintf(
+		"\n  [%s]Balance[-]\n\n      [%s::b]%s[-:-:-]\n\n  [%s]1–9 picks · ↑↓ moves · Enter confirms · Esc closes[-]\n",
+		pal.HexDim, pal.HexPurple, formatCents(cents), pal.HexDim)
 }
 
 func fetchWalletPacks(ctx context.Context, key string) ([]walletPack, error) {
