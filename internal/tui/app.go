@@ -3840,6 +3840,7 @@ func (a *App) appendAssistantTurnLabel() {
 	// never inherits the user bubble's purple background; this matches
 	// the label updateAssistantTurnLabel writes.
 	fmt.Fprintf(a.transcript, "[%s:%s:b]%s[-:-:-]\n", a.palette.HexPurple, a.palette.HexRoot, a.assistantLabel())
+	a.transcript.ScrollToEnd()
 }
 
 func (a *App) updateAssistantTurnLabel() {
@@ -4234,6 +4235,7 @@ func (a *App) appendUserMessage(prompt string) {
 	// Timestamp above the user attribution, matching the assistant label style.
 	fmt.Fprintf(a.transcript, "[%s]%s[-]\n", a.palette.HexDim, formatTimestamp(time.Now()))
 	fmt.Fprint(a.transcript, a.renderUserTurn(prompt))
+	a.transcript.ScrollToEnd()
 }
 
 // appendSteeredMessage renders a mid-turn user steer immediately.

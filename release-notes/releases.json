@@ -3,6 +3,23 @@
   "schema_version": 1,
   "releases": [
     {
+      "version": "0.9.227",
+      "date": "2026-10-31",
+      "title": "Transcript auto-scrolls to bottom",
+      "summary": "The conversation transcript now automatically scrolls to the latest content on load, when new messages arrive, and during streaming replies.",
+      "changes": {
+        "added": [
+          {
+            "text": "Transcript scrolls to end on startup after loading persisted messages from the previous session.",
+            "details": "Previously the transcript stayed at the top on reload, requiring manual scroll to see the latest messages."
+          },
+          {
+            "text": "User messages, assistant replies, steered messages, and streaming commentary all keep the transcript at the bottom automatically."
+          }
+        ]
+      }
+    },
+    {
       "version": "0.9.226",
       "date": "2026-10-31",
       "title": "README: the experimental TJ Coder models",

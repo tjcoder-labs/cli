@@ -4,6 +4,16 @@
 
 All notable changes to Coder CLI. The source of truth is [release-notes/releases.json](release-notes/releases.json).
 
+## 0.9.227 — 2026-10-31
+
+**Transcript auto-scrolls to bottom.** The conversation transcript now automatically scrolls to the latest content on load, when new messages arrive, and during streaming replies.
+
+### Added
+
+- Transcript scrolls to end on startup after loading persisted messages from the previous session.
+  Previously the transcript stayed at the top on reload, requiring manual scroll to see the latest messages.
+- User messages, assistant replies, steered messages, and streaming commentary all keep the transcript at the bottom automatically.
+
 ## 0.9.226 — 2026-10-31
 
 **README: the experimental TJ Coder models.** Both READMEs now document the three experimental TJ Coder models, how to sign in to the tjcoder provider, and how to use them from the TUI and headless runs.

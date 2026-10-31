@@ -140,6 +140,7 @@ func (a *App) renderTranscriptFromEntries(entries []session.TranscriptEntry) {
 		}
 	}
 	a.transcript.SetText(b.String())
+	a.transcript.ScrollToEnd()
 }
 
 func (a *App) saveSession() error {
