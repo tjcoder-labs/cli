@@ -111,6 +111,9 @@ type Memory struct {
 type State struct {
 	CurrentAgent string           `json:"current_agent"`
 	CurrentModel string           `json:"current_model"`
+	// Persisted model management settings
+	ThinkMode    string           `json:"think_mode,omitempty"`   // on|off|auto
+	AutoTier     bool             `json:"auto_tier,omitempty"`    // let gateway pick best tier
 	ToolMax      int              `json:"tool_max,omitempty"`
 	EnabledTools []string         `json:"enabled_tools"`
 	History      []client.Message `json:"history"`

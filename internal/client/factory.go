@@ -14,7 +14,7 @@ import (
 // auto-selecting a default: ergo first, then local ollama, then ollama-cloud.
 // Anything that shows or iterates providers (help text, errors, pickers)
 // should use this slice so the ordering stays consistent.
-var ProviderOrder = []string{"tjcoder", "ollama", "ollama-cloud", "gemini"}
+var ProviderOrder = []string{"ergo", "ollama", "ollama-cloud"}
 
 // defaultOllamaHost is the well-known local Ollama address. It is used as
 // a sentinel: if the caller passes this (or empty) we check the registry
@@ -78,7 +78,8 @@ func NewProvider(name, host, geminiAPIKey string, timeout time.Duration) (Provid
 		if cfg, ok := providers.Get(name); ok {
 			return NewProviderFromConfig(cfg, timeout)
 		}
-		return nil, fmt.Errorf("unknown provider %q: supported values are ergo, tjcoder, ollama, ollama-cloud, gemini (or run `coder providers add`)", name)
+		// Build a helpful error message using ProviderOrder.
+		return nil, fmt.Errorf("unknown provider %q: supported values are %v (or run `coder providers add`)", name, ProviderOrder)
 	}
 }
 

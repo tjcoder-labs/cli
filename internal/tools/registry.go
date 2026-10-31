@@ -99,6 +99,8 @@ func NewRegistry(provider client.Provider) *Registry {
 		cloudflareTool{},
 		resendTool{},
 		askUserTool{},
+		// Model management
+		manageModelTool{},
 	} {
 		r.tools[tool.Definition().Function.Name] = tool
 	}

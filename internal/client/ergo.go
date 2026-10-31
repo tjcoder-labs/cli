@@ -16,6 +16,10 @@ import (
 	"github.com/tjcoder-labs/cli/internal/telemetry"
 )
 
+// Version is the CLI version, set at build time via -ldflags.
+// It's populated by main.go's version variable.
+var Version = "dev"
+
 // ErgoDefaultBaseURL is the public ergo AI gateway. Override per-process
 // with NewErgo(baseURL, ...).
 const ErgoDefaultBaseURL = "https://api.tjcoder.com"
@@ -276,6 +280,9 @@ func (e *Ergo) Chat(ctx context.Context, request ChatRequest, onEvent func(Strea
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+e.apiKey)
+	httpReq.Header.Set("X-Ergo-Client", "tjcoder-cli")
+	httpReq.Header.Set("X-Ergo-Client-Version", Version)
+	httpReq.Header.Set("X-Ergo-Interface", "tui")
 	httpReq.Close = true
 
 	resp, err := e.httpClient.Do(httpReq)

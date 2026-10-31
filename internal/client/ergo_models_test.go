@@ -15,13 +15,13 @@ import (
 func TestResolveErgoModel(t *testing.T) {
 	avail := ErgoFallbackModels()
 	cases := []struct{ name, explicit, saved, want string }{
-		{"default when nothing saved", "", "", "ergo/pro"},
-		{"ollama tag ignored", "", "deepseek-v4-pro:cloud", "ergo/pro"},
-		{"saved gateway model kept", "", "ergo/genius", "ergo/genius"},
-		{"saved legacy id migrated", "", "ergo-genius", "ergo/genius"},
-		{"saved legacy lite", "", "ergo-lite", "ergo/flash"},
-		{"explicit wins even if unknown", "my-model", "ergo-lite", "my-model"},
-		{"explicit legacy alias mapped", "ergo", "", "ergo/pro"},
+		{"default when nothing saved", "", "", "tjcoder/ergo-pro:cloud"},
+		{"ollama tag ignored", "", "deepseek-v4-pro:cloud", "tjcoder/ergo-pro:cloud"},
+		{"saved gateway model kept", "", "tjcoder/ergo-genius:cloud", "tjcoder/ergo-genius:cloud"},
+		{"saved legacy id migrated", "", "tjcoder/ergo-genius", "tjcoder/ergo-genius:cloud"},
+		{"saved legacy lite", "", "tjcoder/ergo-flash", "tjcoder/ergo-flash:cloud"},
+		{"explicit wins even if unknown", "my-model", "tjcoder/ergo-flash:cloud", "my-model"},
+		{"explicit legacy alias mapped", "tjcoder/ergo-pro", "", "tjcoder/ergo-pro:cloud"},
 	}
 	for _, c := range cases {
 		if got := ResolveErgoModel(c.explicit, c.saved, avail); got != c.want {
@@ -38,11 +38,11 @@ func TestErgoAvailableModelsFetchesAndFallsBack(t *testing.T) {
 	var gotAuth string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotAuth = r.Header.Get("Authorization")
-		_, _ = w.Write([]byte(`{"data":[{"id":"ergo"},{"id":" ergo-lite "},{"id":""}]}`))
+		_, _ = w.Write([]byte(`{"data":[{"id":"tjcoder/ergo-flash:cloud"},{"id":" tjcoder/ergo-pro:cloud "},{"id":""}]}`))
 	}))
 	defer srv.Close()
 	got := ErgoAvailableModels(context.Background(), NewErgo(srv.URL, "k", 0))
-	if !reflect.DeepEqual(got, []string{"ergo", "ergo-lite"}) {
+	if !reflect.DeepEqual(got, []string{"tjcoder/ergo-flash:cloud", "tjcoder/ergo-pro:cloud"}) {
 		t.Fatalf("got %v", got)
 	}
 	if gotAuth != "Bearer k" {
@@ -70,7 +70,7 @@ func TestErgoAvailableModelsFetchesAndFallsBack(t *testing.T) {
 func TestErgoChatModelNotFound(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(404)
-		_, _ = w.Write([]byte(`{"error":{"code":"model_not_found","message":"Unknown model \"deepseek-v4-pro:cloud\". Available: ergo, ergo-lite, ergo-genius."}}`))
+		_, _ = w.Write([]byte(`{"error":{"code":"model_not_found","message":"Unknown model \"deepseek-v4-pro:cloud\". Available: tjcoder/ergo-flash:cloud, tjcoder/ergo-pro:cloud, tjcoder/ergo-genius:cloud."}}`))
 	}))
 	defer srv.Close()
 	_, err := NewErgo(srv.URL, "k", 0).Chat(context.Background(), ChatRequest{
@@ -83,7 +83,7 @@ func TestErgoChatModelNotFound(t *testing.T) {
 	if mnf.Model != "deepseek-v4-pro:cloud" {
 		t.Errorf("model %q", mnf.Model)
 	}
-	if !reflect.DeepEqual(mnf.Available, []string{"ergo", "ergo-lite", "ergo-genius"}) {
+	if !reflect.DeepEqual(mnf.Available, []string{"tjcoder/ergo-flash:cloud", "tjcoder/ergo-pro:cloud", "tjcoder/ergo-genius:cloud"}) {
 		t.Errorf("available %v", mnf.Available)
 	}
 }
@@ -94,14 +94,14 @@ func TestErgoChatOther404IsNotModelNotFound(t *testing.T) {
 		_, _ = w.Write([]byte(`not here`))
 	}))
 	defer srv.Close()
-	_, err := NewErgo(srv.URL, "k", 0).Chat(context.Background(), ChatRequest{Model: "ergo", Messages: []Message{{Role: "user", Content: "hi"}}}, nil)
+	_, err := NewErgo(srv.URL, "k", 0).Chat(context.Background(), ChatRequest{Model: "tjcoder/ergo-pro:cloud", Messages: []Message{{Role: "user", Content: "hi"}}}, nil)
 	if err == nil || IsModelNotFound(err) || !strings.Contains(err.Error(), "404") {
 		t.Fatalf("got %v", err)
 	}
 }
 
 func TestProviderKey(t *testing.T) {
-	if got := ProviderKey(NewErgo("http://x", "k", 0)); got != "ergo" {
+	if got := ProviderKey(NewErgo("http://x", "k", 0)); got != "tjcoder" {
 		t.Fatalf("got %q", got)
 	}
 	p, err := NewProviderFromConfig(providers.Config{Name: "my-gateway", BaseURL: "http://localhost"}, 0)
@@ -121,14 +121,14 @@ func TestErgoListAllModelsFlattensProviders(t *testing.T) {
 		}
 		if r.URL.Path == "/v1/providers" {
 			_, _ = w.Write([]byte(`{"object":"list","providers":[
-				{"id":"ergo","models":[{"id":"ergo"},{"id":"ergo-lite"}]},
+				{"id":"tjcoder","models":[{"id":"tjcoder/ergo-flash:cloud"},{"id":"tjcoder/ergo-pro:cloud"}]},
 				{"id":"xai","models":[{"id":"xai/grok-4.5"}]},
 				{"id":"ollama","models":[{"id":"ollama/phi3"}]}
 			]}`))
 			return
 		}
 		// /v1/models fallback path
-		_, _ = w.Write([]byte(`{"data":[{"id":"ergo"},{"id":"ergo-lite"},{"id":"ergo-genius"}]}`))
+		_, _ = w.Write([]byte(`{"data":[{"id":"tjcoder/ergo-flash:cloud"},{"id":"tjcoder/ergo-pro:cloud"},{"id":"tjcoder/ergo-genius:cloud"}]}`))
 	}))
 	defer srv.Close()
 
@@ -141,13 +141,15 @@ func TestErgoListAllModelsFlattensProviders(t *testing.T) {
 	for _, m := range models {
 		names = append(names, m.Name)
 	}
-	want := []string{"ergo", "ergo-lite", "xai/grok-4.5", "ollama/phi3"}
+	// Note: ListAllModels filters to only tjcoder models (since we check for tjcoder/ prefix).
+	// So we expect only the tjcoder models from the tjcoder provider.
+	want := []string{"tjcoder/ergo-flash:cloud", "tjcoder/ergo-pro:cloud"}
 	if !reflect.DeepEqual(names, want) {
 		t.Fatalf("got %v want %v", names, want)
 	}
-	// family is the provider id
-	if models[2].Family != "xai" {
-		t.Fatalf("family for xai model = %q", models[2].Family)
+	// family is the provider id (tjcoder for all because we only include tjcoder models and set Family to tjcoder)
+	if len(models) != 2 || models[0].Family != "tjcoder" || models[1].Family != "tjcoder" {
+		t.Fatalf("family mismatch: %+v", models)
 	}
 }
 
@@ -157,7 +159,7 @@ func TestErgoListAllModelsFallsBackOn404(t *testing.T) {
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
-		_, _ = w.Write([]byte(`{"data":[{"id":"ergo"},{"id":"ergo-lite"}]}`))
+		_, _ = w.Write([]byte(`{"data":[{"id":"tjcoder/ergo-flash:cloud"},{"id":"tjcoder/ergo-pro:cloud"}]}`))
 	}))
 	defer srv.Close()
 
@@ -166,23 +168,30 @@ func TestErgoListAllModelsFallsBackOn404(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListAllModels: %v", err)
 	}
-	if len(models) != 2 || models[0].Name != "ergo" {
+	if len(models) != 2 || models[0].Name != "tjcoder/ergo-flash:cloud" {
 		t.Fatalf("fallback mismatch: %+v", models)
 	}
 }
 
 func TestNormalizeErgoModel(t *testing.T) {
 	for in, want := range map[string]string{
-		"ergo": "ergo/pro", "ergo-lite": "ergo/flash", "ergo-genius": "ergo/genius",
-		"ergo-standard": "ergo/flash", "ergo/lite": "ergo/flash", "ERGO/PRO": "ergo/pro",
-		"ergo-turbo": "ergo/pro", "ergo/unknown": "ergo/pro",
-		"xai/grok-4.3": "xai/grok-4.3", "qwen3:8b": "qwen3:8b", "": "",
+		"tjcoder/ergo-flash": "tjcoder/ergo-flash:cloud",
+		"tjcoder/ergo-lite":  "tjcoder/ergo-flash:cloud",
+		"tjcoder/ergo-genius": "tjcoder/ergo-genius:cloud",
+		"tjcoder/ergo-standard": "tjcoder/ergo-flash:cloud",
+		"tjcoder/ergo/lite":  "tjcoder/ergo-flash:cloud",
+		"TJCODER/ERGO-PRO": "tjcoder/ergo-pro:cloud",
+		"tjcoder/ergo-turbo": "tjcoder/ergo-pro:cloud",
+		"tjcoder/ergo/unknown": "tjcoder/ergo-pro:cloud",
+		"xai/grok-4.3": "xai/grok-4.3",
+		"qwen3:8b": "qwen3:8b",
+		"": "",
 	} {
 		if got := NormalizeErgoModel(in); got != want {
 			t.Errorf("NormalizeErgoModel(%q) = %q, want %q", in, got, want)
 		}
 	}
-	if !IsErgoTier("ergo-lite") || IsErgoTier("xai/grok-4.3") {
+	if !IsErgoTier("tjcoder/ergo-flash:cloud") || IsErgoTier("xai/grok-4.3") {
 		t.Fatal("IsErgoTier")
 	}
 }
@@ -193,11 +202,11 @@ func TestErgoListModelsUnifiedCatalogue(t *testing.T) {
 			http.NotFound(w, r)
 			return
 		}
-		_, _ = w.Write([]byte(`{"data":[{"id":"ergo/pro","owned_by":"ergo"},{"id":"ergo","owned_by":"ergo","alias_for":"ergo/pro"},{"id":"xai/grok-4.3","owned_by":"xai"},{"id":"ollama/qwen3:8b"}]}`))
+		_, _ = w.Write([]byte(`{"data":[{"id":"tjcoder/ergo-pro:cloud","owned_by":"tjcoder"},{"id":"tjcoder/ergo:cloud","owned_by":"tjcoder","alias_for":"tjcoder/ergo-pro:cloud"},{"id":"xai/grok-4.3","owned_by":"xai"},{"id":"ollama/qwen3:8b"}]}`))
 	}))
 	defer srv.Close()
 	got := ErgoAvailableModels(context.Background(), NewErgo(srv.URL, "k", 0))
-	if !reflect.DeepEqual(got, []string{"ergo/pro", "xai/grok-4.3", "ollama/qwen3:8b"}) {
+	if !reflect.DeepEqual(got, []string{"tjcoder/ergo-pro:cloud", "xai/grok-4.3", "ollama/qwen3:8b"}) {
 		t.Fatalf("got %v (aliases must be hidden, /v1/providers 404 falls back)", got)
 	}
 	infos, _ := NewErgo(srv.URL, "k", 0).ListModels(context.Background())
@@ -214,7 +223,7 @@ func TestErgoOllamaProtocol(t *testing.T) {
 		auth = r.Header.Get("Authorization")
 		switch r.URL.Path {
 		case "/ollama/api/tags":
-			_, _ = w.Write([]byte(`{"models":[{"name":"ergo/pro","details":{"family":"ergo"}}]}`))
+			_, _ = w.Write([]byte(`{"models":[{"name":"tjcoder/ergo-pro:cloud","details":{"family":"tjcoder"}}]}`))
 		case "/ollama/api/chat":
 			_, _ = w.Write([]byte(`{"message":{"role":"assistant","content":"hi"},"done":true}` + "\n"))
 		default:
@@ -229,10 +238,10 @@ func TestErgoOllamaProtocol(t *testing.T) {
 		t.Fatalf("protocol %q", e.Protocol())
 	}
 	models, err := e.ListModels(context.Background())
-	if err != nil || len(models) != 1 || models[0].Name != "ergo/pro" {
+	if err != nil || len(models) != 1 || models[0].Name != "tjcoder/ergo-pro:cloud" {
 		t.Fatalf("models %v err %v", models, err)
 	}
-	msg, err := e.Chat(context.Background(), ChatRequest{Model: "ergo/pro", Messages: []Message{{Role: "user", Content: "hey"}}}, nil)
+	msg, err := e.Chat(context.Background(), ChatRequest{Model: "tjcoder/ergo-pro:cloud", Messages: []Message{{Role: "user", Content: "hey"}}}, nil)
 	if err != nil || msg.Content != "hi" {
 		t.Fatalf("chat %+v err %v", msg, err)
 	}

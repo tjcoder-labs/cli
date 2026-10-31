@@ -42,6 +42,8 @@ var ergoLegacyAliases = map[string]string{
 	"ergo/lite":     "tjcoder/ergo-flash:cloud",
 	"ergo-genius":   "tjcoder/ergo-genius:cloud",
 	"ergo/genius":   "tjcoder/ergo-genius:cloud",
+	"ergo-turbo":    "tjcoder/ergo-pro:cloud",
+	"ergo/unknown":  "tjcoder/ergo-pro:cloud",
 }
 
 // NormalizeErgoModel migrates a saved or typed ergo model id: legacy
@@ -53,14 +55,26 @@ func NormalizeErgoModel(id string) string {
 		return ""
 	}
 	lower := strings.ToLower(id)
+	// Check if it's a direct legacy alias (without tjcoder/ prefix)
 	if to, ok := ergoLegacyAliases[lower]; ok {
 		return to
 	}
-	switch lower {
-	case "tjcoder/ergo-flash:cloud", "tjcoder/ergo-pro:cloud", "tjcoder/ergo-genius:cloud", "tjcoder/deepseek-v4-pro:cloud":
-		return lower
-	}
-	if strings.HasPrefix(lower, "ergo") {
+	// If it has the tjcoder/ prefix, strip it and check the remainder
+	if strings.HasPrefix(lower, "tjcoder/") {
+		suffix := strings.TrimPrefix(lower, "tjcoder/")
+		// Check if the suffix is a legacy alias
+		if to, ok := ergoLegacyAliases[suffix]; ok {
+			return to
+		}
+		// If the suffix is already normalized (has :cloud), return as-is
+		if strings.HasSuffix(suffix, ":cloud") {
+			return lower
+		}
+		// If the suffix is an ergo-* tier (without :cloud), we don't have a mapping for it in the map? 
+		// But note: we have mappings for ergo-flash, ergo-pro, ergo-genius in the map (without the tjcoder/ prefix).
+		// So we should have caught them above.
+		// If we get here, the suffix is not in the map and not normalized.
+		// We return the default for ergo-* which is ErgoDefaultModel (tjcoder/ergo-pro:cloud)
 		return ErgoDefaultModel
 	}
 	return id
@@ -121,9 +135,11 @@ func ErgoModelAllowed(name string, available []string) bool {
 // Legacy saved ids are migrated with NormalizeErgoModel first.
 func ResolveErgoModel(explicit, saved string, available []string) string {
 	if e := strings.TrimSpace(explicit); e != "" {
-		if to, ok := ergoLegacyAliases[strings.ToLower(e)]; ok {
-			return to
+		// Normalize the explicit value to the canonical form
+		if normalized := NormalizeErgoModel(e); normalized != "" {
+			return normalized
 		}
+		// Fallback to the original if normalization somehow returns empty (shouldn't happen for non-empty input)
 		return e
 	}
 	if saved = NormalizeErgoModel(saved); ErgoModelAllowed(saved, available) {
