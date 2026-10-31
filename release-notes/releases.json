@@ -3,6 +3,20 @@
   "schema_version": 1,
   "releases": [
     {
+      "version": "0.9.225",
+      "date": "2026-10-31",
+      "title": "Release builds report crashes to Sentry",
+      "summary": "Release archives built by scripts/build-release.sh now embed the same Sentry DSN as make build when SENTRY_DSN is unset.",
+      "changes": {
+        "fixed": [
+          {
+            "text": "scripts/build-release.sh defaults SENTRY_DSN to the Makefile's DSN when it is unset, so release binaries report errors to Sentry like make builds.",
+            "details": "Before, release archives were built with an empty DSN and sent nothing. The script prints only a masked DSN. Set SENTRY_DSN= (empty) to build without Sentry."
+          }
+        ]
+      }
+    },
+    {
       "version": "0.9.224",
       "date": "2026-10-31",
       "title": "npm package names the right default provider",

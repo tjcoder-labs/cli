@@ -4,6 +4,15 @@
 
 All notable changes to Coder CLI. The source of truth is [release-notes/releases.json](release-notes/releases.json).
 
+## 0.9.225 — 2026-10-31
+
+**Release builds report crashes to Sentry.** Release archives built by scripts/build-release.sh now embed the same Sentry DSN as make build when SENTRY_DSN is unset.
+
+### Fixed
+
+- scripts/build-release.sh defaults SENTRY_DSN to the Makefile's DSN when it is unset, so release binaries report errors to Sentry like make builds.
+  Before, release archives were built with an empty DSN and sent nothing. The script prints only a masked DSN. Set SENTRY_DSN= (empty) to build without Sentry.
+
 ## 0.9.224 — 2026-10-31
 
 **npm package names the right default provider.** The npm package description and README now say coder uses the TJCoder ergo gateway by default, with local Ollama as an option.

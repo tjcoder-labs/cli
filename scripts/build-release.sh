@@ -9,8 +9,23 @@ VERSION=$(python3 -c 'import json; print(json.load(open("package.json"))["versio
 PRODUCT=$(python3 -c 'import json; d=json.load(open("package.json")); print(d.get("productName") or d.get("name") or "Coder CLI")')
 AUTHOR=$(python3 -c 'import json; print(json.load(open("package.json"))["author"])')
 # Telemetry keys come from the environment; empty = telemetry no-op.
+# SENTRY_DSN defaults to the Makefile's DSN (the one `make build` embeds)
+# when unset, so release archives report crashes like local builds.
+# Set SENTRY_DSN= (empty) explicitly to build without Sentry.
+if [ -z "${SENTRY_DSN+set}" ]; then
+  SENTRY_DSN=$(sed -n 's/^SENTRY_DSN[[:space:]]*?=[[:space:]]*//p' Makefile | head -n1)
+  sentry_src="Makefile default"
+else
+  sentry_src="environment"
+fi
+if [ -n "$SENTRY_DSN" ]; then
+  # Never print the full DSN: show the first and last 4 characters.
+  echo "==> Sentry DSN from ${sentry_src}: ${SENTRY_DSN:0:4}...${SENTRY_DSN: -4}"
+else
+  echo "==> Sentry DSN empty: building without Sentry reporting"
+fi
 POSTHOG_HOST="${POSTHOG_HOST:-https://us.i.posthog.com}"
-TELEMETRY_LDFLAGS="-X 'main.sentryDSN=${SENTRY_DSN:-}' -X 'main.posthogKey=${POSTHOG_KEY:-}' -X 'main.posthogHost=${POSTHOG_HOST}'"
+TELEMETRY_LDFLAGS="-X 'main.sentryDSN=${SENTRY_DSN}' -X 'main.posthogKey=${POSTHOG_KEY:-}' -X 'main.posthogHost=${POSTHOG_HOST}'"
 LDFLAGS="-X main.version=${VERSION} -X main.productName=${PRODUCT} -X main.author=${AUTHOR}"
 
 # go:embed staging (mirrors Makefile)

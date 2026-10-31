@@ -1,6 +1,6 @@
 {
   "name": "@tjcoder/cli",
-  "version": "0.9.224",
+  "version": "0.9.225",
   "description": "Terminal-first AI coding assistant by TJ Coder / AI Labs. A keyboard-driven TUI with a live cognition pane, 7 specialized agents, and 31 tools, using the TJCoder ergo gateway by default, with local Ollama, Ollama Cloud and Gemini as options.",
   "license": "MIT",
   "private": false,
