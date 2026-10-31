@@ -80,12 +80,9 @@ var (
 		return "dev"
 	}()
 
-	productName = func() string {
-		if n := loadPackageMeta().Name; n != "" {
-			return n
-		}
-		return "TJ Coder CLI"
-	}()
+	// Plain string so the Makefile -X flag sticks. A function initializer
+	// runs at init and overwrites the injected value.
+	productName = "Coder CLI"
 
 	author = func() string {
 		if a := loadPackageMeta().Author; a != "" {
