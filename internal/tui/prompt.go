@@ -508,6 +508,10 @@ type keyBurst struct {
 	last     time.Time
 	n        int  // keys in the current burst
 	dropping bool // the burst started inside the guard: drop all of it
+	// cursorOnly: every key of the burst so far was Up or Down. Text
+	// can't carry those keys, so such a burst is the user moving the
+	// selection, delivered in one terminal read (ssh, tmux, a busy box).
+	cursorOnly bool
 }
 
 // step records a key at t and reports whether it continues the burst
@@ -529,11 +533,16 @@ func (b *keyBurst) step(t time.Time) bool {
 //     whole, even the part after the guard expires, with a short notice,
 //     so a paste is never half-captured;
 //   - Enter (or LF) inside a burst is a pasted newline, never a submit:
-//     dropped for secrets and choice rows, a space in free text.
+//     dropped for secrets and choice rows, a space in free text. The
+//     exception is Enter on a choice row right after only Up/Down keys
+//     (e.g. "\x1b[B\r" in one read): that is a real pick, not a paste.
 //
 // Esc always passes.
 func (v *promptView) burstFilter(ev *tcell.EventKey) *tcell.EventKey {
 	inBurst := v.burst.step(ev.When())
+	afterCursor := inBurst && v.burst.cursorOnly
+	isCursor := ev.Key() == tcell.KeyUp || ev.Key() == tcell.KeyDown
+	v.burst.cursorOnly = isCursor && (!inBurst || v.burst.cursorOnly)
 	if ev.Key() == tcell.KeyEscape {
 		return ev
 	}
@@ -550,6 +559,9 @@ func (v *promptView) burstFilter(ev *tcell.EventKey) *tcell.EventKey {
 		return nil
 	}
 	if inBurst && (ev.Key() == tcell.KeyEnter || ev.Key() == tcell.KeyCtrlJ) {
+		if afterCursor && v.st != nil && !v.st.secret && !v.st.editing {
+			return ev
+		}
 		if v.st != nil && !v.st.secret && v.st.editing {
 			return tcell.NewEventKey(tcell.KeyRune, ' ', tcell.ModNone)
 		}
@@ -623,9 +635,7 @@ func (a *App) runPrompt(ctx context.Context, st *promptState) (tools.PromptAnswe
 	unmount := func() {
 		hadFocus := a.tv.GetFocus() == view
 		a.transcriptPanel.RemoveItem(view)
-		if a.livePrompt != nil && a.livePrompt.view == view {
-			a.livePrompt = nil
-		}
+		a.dropLiveCard(view)
 		// Only move focus if the card still owned it; a modal or
 		// panel the user opened meanwhile keeps its focus.
 		if hadFocus {
@@ -674,6 +684,7 @@ func (a *App) runPrompt(ctx context.Context, st *promptState) (tools.PromptAnswe
 			return
 		}
 		a.transcriptPanel.AddItem(view, 3, 0, true)
+		a.liveCards = append(a.liveCards, lp)
 		a.livePrompt = lp
 		lp.redraw()
 		a.transcript.ScrollToEnd()
@@ -742,6 +753,28 @@ type livePrompt struct {
 	textEntry func() bool // card is taking typed text (Other… or secret)
 }
 
+// dropLiveCard forgets the card shown by view. Cards can overlap (an
+// SSH askpass card from a mid-turn /add while an ask_user card waits,
+// or the reverse), so when the newest one goes the card under it
+// becomes the live one again instead of being left on screen with no
+// way to focus or answer it while its caller blocks. UI goroutine only.
+func (a *App) dropLiveCard(view *promptView) {
+	kept := a.liveCards[:0]
+	for _, lp := range a.liveCards {
+		if lp.view != view {
+			kept = append(kept, lp)
+		}
+	}
+	for i := len(kept); i < len(a.liveCards); i++ {
+		a.liveCards[i] = nil
+	}
+	a.liveCards = kept
+	a.livePrompt = nil
+	if n := len(kept); n > 0 {
+		a.livePrompt = kept[n-1]
+	}
+}
+
 // liveCardView returns the mounted card when it is actually on screen
 // (no modal pane, fullscreen or /about hiding the Conversation panel),
 // else nil. UI goroutine only.
@@ -773,16 +806,21 @@ func (a *App) restoreDefaultFocus() {
 // when the transcript width changed (terminal resize). Queued, never
 // run inside the draw pass.
 func (a *App) checkPromptWidth() {
-	lp := a.livePrompt
-	if lp == nil || lp.queued || a.transcript == nil {
+	if a.transcript == nil {
 		return
 	}
-	if w := innerWidth(a.transcript); w > 0 && w != lp.width {
+	w := innerWidth(a.transcript)
+	for _, lp := range a.liveCards {
+		if lp.queued || w <= 0 || w == lp.width {
+			continue
+		}
 		lp.queued = true
 		a.enqueueUI(func() {
 			lp.queued = false
-			if a.livePrompt == lp {
-				lp.redraw()
+			for _, c := range a.liveCards {
+				if c == lp {
+					lp.redraw()
+				}
 			}
 		})
 	}

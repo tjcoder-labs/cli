@@ -288,9 +288,10 @@ type App struct {
 	previousAgentDefaultModel string   // tracks the last agent's default model so switching agents can swap models
 	models                    []client.ModelInfo
 	enabledTools              map[string]bool
-	livePrompt                *livePrompt // mounted prompt card, UI goroutine only
-	burstTail                 keyBurst    // tail of a keystroke paste that finished a card
-	burstTailUntil            time.Time   // swallow burstTail keys until then; UI goroutine only
+	livePrompt                *livePrompt   // mounted prompt card, UI goroutine only
+	liveCards                 []*livePrompt // every mounted card, oldest first (livePrompt is the last); UI goroutine only
+	burstTail                 keyBurst      // tail of a keystroke paste that finished a card
+	burstTailUntil            time.Time     // swallow burstTail keys until then; UI goroutine only
 	history                   []client.Message
 	busy                      bool
 	idleQueue                 []func() // slash work deferred until the turn settles (whenIdle)

@@ -4,6 +4,17 @@
 
 All notable changes to Coder CLI. The source of truth is [release-notes/releases.json](release-notes/releases.json).
 
+## 0.9.221 — 2026-10-31
+
+**Question cards answer reliably.** Picking an option on a question card no longer sometimes does nothing, and a card left under another one can be answered again.
+
+### Fixed
+
+- Choosing an option with the arrow keys and Enter always answers the card, even when the keys arrive together over ssh, tmux or a busy machine.
+  Enter right after arrow keys was mistaken for a pasted line break and ignored. A pasted line break still never answers a card.
+- When two question cards are open at once, such as an SSH password card from /add while Coder is asking you something, answering one gives the keyboard back to the other.
+  Before, the remaining card stayed on screen but could not be selected, so its question waited until it timed out and the reply looked frozen.
+
 ## 0.9.220 — 2026-10-31
 
 **Assistant label colour fix.** The assistant's label now always starts on the normal background, and four long-failing TUI tests pass again.
