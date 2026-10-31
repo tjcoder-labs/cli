@@ -292,6 +292,8 @@ func promptHeading(req tools.PromptRequest) string {
 		return "AUTHORIZATION"
 	case tools.PromptNextSteps:
 		return "NEXT STEPS"
+	case tools.PromptError:
+		return "ERROR"
 	default:
 		return "QUESTION"
 	}
@@ -300,7 +302,11 @@ func promptHeading(req tools.PromptRequest) string {
 // cardHeader is the shared top of every prompt card: heading,
 // question and detail.
 func cardHeader(th theme.Theme, req tools.PromptRequest, secret bool) []render.Line {
-	head := render.Line{{Text: promptHeading(req), Fg: th.Primary, Attr: "b"}}
+	headFg := th.Primary
+	if req.Kind == tools.PromptError {
+		headFg = cardErrorAccent
+	}
+	head := render.Line{{Text: promptHeading(req), Fg: headFg, Attr: "b"}}
 	if req.MultiSelect && !secret {
 		head = append(head, render.Span{Text: "  · choose any", Fg: th.Dim})
 	}
@@ -408,7 +414,16 @@ func (s *promptState) hint() string {
 
 // render returns the boxed live card, width cells wide.
 func (s *promptState) render(p Palette, width int) string {
-	return renderCard(p.Theme, s.content(p.Theme), width)
+	return renderCard(p.Theme, s.content(p.Theme), width, cardAccentFor(s.req))
+}
+
+// cardAccentFor picks the left-rule colour. Error cards are red; every
+// other card keeps the brand purple.
+func cardAccentFor(req tools.PromptRequest) string {
+	if req.Kind == tools.PromptError {
+		return cardErrorAccent
+	}
+	return ""
 }
 
 // promptOutcome is how a prompt ended, for the answered card.
@@ -600,7 +615,9 @@ func (a *App) runPrompt(ctx context.Context, st *promptState) (tools.PromptAnswe
 	tv.SetBackgroundColor(a.palette.BgRoot)
 	// Same horizontal padding as the transcript body, so the live card
 	// sits exactly where its answered copy will be printed.
-	tv.SetBorderPadding(0, 1, 3, 2)
+	// One blank row above and below the live card so it does not run
+	// into the transcript text above or the input below.
+	tv.SetBorderPadding(1, 1, 3, 2)
 	view := newPromptView(tv, st)
 	var finished bool
 	unmount := func() {
@@ -778,8 +795,10 @@ func (a *App) recordCard(req tools.PromptRequest, ans tools.PromptAnswer, how pr
 		return
 	}
 	a.postUI(func() {
-		card := renderCard(a.palette.Theme, answeredContent(a.palette.Theme, req, ans, how), innerWidth(a.transcript))
-		fmt.Fprintf(a.transcript, "\n%s\n", card)
+		card := renderCard(a.palette.Theme, answeredContent(a.palette.Theme, req, ans, how), innerWidth(a.transcript), cardAccentFor(req))
+		// One blank line above and below so the card never runs into the
+		// previous or next transcript line.
+		fmt.Fprintf(a.transcript, "\n\n%s\n\n", card)
 		a.transcript.ScrollToEnd()
 		if a.activity != nil {
 			q := req.Question

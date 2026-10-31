@@ -355,7 +355,9 @@ func (r *Runner) run(ctx context.Context, history []client.Message, prompt strin
 	}
 
 	ctxTrack := newContextTracker(model, contextWindow, systemPrompt, defs)
-	for step := 0; step < r.MaxSteps; step++ {
+	start := 0
+budget:
+	for step := start; step < r.MaxSteps; step++ {
 
 		// 0. Mid-turn steering drain. Before each model call, drain
 		// at most one queued steering message and append it to
@@ -529,15 +531,27 @@ func (r *Runner) run(ctx context.Context, history []client.Message, prompt strin
 		}
 	}
 
+	// Budget reached. Ask in the transcript rather than dumping a
+	// markdown warning. Continue extends the cap and resumes the loop.
+	if r.Prompter != nil {
+		ans, askErr := r.Prompter.Ask(ctx, tools.PromptRequest{
+			Kind:     tools.PromptNextSteps,
+			Title:    "TOOL BUDGET",
+			Question: fmt.Sprintf("Tool-call budget reached (%d steps).", r.MaxSteps),
+			Options:  []string{"Continue"},
+		})
+		if askErr == nil && !ans.Cancelled && ans.Index == 0 {
+			start = r.MaxSteps
+			r.MaxSteps += defaultMaxToolSteps
+			goto budget
+		}
+	}
+
 	if onEvent != nil {
 		onEvent(Event{
 			Type:     EventError,
 			ToolName: "runner",
 			Text:     fmt.Sprintf("reached max tool steps (%d); asking model for a checkpoint response", r.MaxSteps),
-		})
-		onEvent(Event{
-			Type: EventCommentary,
-			Text: "\n\n**! Tool-call budget reached for this turn.** Generating a checkpoint response without additional tools.\n\n",
 		})
 	}
 

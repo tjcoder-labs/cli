@@ -52,10 +52,10 @@ func TestCardSudoAndAskShareRenderer(t *testing.T) {
 	cards := map[string]string{
 		"sudo_live":     newChoicePrompt(sudoRequest()).render(p, width),
 		"ask_live":      newChoicePrompt(askRequest()).render(p, width),
-		"sudo_answered": renderCard(p.Theme, answeredContent(p.Theme, sudoRequest(), tools.PromptAnswer{Index: 0, Choice: "Allow once"}, outcomeAnswered), width),
-		"ask_answered":  renderCard(p.Theme, answeredContent(p.Theme, askRequest(), tools.PromptAnswer{Index: -1, Other: "staging first"}, outcomeAnswered), width),
-		"ask_dismissed": renderCard(p.Theme, answeredContent(p.Theme, askRequest(), tools.PromptAnswer{Index: -1, Cancelled: true}, outcomeDismissed), width),
-		"sudo_denied":   renderCard(p.Theme, answeredContent(p.Theme, sudoRequest(), tools.PromptAnswer{Index: -1, Cancelled: true}, outcomeDismissed), width),
+		"sudo_answered": renderCard(p.Theme, answeredContent(p.Theme, sudoRequest(), tools.PromptAnswer{Index: 0, Choice: "Allow once"}, outcomeAnswered), width, ""),
+		"ask_answered":  renderCard(p.Theme, answeredContent(p.Theme, askRequest(), tools.PromptAnswer{Index: -1, Other: "staging first"}, outcomeAnswered), width, ""),
+		"ask_dismissed": renderCard(p.Theme, answeredContent(p.Theme, askRequest(), tools.PromptAnswer{Index: -1, Cancelled: true}, outcomeDismissed), width, ""),
+		"sudo_denied":   renderCard(p.Theme, answeredContent(p.Theme, sudoRequest(), tools.PromptAnswer{Index: -1, Cancelled: true}, outcomeDismissed), width, ""),
 	}
 	accent := "[" + p.Theme.Primary
 	for name, card := range cards {

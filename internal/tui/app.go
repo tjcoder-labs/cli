@@ -268,6 +268,9 @@ type App struct {
 	// send and falls back to an activity-log warning if the buffer
 	// is saturated (per the contract documented on Runner.Steering).
 	steeringCh   chan string
+	// lastTurnPrompt is the user text of the in-flight turn, so an error
+	// card can offer to retry it.
+	lastTurnPrompt string
 	mcpClient    *mcp.Client
 	sessionState session.State
 	palette      Palette
@@ -3503,6 +3506,61 @@ func (a *App) submit() {
 	a.launchTurnWithContext(modelPrompt, "", turnCtx)
 }
 
+// friendlyError turns a raw provider error into a short sentence. HTML
+// bodies (nginx 502 pages) are never shown.
+func friendlyError(err error) string {
+	if err == nil {
+		return "something went wrong"
+	}
+	msg := err.Error()
+	lower := strings.ToLower(msg)
+	switch {
+	case strings.Contains(lower, "502") || strings.Contains(lower, "bad gateway"):
+		return "The gateway didn't respond (502)."
+	case strings.Contains(lower, "503") || strings.Contains(lower, "504") || strings.Contains(lower, "timeout") || strings.Contains(lower, "connection refused"):
+		return "The gateway is unavailable."
+	}
+	if i := strings.Index(lower, "<html"); i >= 0 {
+		msg = strings.TrimSpace(msg[:i])
+		if msg == "" {
+			return "The gateway returned an error page."
+		}
+	}
+	if len(msg) > 180 {
+		msg = msg[:180] + "…"
+	}
+	return msg
+}
+
+// offerRetry mounts a red error card asking the user to retry the last
+// message. Called off the UI goroutine (Ask blocks).
+func (a *App) offerRetry(prompt string, err error) {
+	if a.tv == nil {
+		return
+	}
+	reason := friendlyError(err)
+	ans, askErr := a.Ask(context.Background(), tools.PromptRequest{
+		Kind:     tools.PromptError,
+		Title:    "ERROR",
+		Question: reason,
+		Detail:   "Retry sending this message?",
+		Options:  []string{"Retry"},
+	})
+	if askErr != nil || ans.Cancelled || ans.Index != 0 || strings.TrimSpace(prompt) == "" {
+		return
+	}
+	a.postUI(func() {
+		a.busy = true
+		a.assistantState = "thinking"
+		a.assistantStamp = ""
+		a.startSpinner()
+		a.refreshFooter()
+		a.appendAssistantTurnLabel()
+		a.transcript.ScrollToEnd()
+		a.launchTurnWithContext(prompt, "", "")
+	})
+}
+
 // launchTurn runs one agent turn as a background goroutine against a
 // snapshot of the current history, then merges the result back onto
 // the UI thread. agentNameOverride selects a different agent persona
@@ -3519,6 +3577,7 @@ func (a *App) launchTurn(prompt, agentNameOverride string) {
 // block that the runner attaches to the latest user message of each
 // request (never to stored history). "" sends no block.
 func (a *App) launchTurnWithContext(prompt, agentNameOverride, turnContext string) {
+	a.lastTurnPrompt = prompt
 	enabled := a.enabledToolList()
 	history := append([]client.Message(nil), a.history...)
 	agentCfg := a.currentAgent
@@ -3560,7 +3619,7 @@ func (a *App) launchTurnWithContext(prompt, agentNameOverride, turnContext strin
 		nextHistory, err := a.runner.Run(ctx, history, prompt, agentCfg, model, enabled, a.handleEvent)
 		a.postUI(func() {
 			a.flushMarkdownStreams()
-			if err != nil {
+				if err != nil {
 				errText := fmt.Sprintf("error: %v", err)
 				if isReasoningRelated(errText) {
 					fmt.Fprintf(a.reasoning, "\n["+a.palette.HexAlert+"::b]✗ %s[-:-:-]\n", tview.Escape(errText))
@@ -3569,12 +3628,14 @@ func (a *App) launchTurnWithContext(prompt, agentNameOverride, turnContext strin
 					a.appendActivity(fmt.Sprintf("[%s::b]! %s[-::B]", a.palette.HexPurple, tview.Escape(note)))
 					fmt.Fprintf(a.transcript, "\n[%s::b]! model[-:-:-] [%s]%s[-]\n", a.palette.HexPurple, a.palette.HexLavender, tview.Escape(note))
 				} else {
-					a.appendActivity(fmt.Sprintf("["+a.palette.HexAlert+"::b]✗ error[-:-:-]: %s", tview.Escape(err.Error())))
-					fmt.Fprintf(a.transcript, "\n["+a.palette.HexAlert+"::b]✗ error[-:-:-]: %s\n", tview.Escape(err.Error()))
+					a.appendActivity(fmt.Sprintf("["+a.palette.HexAlert+"::b]✗ error[-:-:-]: %s", tview.Escape(friendlyError(err))))
 					if note := a.ergoRunErrorNote(err); note != "" {
 						a.appendActivity(note)
-						fmt.Fprintf(a.transcript, "["+a.palette.HexLavender+"]%s[-]\n", tview.Escape(note))
 					}
+					// Red error card with a retry, instead of dumping the raw
+					// body (nginx HTML, etc.) into the transcript.
+					retryPrompt := a.lastTurnPrompt
+					go a.offerRetry(retryPrompt, err)
 				}
 			} else {
 				a.assistantState = "replied"

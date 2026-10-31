@@ -13,6 +13,9 @@ const (
 	PromptQuestion      PromptKind = "question"
 	PromptAuthorization PromptKind = "authorization"
 	PromptNextSteps     PromptKind = "next_steps"
+	// PromptError is a failure card (gateway down, etc.). The TUI draws
+	// it with a red accent and a retry option.
+	PromptError PromptKind = "error"
 )
 
 // PromptRequest describes a numbered-choice prompt rendered inline in

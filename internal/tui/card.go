@@ -46,18 +46,26 @@ func cardWidth(avail int) int {
 	return avail
 }
 
+// cardErrorAccent is the red left rule used by error cards. It is a
+// fixed hue so a failure never inherits the brand purple.
+const cardErrorAccent = "#E85A5A"
+
 // renderCard boxes content lines into a card exactly width cells wide.
+// accent overrides the left rule colour; empty uses the brand primary.
 // A nil line in content renders as a blank spacer row. Long lines are
 // wrapped; continuation rows keep the first span's indent when it is
 // pure whitespace (option descriptions, typed answers).
-func renderCard(th theme.Theme, content []render.Line, width int) string {
+func renderCard(th theme.Theme, content []render.Line, width int, accent string) string {
 	width = cardWidth(width)
 	inner := width - 1 - cardPadLeft - cardPadRight
 	if inner < 8 {
 		inner = 8
 	}
+	if accent == "" {
+		accent = th.Primary
+	}
 	row := func(l render.Line) string {
-		out := render.Line{{Text: cardAccent, Fg: th.Primary}, {Text: strings.Repeat(" ", cardPadLeft)}}
+		out := render.Line{{Text: cardAccent, Fg: accent}, {Text: strings.Repeat(" ", cardPadLeft)}}
 		for _, s := range l {
 			if s.Fg == "" {
 				s.Fg = th.Text
