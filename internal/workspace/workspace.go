@@ -138,7 +138,10 @@ func within(kind Kind, root, p string) bool {
 // (EvalSymlinks locally, the remote shell over SSH).
 func (w *Workspace) Resolve(ctx context.Context, p string) (string, error) {
 	joined := w.join(w.Root, p)
-	if !within(w.Kind, w.Root, joined) {
+	// Cheap lexical pre-check for relative paths; absolute ones may name
+	// the root through a symlink (e.g. /tmp -> /private/tmp), so the
+	// authoritative check is on the resolved path below.
+	if !w.isAbs(p) && !within(w.Kind, w.Root, joined) {
 		return "", fmt.Errorf("path %q escapes workspace %s", p, w.Name)
 	}
 	real, err := w.FS.Realpath(ctx, joined)
@@ -347,8 +350,12 @@ func (s *Set) pick(wsName, p string) (*Workspace, string, error) {
 	}
 	active := s.Active()
 	if filepath.IsAbs(p) && active.Kind == KindLocal {
+		rp, err := LocalFS{}.Realpath(context.Background(), p)
+		if err != nil {
+			rp = p
+		}
 		for _, w := range s.All() {
-			if w.Kind == KindLocal && within(KindLocal, w.Root, p) {
+			if w.Kind == KindLocal && within(KindLocal, w.Root, rp) {
 				return w, p, nil
 			}
 		}

@@ -16,6 +16,7 @@ import (
 	"github.com/tjcoder-labs/cli/internal/session"
 	"github.com/tjcoder-labs/cli/internal/tasks"
 	"github.com/tjcoder-labs/cli/internal/tools"
+	"github.com/tjcoder-labs/cli/internal/workspace"
 )
 
 // errTurnCancelledBySteering is returned by runChatTurn when the
@@ -88,6 +89,9 @@ type Runner struct {
 	// unless --allow-sudo sets Sudo.
 	Prompter tools.Prompter
 	Sudo     *tools.SudoPolicy
+	// Workspaces is the session's workspace set (primary cwd plus
+	// /add'ed local and SSH folders). nil = WorkspaceRoot only.
+	Workspaces *workspace.Set
 
 	// Steering, if non-nil, is a buffered channel of user
 	// mid-turn steering messages. The runner drains it at two
@@ -300,6 +304,11 @@ func (r *Runner) run(ctx context.Context, history []client.Message, prompt strin
 	if injected := loadAgentsPrompt(r.WorkspaceRoot); injected != "" {
 		systemPrompt += "\n\nRepository instructions from AGENTS.md (auto-injected):\n" + injected
 	}
+	if r.Workspaces != nil {
+		if block := r.Workspaces.PromptBlock(); block != "" {
+			systemPrompt += "\n\n" + block
+		}
+	}
 	contextWindow, _ := r.Provider.ContextWindow(ctx, model)
 
 	if r.SessionState != nil {
@@ -454,6 +463,7 @@ func (r *Runner) run(ctx context.Context, history []client.Message, prompt strin
 					PersistSession: r.PersistSession,
 					Prompter:       r.Prompter,
 					Sudo:           r.Sudo,
+					Workspaces:     r.Workspaces,
 				})
 			}
 			stopWatch()
