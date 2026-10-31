@@ -219,6 +219,7 @@ var slashCommands = []slashCommand{
 	{"compact", "Summarize transcript to free context"},
 	{"quit", "Quit application"},
 	{"trigger", "Trigger an event"},
+	{"voice", "Toggle voice mode (tjcoder models only)"},
 	{"reminder", "Create a reminder"},
 	{"task", "Create a task"},
 	{"tasks", "Toggle the tasks panel"},
@@ -268,6 +269,7 @@ type App struct {
 	mcpClient    *mcp.Client
 	sessionState session.State
 	palette      Palette
+	voice                 VoiceState
 
 	workspaceRoot             string
 	productName               string
@@ -2150,6 +2152,8 @@ func (a *App) handleSlashCommand(cmd string) {
 	case "agentinfo":
 		a.openAgentInfoModal()
 	case "trigger", "event":
+	case "voice":
+		a.toggleVoice()
 		a.openTriggerModal()
 	case "reminder":
 		a.openReminderModal()
@@ -3486,6 +3490,7 @@ func (a *App) launchTurnWithContext(prompt, agentNameOverride, turnContext strin
 		nextHistory, err := a.runner.Run(ctx, history, prompt, agentCfg, model, enabled, a.handleEvent)
 		a.postUI(func() {
 			a.flushMarkdownStreams()
+			a.flushVoiceSpeech()
 			if err != nil {
 				errText := fmt.Sprintf("error: %v", err)
 				if isReasoningRelated(errText) {
@@ -3606,6 +3611,7 @@ func (a *App) handleEvent(event tooling.Event) {
 			a.reasoning.ScrollToEnd()
 			a.addReferencesFromText(event.Text)
 		case tooling.EventCommentary:
+			a.onCommentary(event.Text)
 			// Only set timestamp and update label on the first reply transition;
 			// subsequent commentary chunks just append text to avoid repeat timestamps.
 			if a.assistantState != "replied" {

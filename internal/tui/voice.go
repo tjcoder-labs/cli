@@ -1,52 +1,122 @@
 package tui
 
 import (
+	"os/exec"
 	"strings"
+	"sync"
 	"time"
 )
 
-// VoiceMode enables telephone-style speech for tjcoder provider models only.
-// Barge-in detection aborts TTS and speaks a brief "Go ahead".
-// Responses are optimized to 1-2 short sentences.
-
+// VoiceState holds telephone-style speech mode for tjcoder models only.
+// Barge-in aborts TTS and speaks a brief "Go ahead".
+// Commentary is optimized to 1-2 short sentences.
 type VoiceState struct {
 	Enabled   bool
 	Listening bool
 	Speaking  bool
 	BargeIn   bool
+	buf       strings.Builder
+	mu        sync.Mutex
+	ttsCmd    *exec.Cmd
 }
 
 func (a *App) isVoiceEligible() bool {
-	// Only tjcoder provider models (tjcoder/ergo-* or similar).
-	model := a.currentModel()
+	model := a.currentModel
 	return strings.HasPrefix(model, "tjcoder/") || strings.Contains(model, "ergo-")
 }
 
-func (a *App) onBargeIn() {
-	if !a.isVoiceEligible() || !a.voice.Speaking {
+func (a *App) toggleVoice() {
+	if !a.isVoiceEligible() {
+		a.appendActivity("Voice mode only available for tjcoder models")
 		return
 	}
-	a.voice.BargeIn = true
-	a.voice.Speaking = false
-	// Force speech engine to briefly say "Go ahead".
-	a.speakBrief("Go ahead")
-	// Then resume listening with ample silence timeout.
-	a.startListening(2 * time.Second)
+	a.voice.Enabled = !a.voice.Enabled
+	state := "off"
+	if a.voice.Enabled {
+		state = "on"
+		a.appendActivity("Voice mode on — short spoken replies, barge-in says \"Go ahead\"")
+	} else {
+		a.stopTTS()
+		a.appendActivity("Voice mode off")
+	}
+	a.appendActivity("Voice " + state)
 }
 
-func (a *App) speakBrief(text string) {
-	// Local TTS call (piper/espeak/say) — implement with exec or cgo.
-	// Keep under 1 second.
+func (a *App) onCommentary(text string) {
+	if !a.voice.Enabled || !a.isVoiceEligible() {
+		return
+	}
+	a.voice.mu.Lock()
+	a.voice.buf.WriteString(text)
+	a.voice.mu.Unlock()
+}
+
+func (a *App) flushVoiceSpeech() {
+	if !a.voice.Enabled || !a.isVoiceEligible() {
+		return
+	}
+	a.voice.mu.Lock()
+	raw := a.voice.buf.String()
+	a.voice.buf.Reset()
+	a.voice.mu.Unlock()
+	if strings.TrimSpace(raw) == "" {
+		return
+	}
+	spoken := a.optimizeForVoice(raw)
+	a.speak(spoken)
 }
 
 func (a *App) optimizeForVoice(completion string) string {
-	// Post-process LLM completion: split to 1-2 sentences, natural speech.
-	// Strip markdown, tool call noise; weave commentary as spoken asides.
-	sentences := strings.Split(completion, ".")
-	if len(sentences) > 2 {
-		return strings.Join(sentences[:2], ".") + "."
+	// Strip markdown-ish, take first 1-2 sentences.
+	s := strings.ReplaceAll(completion, "\n", " ")
+	s = strings.TrimSpace(s)
+	sentences := strings.Split(s, ".")
+	var out []string
+	for _, sent := range sentences {
+		sent = strings.TrimSpace(sent)
+		if sent != "" && len(out) < 2 {
+			out = append(out, sent)
+		}
 	}
-	return completion
+	if len(out) == 0 {
+		return s
+	}
+	return strings.Join(out, ". ") + "."
 }
 
-// TODO: integrate VAD/STT (local whisper), continuous loop, gateway LLM call with voice system prompt.
+func (a *App) speak(text string) {
+	a.stopTTS()
+	a.voice.Speaking = true
+	go func() {
+		// Prefer macOS say, fall back to espeak.
+		cmd := exec.Command("say", text)
+		if _, err := exec.LookPath("say"); err != nil {
+			cmd = exec.Command("espeak", text)
+		}
+		a.voice.ttsCmd = cmd
+		_ = cmd.Run()
+		a.voice.Speaking = false
+		a.voice.ttsCmd = nil
+	}()
+}
+
+func (a *App) speakBrief(text string) {
+	a.speak(text)
+}
+
+func (a *App) stopTTS() {
+	if a.voice.ttsCmd != nil && a.voice.ttsCmd.Process != nil {
+		_ = a.voice.ttsCmd.Process.Kill()
+	}
+	a.voice.Speaking = false
+}
+
+func (a *App) onBargeIn() {
+	if !a.voice.Enabled || !a.voice.Speaking {
+		return
+	}
+	a.voice.BargeIn = true
+	a.stopTTS()
+	a.speakBrief("Go ahead")
+	// Resume listening (VAD hook goes here).
+}
