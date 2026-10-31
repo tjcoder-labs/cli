@@ -147,8 +147,8 @@ type modelGroup struct {
 
 // groupErgoModels presents the ergo gateway catalogue as one catalog.
 // Ergo tiers come first (flash/pro/genius). Ollama cloud models served by
-// the same gateway are whitelabel upstreams and stay in that same catalog
-// rather than a separate provider section. Any other prefix is dropped.
+// the same gateway stay in that same catalog rather than a separate
+// provider section. Any other prefix is dropped.
 func groupErgoModels(models []client.ModelInfo) []modelGroup {
 	var tiers, cloud []client.ModelInfo
 	for _, m := range models {

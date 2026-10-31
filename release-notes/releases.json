@@ -3,6 +3,19 @@
   "schema_version": 1,
   "releases": [
     {
+      "version": "0.9.219",
+      "date": "2026-10-31",
+      "title": "Product name update",
+      "summary": "The TUI header now shows @tjcoder as the program name.",
+      "changes": {
+        "changed": [
+          {
+            "text": "The program name in the TUI header is now @tjcoder."
+          }
+        ]
+      }
+    },
+    {
       "version": "0.9.202",
       "date": "2026-10-30",
       "title": "Structured release notes",

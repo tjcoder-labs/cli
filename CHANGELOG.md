@@ -4,6 +4,14 @@
 
 All notable changes to Coder CLI. The source of truth is [release-notes/releases.json](release-notes/releases.json).
 
+## 0.9.219 — 2026-10-31
+
+**Product name update.** The TUI header now shows @tjcoder as the program name.
+
+### Changed
+
+- The program name in the TUI header is now @tjcoder.
+
 ## 0.9.202 — 2026-10-30
 
 **Structured release notes.** Release notes now live in one machine-readable file that ships inside coder, so a future update can show you what changed.
