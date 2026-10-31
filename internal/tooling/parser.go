@@ -118,6 +118,41 @@ func ExtractFallbackToolCall(content string, registry *tools.Registry) ([]client
 		cleanedContent = strings.Replace(cleanedContent, match[0], "", 1)
 	}
 
+	// 2b. Anthropic/Claude-style XML tool calls. Some models (DeepSeek,
+	// and others that have seen Claude-style prompting) emit the native
+	// Anthropic tool-call markup as prose instead of routing through the
+	// OpenAI tool_calls channel:
+	//
+	//   <tool_calls>
+	//     <invoke name="search_code">
+	//       <parameter name="pattern">func.*</parameter>
+	//     </invoke>
+	//   </tool_calls>
+	//
+	// We recover each <invoke> block, map <parameter> children into
+	// arguments, and strip the consumed markup from the content.
+	invokeRe := regexp.MustCompile(`(?s)<invoke\s+name\s*=\s*["']([^"']+)["']\s*>(.*?)</invoke>`)
+	for _, m := range invokeRe.FindAllStringSubmatch(cleanedContent, -1) {
+		invokeName := strings.TrimSpace(m[1])
+		if !isValidToolName(invokeName, registry) {
+			continue
+		}
+		paramRe := regexp.MustCompile(`(?s)<parameter\s+name\s*=\s*["']([^"']+)["']\s*>(.*?)</parameter>`)
+		args := make(map[string]interface{})
+		for _, pm := range paramRe.FindAllStringSubmatch(m[2], -1) {
+			args[strings.TrimSpace(pm[1])] = strings.TrimSpace(pm[2])
+		}
+		argsJSON, _ := json.Marshal(args)
+		toolCalls = append(toolCalls, client.ToolCall{
+			Type:     "function",
+			Function: client.ToolFunctionCall{Name: invokeName, Arguments: json.RawMessage(argsJSON)},
+		})
+		cleanedContent = strings.Replace(cleanedContent, m[0], "", 1)
+	}
+	// Remove any leftover <tool_calls> wrapper (e.g. when a block had no
+	// recoverable invokes) so the markup never leaks into the transcript.
+	cleanedContent = regexp.MustCompile(`(?s)<\s*/?\s*tool_calls\s*>`).ReplaceAllString(cleanedContent, "")
+
 	// 3. Extract any JSON object tool calls that may appear anywhere in the
 	// message, including indented or embedded comment lines.
 	for {

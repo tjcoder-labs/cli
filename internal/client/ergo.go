@@ -222,9 +222,12 @@ func (e *Ergo) Protocol() string {
 // A negative/zero timeout disables the client deadline (long streams).
 func NewErgo(baseURL, apiKey string, timeout time.Duration) *Ergo {
 	return &Ergo{
-		baseURL:    strings.TrimRight(baseURL, "/"),
-		apiKey:     apiKey,
-		httpClient: &http.Client{Timeout: timeout},
+		baseURL: strings.TrimRight(baseURL, "/"),
+		apiKey:  apiKey,
+		httpClient: &http.Client{
+			Timeout:   timeout,
+			Transport: &http.Transport{ExpectContinueTimeout: 0},
+		},
 	}
 }
 
@@ -273,6 +276,7 @@ func (e *Ergo) Chat(ctx context.Context, request ChatRequest, onEvent func(Strea
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+e.apiKey)
+	httpReq.Close = true
 
 	resp, err := e.httpClient.Do(httpReq)
 	if err != nil {
@@ -361,6 +365,7 @@ func (e *Ergo) Chat(ctx context.Context, request ChatRequest, onEvent func(Strea
 		}
 	}
 
+	_, _ = io.Copy(io.Discard, resp.Body)
 	return Message{
 		Role:            "assistant",
 		Content:         contentBuf.String(),

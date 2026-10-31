@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -134,6 +135,29 @@ var toolCallDelims = []string{
 	"</tool_call|>", "<tool_call|>",
 	"</tool_call>", "<tool_call>",
 	"\u2039/tool_call\u203a", "\u2039tool_call\u203a",
+	// Anthropic/Claude-style markup that models (e.g. DeepSeek) sometimes
+	// emit as prose instead of routing through the native tool channel.
+	"<tool_calls>", "</tool_calls>",
+	"</invoke>", "</parameter>",
+}
+
+// anthropicOpenRe matches opening tags with a name attribute and optional
+// attributes, e.g. <invoke name="search_code"> or <parameter name="path">.
+// We only need to detect the opener in the stream (the closer is a plain
+// literal already in toolCallDelims), so a partial match is sufficient.
+var anthropicOpenRe = regexp.MustCompile(`(?s)<(?:invoke|parameter)(?:\s+[^>]*?)?>`)
+
+// earliestToolCallToken returns the byte index and matched text of the
+// earliest tool-call delimiter (literal or attribute-bearing opener) in s.
+// It returns (-1, "") when none is present. Attribute-bearing openers
+// (<invoke ...>, <parameter ...>) are matched via regex so their name
+// attributes do not defeat the literal search.
+func earliestToolCallToken(s string) (int, string) {
+	idx, tok := earliestToken(s, toolCallDelims)
+	if m := anthropicOpenRe.FindStringIndex(s); m != nil && (idx == -1 || m[0] < idx) {
+		idx, tok = m[0], s[m[0]:m[1]]
+	}
+	return idx, tok
 }
 
 // partialSuffixLen checks if the end of string 's' contains an incomplete
@@ -201,7 +225,7 @@ func (p *thoughtParser) Add(text string) (reasoning, commentary string) {
 		case p.inToolCall:
 			// Suppress everything until the next delimiter (which closes the
 			// span); emit nothing.
-			idx, tok := earliestToken(p.buf, toolCallDelims)
+			idx, tok := earliestToolCallToken(p.buf)
 			if idx != -1 {
 				p.buf = p.buf[idx+len(tok):]
 				p.inToolCall = false
@@ -214,7 +238,7 @@ func (p *thoughtParser) Add(text string) (reasoning, commentary string) {
 
 		default:
 			thinkIdx := strings.Index(p.buf, "<think>")
-			toolIdx, toolTok := earliestToken(p.buf, toolCallDelims)
+			toolIdx, toolTok := earliestToolCallToken(p.buf)
 
 			// Pick whichever opener appears first in the buffer.
 			nextIdx, kind := -1, ""
