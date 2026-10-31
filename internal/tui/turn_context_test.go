@@ -42,7 +42,11 @@ func TestWordBudget(t *testing.T) {
 func TestFormatTurnContext(t *testing.T) {
 	got := formatTurnContext(turnContextInfo{
 		User: "TJ Coder", Email: "tj@tjcoder.com",
-		Layout: "split (transcript + right column)", RightPanel: "canvas", CanvasFile: "main.go:L10-40",
+		Model: "tjcoder/ergo-pro:cloud", Agent: "software-engineer",
+		OS: "linux", Timezone: "America/Chicago", LocalTime: "2026-10-31 00:50",
+		Git: "feat/cloud dirty", Context: "12000 / 262144 tokens used, 250144 remaining",
+		OpenTasks: "doing: wire tjcoder ids",
+		Layout:    "split (transcript + right column)", RightPanel: "canvas", CanvasFile: "main.go:L10-40",
 		FocusedPane: "input", Cwd: "/work/cli",
 		Cols: 100, Lines: 30, TranscriptLines: 212,
 		Attachments: []fileAttachment{
@@ -54,6 +58,12 @@ func TestFormatTurnContext(t *testing.T) {
 		"<tui_context>\n",
 		"user: TJ Coder\n",
 		"email: tj@tjcoder.com\n",
+		"model: tjcoder/ergo-pro:cloud\n",
+		"agent: software-engineer\n",
+		"os: linux\n",
+		"git: feat/cloud dirty\n",
+		"context_remaining: 12000 / 262144 tokens used, 250144 remaining\n",
+		"open_tasks: doing: wire tjcoder ids\n",
 		"right_panel: canvas\n",
 		"canvas_file: main.go:L10-40\n",
 		"focused_pane: input\n",

@@ -14,7 +14,7 @@ import (
 // auto-selecting a default: ergo first, then local ollama, then ollama-cloud.
 // Anything that shows or iterates providers (help text, errors, pickers)
 // should use this slice so the ordering stays consistent.
-var ProviderOrder = []string{"ergo", "ollama", "ollama-cloud", "gemini"}
+var ProviderOrder = []string{"tjcoder", "ollama", "ollama-cloud", "gemini"}
 
 // defaultOllamaHost is the well-known local Ollama address. It is used as
 // a sentinel: if the caller passes this (or empty) we check the registry
@@ -63,7 +63,7 @@ func NewProvider(name, host, geminiAPIKey string, timeout time.Duration) (Provid
 			return nil, fmt.Errorf("--gemini-api-key or GEMINI_API_KEY required for gemini provider")
 		}
 		return NewGemini(geminiAPIKey, timeout), nil
-	case "ergo":
+	case "tjcoder", "ergo":
 		// The ergo provider authenticates with a scoped ergo API key. We read
 		// it from ERGO_API_KEY or the token saved by /login. When neither is set we still return a configured
 		// provider so the error surfaces at first chat with a clean 401-typed
@@ -94,7 +94,7 @@ func NewProviderFromConfig(cfg providers.Config, timeout time.Duration) (Provide
 		return nil, fmt.Errorf("invalid provider config %q (missing name or base_url)", cfg.Name)
 	}
 	switch cfg.Name {
-	case "ergo-gateway", "ergo":
+	case "tjcoder", "ergo-gateway", "ergo":
 		key := cfg.APIKey
 		if key == "" {
 			key = auth.ResolveErgoToken()

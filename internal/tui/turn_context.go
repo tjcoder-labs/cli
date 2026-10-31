@@ -4,11 +4,16 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"os/exec"
 	"os/user"
+	"runtime"
 	"strings"
+	"time"
 
 	"github.com/rivo/tview"
 	"github.com/tjcoder-labs/cli/internal/auth"
+	"github.com/tjcoder-labs/cli/internal/session"
+	"github.com/tjcoder-labs/cli/internal/tasks"
 )
 
 // Per-turn TUI metadata ("turn context").
@@ -74,6 +79,14 @@ func WordBudget(cols, lines int) int {
 type turnContextInfo struct {
 	User            string
 	Email           string
+	Model           string
+	Agent           string
+	OS              string
+	Timezone        string
+	LocalTime       string
+	Git             string
+	Context         string
+	OpenTasks       string
 	Layout          string // split | fullscreen | about | modal
 	RightPanel      string // activity | tasks | memories | articles | canvas | test
 	CanvasFile      string // "path" or "path:L10-40" when RightPanel == canvas
@@ -98,6 +111,14 @@ func formatTurnContext(info turnContextInfo) string {
 	line("note", "ephemeral client metadata for this turn only; not written by the user; do not quote it unless asked")
 	line("user", info.User)
 	line("email", info.Email)
+	line("model", info.Model)
+	line("agent", info.Agent)
+	line("os", info.OS)
+	line("timezone", info.Timezone)
+	line("local_time", info.LocalTime)
+	line("git", info.Git)
+	line("context_remaining", info.Context)
+	line("open_tasks", info.OpenTasks)
 	line("layout", info.Layout)
 	line("right_panel", info.RightPanel)
 	line("canvas_file", info.CanvasFile)
@@ -261,8 +282,77 @@ func (a *App) buildTurnContext(atts []fileAttachment) string {
 	if info.User == "" {
 		info.User = localUserName()
 	}
+	info.Model = a.currentModel
+	info.Agent = a.currentAgent.Name
+	info.OS = clientOS()
+	now := time.Now()
+	info.Timezone = now.Location().String()
+	info.LocalTime = now.Format("2006-01-02 15:04")
+	info.Git = gitSnapshot(info.Cwd)
+	info.Context = contextRemaining(a.ctxUsage.Used, a.ctxUsage.Window)
+	info.OpenTasks = openTaskTitles(a.workspaceRoot)
 	info.Layout, info.RightPanel, info.CanvasFile = a.uiLayoutState()
 	info.FocusedPane = a.focusedPaneName()
 	info.Cols, info.Lines, info.TranscriptLines = a.transcriptMetrics()
 	return formatTurnContext(info)
+}
+
+func clientOS() string {
+	if os.Getenv("TERMUX_VERSION") != "" || strings.Contains(os.Getenv("PREFIX"), "com.termux") {
+		return "termux"
+	}
+	return runtime.GOOS
+}
+
+func contextRemaining(used, window int) string {
+	if window <= 0 {
+		return ""
+	}
+	remaining := window - used
+	if remaining < 0 {
+		remaining = 0
+	}
+	return fmt.Sprintf("%d / %d tokens used, %d remaining", used, window, remaining)
+}
+
+func openTaskTitles(root string) string {
+	st, _, err := session.Load(root)
+	if err != nil {
+		return ""
+	}
+	open := tasks.Load(st).Open()
+	if len(open) == 0 {
+		return ""
+	}
+	if len(open) > 5 {
+		open = open[:5]
+	}
+	titles := make([]string, 0, len(open))
+	for _, t := range open {
+		title := strings.TrimSpace(t.Title)
+		if title == "" {
+			continue
+		}
+		titles = append(titles, t.Status+": "+title)
+	}
+	return strings.Join(titles, "; ")
+}
+
+func gitSnapshot(dir string) string {
+	if dir == "" {
+		return ""
+	}
+	branch, err := exec.Command("git", "-C", dir, "rev-parse", "--abbrev-ref", "HEAD").Output()
+	if err != nil {
+		return ""
+	}
+	name := strings.TrimSpace(string(branch))
+	if name == "" {
+		return ""
+	}
+	status, _ := exec.Command("git", "-C", dir, "status", "--porcelain").Output()
+	if strings.TrimSpace(string(status)) == "" {
+		return name + " clean"
+	}
+	return name + " dirty"
 }

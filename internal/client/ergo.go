@@ -39,9 +39,13 @@ var ergoContextWindows = map[string]int{
 	"gemini-2.5-pro":   1048576,
 	"gemini-2.5-flash": 1048576,
 	// Ergo tiers (fallback only; the gateway's /api/show is authoritative)
-	"ergo/flash":  131072,
-	"ergo/pro":    262144,
-	"ergo/genius": 262144,
+	"tjcoder/ergo-flash:cloud":      131072,
+	"tjcoder/ergo-pro:cloud":        262144,
+	"tjcoder/ergo-genius:cloud":     262144,
+	"tjcoder/deepseek-v4-pro:cloud": 262144,
+	"ergo/flash":                    131072,
+	"ergo/pro":                      262144,
+	"ergo/genius":                   262144,
 	// xAI via gateway
 	"xai/grok-4.7":   500000,
 	"xai/grok-4.5":   1000000,

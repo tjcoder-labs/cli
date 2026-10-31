@@ -783,7 +783,8 @@ func (a *App) build() {
 	// two read as one cohesive component.
 	a.contextBar = tview.NewTextView().
 		SetDynamicColors(true).
-		SetTextAlign(tview.AlignLeft)
+		SetTextAlign(tview.AlignLeft).
+		SetWrap(false)
 	a.contextBar.SetBackgroundColor(a.palette.BgInput)
 	a.contextBar.SetTextColor(a.palette.TextDim)
 	a.contextBar.SetBorderPadding(1, 1, 2, 2)
@@ -1452,21 +1453,14 @@ func (a *App) refreshStatusIndicator() {
 	if agentName == "" {
 		agentName = "coder"
 	}
-	// Combined provider/model, unshortened (ergo/pro). No labels — the bar is tight.
+	// Values only. If the model id already names the provider (tjcoder/…),
+	// don't repeat the provider beside it.
 	providerName := client.ProviderKey(a.provider)
 	modelName := a.currentModel
 	if modelName == "" {
 		modelName = "—"
 	}
-	var providerModel string
-	switch {
-	case strings.HasPrefix(modelName, providerName+"/"):
-		providerModel = modelName
-	case modelName == "—":
-		providerModel = providerName
-	default:
-		providerModel = providerName + "/" + modelName
-	}
+	showProvider := providerName != "" && !strings.HasPrefix(modelName, providerName+"/")
 	state := a.agentStateLabel()
 	stateColor := a.palette.HexLavender
 	stateBold := false
@@ -1485,12 +1479,24 @@ func (a *App) refreshStatusIndicator() {
 		stateTag = fmt.Sprintf("[%s]%s[-]", stateColor, state)
 	}
 	a.statusBar.SetTextAlign(tview.AlignLeft)
-	a.statusBar.SetText(fmt.Sprintf(
-		"[%s::b]%s[-:-:-] [%s]·[-] [%s::b]%s[-:-:-] · %s   [%s][Ctl+A][-] switch agent",
-		a.palette.HexLavender, agentName,
-		a.palette.HexDim, a.palette.HexLavender, providerModel,
-		stateTag, a.palette.HexLavender,
-	))
+	var status string
+	if showProvider {
+		status = fmt.Sprintf(
+			"[%s::b]%s[-:-:-] [%s]·[-] [%s::b]%s[-:-:-] [%s]·[-] [%s::b]%s[-:-:-] · %s   [%s][Ctl+A][-] switch agent",
+			a.palette.HexLavender, agentName,
+			a.palette.HexDim, a.palette.HexLavender, providerName,
+			a.palette.HexDim, a.palette.HexLavender, modelName,
+			stateTag, a.palette.HexLavender,
+		)
+	} else {
+		status = fmt.Sprintf(
+			"[%s::b]%s[-:-:-] [%s]·[-] [%s::b]%s[-:-:-] · %s   [%s][Ctl+A][-] switch agent",
+			a.palette.HexLavender, agentName,
+			a.palette.HexDim, a.palette.HexLavender, modelName,
+			stateTag, a.palette.HexLavender,
+		)
+	}
+	a.statusBar.SetText(status)
 }
 
 // refreshHeaderRight updates the right-aligned [Alt+I] / [Ctl+F] /
@@ -1737,10 +1743,35 @@ func (a *App) renderMetaBar() string {
 		line += fmt.Sprintf("[%s]%s[-]   ", a.palette.HexFaint, tview.Escape(ws))
 	}
 	line += a.ergoBalanceSegment()
+	line = a.fitMetaLine(line, cwd, refsText)
 	if a.contextBar != nil {
 		a.contextBar.SetText(line)
+		a.contextBar.ScrollToBeginning()
 	}
 	return line
+}
+
+// fitMetaLine keeps the file names fully visible. A line longer than the
+// bar was scrolling to its tail, so a short name like AGENTS.md rendered
+// as ENTS.md. Truncate the cwd (the long, least important part) instead.
+func (a *App) fitMetaLine(line, cwd, refs string) string {
+	width := a.paletteWidth()
+	if width <= 0 || tview.TaggedStringWidth(line) <= width {
+		return line
+	}
+	if cwd == "" || !strings.Contains(line, cwd) {
+		return line
+	}
+	over := tview.TaggedStringWidth(line) - width
+	keep := utf8.RuneCountInString(cwd) - over - 1
+	if keep < 8 {
+		keep = 8
+	}
+	if keep >= utf8.RuneCountInString(cwd) {
+		return line
+	}
+	short := string([]rune(cwd)[:keep]) + "…"
+	return strings.Replace(line, cwd, short, 1)
 }
 
 // renderProgressBar builds a compact 12-segment bar with a highlighted
@@ -1855,6 +1886,40 @@ func (a *App) stopSpinner() {
 	}
 }
 
+// altPanel maps Alt/Option+letter to a panel. On macOS the Option key
+// usually arrives as the composed character (å for Option+A) with no
+// ModAlt bit, so both forms are accepted.
+func altPanel(event *tcell.EventKey) string {
+	r := event.Rune()
+	if event.Modifiers()&tcell.ModAlt != 0 {
+		switch unicode.ToLower(r) {
+		case 'a':
+			return "activity"
+		case 't':
+			return "tasks"
+		case 'c':
+			return "canvas"
+		case 'i':
+			return "about"
+		case 'f':
+			return "fullscreen"
+		}
+	}
+	switch r {
+	case 'å', 'Å': // Option+A
+		return "activity"
+	case '†': // Option+T
+		return "tasks"
+	case 'ç', 'Ç': // Option+C
+		return "canvas"
+	case 'ˆ': // Option+I
+		return "about"
+	case 'ƒ': // Option+F
+		return "fullscreen"
+	}
+	return ""
+}
+
 func (a *App) globalKeys(event *tcell.EventKey) *tcell.EventKey {
 	if os.Getenv("CODER_DEBUG_FOCUS") == "1" && a.leftPane != nil {
 		f := a.tv.GetFocus()
@@ -1868,24 +1933,20 @@ func (a *App) globalKeys(event *tcell.EventKey) *tcell.EventKey {
 		return nil
 	}
 	// Alt-letter shortcuts for panel display (informational only, focus stays on input).
-	if event.Modifiers()&tcell.ModAlt != 0 {
-		switch unicode.ToLower(event.Rune()) {
-		case 'a':
+	if panel := altPanel(event); panel != "" {
+		switch panel {
+		case "activity":
 			a.showPanel("activity")
-			return nil
-		case 't':
+		case "tasks":
 			a.showPanel("tasks")
-			return nil
-		case 'c':
+		case "canvas":
 			a.showPanel("canvas")
-			return nil
-		case 'i':
+		case "about":
 			a.setReasoningSplash()
-			return nil
-		case 'f':
+		case "fullscreen":
 			a.toggleFullscreen()
-			return nil
 		}
+		return nil
 	}
 	if event.Key() == tcell.KeyCtrlA {
 		a.openAgentModal()
@@ -4646,7 +4707,6 @@ func (a *App) openModelModal() {
 		// Unified catalogue grouped by provider prefix, ergo tiers first.
 		// Group headers are inert rows.
 		for _, g := range groupErgoModels(a.models) {
-			list.AddItem(fmt.Sprintf("[%s::b]── %s ──[-:-:-]", a.palette.HexDim, g.Name), "", 0, nil)
 			for _, m := range g.Models {
 				addModel(m)
 			}
@@ -4880,13 +4940,23 @@ func (a *App) referenceSummary() string {
 	if len(a.refOrder) == 0 {
 		return "refs: -"
 	}
+	// Next to the context indicator we only have room for the file name
+	// and extension. Full paths get clipped mid-name (src/config/agents/ergo.ace).
+	base := func(ref string) string {
+		name := filepath.Base(strings.TrimSpace(ref))
+		if name == "." || name == "/" || name == "" {
+			return ref
+		}
+		return name
+	}
 	mdRefs := make([]string, 0, len(a.refOrder))
 	otherRefs := make([]string, 0, len(a.refOrder))
 	for _, ref := range a.refOrder {
-		if strings.HasSuffix(strings.ToLower(ref), ".md") || strings.HasSuffix(strings.ToLower(ref), ".markdown") {
-			mdRefs = append(mdRefs, ref)
+		name := base(ref)
+		if strings.HasSuffix(strings.ToLower(name), ".md") || strings.HasSuffix(strings.ToLower(name), ".markdown") {
+			mdRefs = append(mdRefs, name)
 		} else {
-			otherRefs = append(otherRefs, ref)
+			otherRefs = append(otherRefs, name)
 		}
 	}
 	ordered := append(mdRefs, otherRefs...)

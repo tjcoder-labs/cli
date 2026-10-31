@@ -11,7 +11,7 @@ import (
 )
 
 // ErgoDefaultModel is the model used when nothing valid is remembered.
-const ErgoDefaultModel = "ergo/pro"
+const ErgoDefaultModel = "tjcoder/ergo-pro:cloud"
 
 // ErgoAgent describes one of the gateway's public ergo tiers.
 type ErgoAgent struct {
@@ -22,21 +22,26 @@ type ErgoAgent struct {
 // ErgoAgents is the hardcoded fallback set (and the source of the
 // one-line descriptions) used when /v1/models is unavailable.
 var ErgoAgents = []ErgoAgent{
-	{Name: "ergo/flash", Desc: "fast and economical"},
-	{Name: "ergo/pro", Desc: "balanced everyday model (default)"},
-	{Name: "ergo/genius", Desc: "deepest reasoning for hard problems"},
+	{Name: "tjcoder/ergo-flash:cloud", Desc: "fast and economical"},
+	{Name: "tjcoder/ergo-pro:cloud", Desc: "balanced everyday model (default)"},
+	{Name: "tjcoder/ergo-genius:cloud", Desc: "deepest reasoning for hard problems"},
+	{Name: "tjcoder/deepseek-v4-pro:cloud", Desc: "whitelabel DeepSeek V4 Pro"},
 }
 
 // ergoLegacyAliases maps pre-0.9.182 tier ids to the public ids.
 var ergoLegacyAliases = map[string]string{
-	"ergo":          "ergo/pro",
-	"ergo-pro":      "ergo/pro",
-	"ergo-standard": "ergo/flash",
-	"ergo-lite":     "ergo/flash",
-	"ergo-flash":    "ergo/flash",
-	"ergo-genius":   "ergo/genius",
-	"ergo/lite":     "ergo/flash",
-	"ergo/ergo":     "ergo/pro",
+	"ergo":          "tjcoder/ergo-pro:cloud",
+	"ergo-pro":      "tjcoder/ergo-pro:cloud",
+	"ergo/pro":      "tjcoder/ergo-pro:cloud",
+	"ergo/ergo":     "tjcoder/ergo-pro:cloud",
+	"ergo/ergo-pro": "tjcoder/ergo-pro:cloud",
+	"ergo-standard": "tjcoder/ergo-flash:cloud",
+	"ergo-lite":     "tjcoder/ergo-flash:cloud",
+	"ergo-flash":    "tjcoder/ergo-flash:cloud",
+	"ergo/flash":    "tjcoder/ergo-flash:cloud",
+	"ergo/lite":     "tjcoder/ergo-flash:cloud",
+	"ergo-genius":   "tjcoder/ergo-genius:cloud",
+	"ergo/genius":   "tjcoder/ergo-genius:cloud",
 }
 
 // NormalizeErgoModel migrates a saved or typed ergo model id: legacy
@@ -52,7 +57,7 @@ func NormalizeErgoModel(id string) string {
 		return to
 	}
 	switch lower {
-	case "ergo/flash", "ergo/pro", "ergo/genius":
+	case "tjcoder/ergo-flash:cloud", "tjcoder/ergo-pro:cloud", "tjcoder/ergo-genius:cloud", "tjcoder/deepseek-v4-pro:cloud":
 		return lower
 	}
 	if strings.HasPrefix(lower, "ergo") {
@@ -64,7 +69,7 @@ func NormalizeErgoModel(id string) string {
 // IsErgoTier reports whether id is (or aliases) an ergo gateway tier, i.e.
 // a name that must never be sent to a non-ergo provider.
 func IsErgoTier(id string) bool {
-	return strings.HasPrefix(NormalizeErgoModel(id), "ergo/")
+	return strings.HasPrefix(NormalizeErgoModel(id), "tjcoder/")
 }
 
 // ErgoModelGroup returns the provider prefix used to group the picker
@@ -256,9 +261,13 @@ func (e *Ergo) ListAllModels(ctx context.Context) ([]ModelInfo, error) {
 	var models []ModelInfo
 	for _, p := range decoded.Providers {
 		for _, m := range p.Models {
-			if id := strings.TrimSpace(m.ID); id != "" {
-				models = append(models, ModelInfo{Name: id, Family: p.ID})
+			id := strings.TrimSpace(m.ID)
+			// Gateway catalogue is the tjcoder slug only. ollama/ is an
+			// internal upstream and must not appear in the TUI.
+			if id == "" || !strings.HasPrefix(strings.ToLower(id), "tjcoder/") {
+				continue
 			}
+			models = append(models, ModelInfo{Name: id, Family: "tjcoder"})
 		}
 	}
 	if len(models) == 0 {
@@ -272,7 +281,7 @@ func (e *Ergo) ListAllModels(ctx context.Context) ([]ModelInfo, error) {
 func ProviderKey(p Provider) string {
 	switch p.(type) {
 	case *Ergo:
-		return "ergo"
+		return "tjcoder"
 	case *Gemini:
 		return "gemini"
 	case *OpenAICompatible:

@@ -81,10 +81,7 @@ var (
 	}()
 
 	productName = func() string {
-		if n := loadPackageMeta().Name; n != "" {
-			return n
-		}
-		return "TJ Coder CLI"
+		return "TJ Coder AI Models"
 	}()
 
 	author = func() string {

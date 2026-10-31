@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"slices"
-	"sort"
 	"strings"
 
 	"github.com/tjcoder-labs/cli/internal/client"
@@ -146,43 +145,30 @@ type modelGroup struct {
 	Models []client.ModelInfo
 }
 
-// ergoGroupOrder is the picker's section order; unknown prefixes follow
-// alphabetically.
-var ergoGroupOrder = []string{"ergo", "xai", "ollama", "google", "openai"}
-
-// groupErgoModels groups the gateway catalogue by id prefix (ergo/, xai/,
-// ollama/, …), ergo first with its tiers in flash/pro/genius order, and
-// keeps the server order within every other group.
+// groupErgoModels presents the ergo gateway catalogue as one catalog.
+// Ergo tiers come first (flash/pro/genius). Ollama cloud models served by
+// the same gateway are whitelabel upstreams and stay in that same catalog
+// rather than a separate provider section. Any other prefix is dropped.
 func groupErgoModels(models []client.ModelInfo) []modelGroup {
-	byName := map[string]*modelGroup{}
-	var extra []string
+	var tiers, cloud []client.ModelInfo
 	for _, m := range models {
-		g := client.ErgoModelGroup(m.Name)
-		if byName[g] == nil {
-			byName[g] = &modelGroup{Name: g}
-			if !slices.Contains(ergoGroupOrder, g) {
-				extra = append(extra, g)
+		switch client.ErgoModelGroup(m.Name) {
+		case "tjcoder":
+			tiers = append(tiers, m)
+		}
+	}
+	rank := func(name string) int {
+		for i, a := range client.ErgoAgents {
+			if a.Name == name {
+				return i
 			}
 		}
-		byName[g].Models = append(byName[g].Models, m)
+		return len(client.ErgoAgents)
 	}
-	if g := byName["ergo"]; g != nil {
-		rank := func(name string) int {
-			for i, a := range client.ErgoAgents {
-				if a.Name == name {
-					return i
-				}
-			}
-			return len(client.ErgoAgents)
-		}
-		slices.SortStableFunc(g.Models, func(x, y client.ModelInfo) int { return rank(x.Name) - rank(y.Name) })
+	slices.SortStableFunc(tiers, func(x, y client.ModelInfo) int { return rank(x.Name) - rank(y.Name) })
+	all := append(tiers, cloud...)
+	if len(all) == 0 {
+		return nil
 	}
-	sort.Strings(extra)
-	out := make([]modelGroup, 0, len(byName))
-	for _, name := range append(slices.Clone(ergoGroupOrder), extra...) {
-		if g := byName[name]; g != nil {
-			out = append(out, *g)
-		}
-	}
-	return out
+	return []modelGroup{{Name: "tjcoder", Models: all}}
 }

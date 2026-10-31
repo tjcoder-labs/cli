@@ -121,10 +121,10 @@ type Registry struct {
 // may delete any of them — but they seed a first-run install.
 func Defaults() Registry {
 	return Registry{
-		Active: "ergo-gateway",
+		Active: "tjcoder",
 		Providers: []Config{
 			{
-				Name:    "ergo-gateway",
+				Name:    "tjcoder",
 				BaseURL: "https://api.tjcoder.com",
 				Auth:    AuthDeviceCode,
 				Default: true,
