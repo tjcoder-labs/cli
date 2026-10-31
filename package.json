@@ -1,7 +1,7 @@
 {
   "name": "@tjcoder/cli",
   "productName": "TJ Coder AI Models",
-  "version": "0.9.207",
+  "version": "0.9.208",
   "private": true,
   "description": "Terminal-first Coding CLI by TJ Coder / AI Labs. Designed and developed in Salt Lake City.",
   "author": "TJ Coder / AI Labs",
