@@ -28,6 +28,7 @@ func (a *App) isVoiceEligible() bool {
 func (a *App) toggleVoice() {
 	if !a.isVoiceEligible() {
 		a.appendActivity("Voice mode only available for tjcoder models")
+		a.speakBrief("Voice mode on. Say something after I finish.")
 		return
 	}
 	a.voice.Enabled = !a.voice.Enabled
@@ -35,6 +36,7 @@ func (a *App) toggleVoice() {
 	if a.voice.Enabled {
 		state = "on"
 		a.appendActivity("Voice mode on — short spoken replies, barge-in says \"Go ahead\"")
+		a.speakBrief("Voice mode on. Say something after I finish.")
 	} else {
 		a.stopTTS()
 		a.appendActivity("Voice mode off")
@@ -118,5 +120,6 @@ func (a *App) onBargeIn() {
 	a.voice.BargeIn = true
 	a.stopTTS()
 	a.speakBrief("Go ahead")
+	a.appendActivity("Barge-in: Go ahead")
 	// Resume listening (VAD hook goes here).
 }
