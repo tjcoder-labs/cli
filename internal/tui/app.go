@@ -1452,15 +1452,20 @@ func (a *App) refreshStatusIndicator() {
 	if agentName == "" {
 		agentName = "coder"
 	}
+	// Combined provider/model, unshortened (ergo/pro). No labels — the bar is tight.
+	providerName := client.ProviderKey(a.provider)
 	modelName := a.currentModel
 	if modelName == "" {
 		modelName = "—"
 	}
-	// Shorten the model name for the status bar so it doesn't eat
-	// horizontal space. Keep the last meaningful segment after any
-	// "/" prefix.
-	if idx := strings.LastIndex(modelName, "/"); idx >= 0 && idx < len(modelName)-1 {
-		modelName = modelName[idx+1:]
+	var providerModel string
+	switch {
+	case strings.HasPrefix(modelName, providerName+"/"):
+		providerModel = modelName
+	case modelName == "—":
+		providerModel = providerName
+	default:
+		providerModel = providerName + "/" + modelName
 	}
 	state := a.agentStateLabel()
 	stateColor := a.palette.HexLavender
@@ -1481,9 +1486,9 @@ func (a *App) refreshStatusIndicator() {
 	}
 	a.statusBar.SetTextAlign(tview.AlignLeft)
 	a.statusBar.SetText(fmt.Sprintf(
-		"[%s]agent:[-] [%s::b]%s[-:-:-] [%s]·[-] [%s]model:[-] [%s::b]%s[-:-:-] · %s   [%s][Ctl+A][-] switch agent",
-		a.palette.HexDim, a.palette.HexLavender, agentName,
-		a.palette.HexDim, a.palette.HexDim, a.palette.HexLavender, modelName,
+		"[%s::b]%s[-:-:-] [%s]·[-] [%s::b]%s[-:-:-] · %s   [%s][Ctl+A][-] switch agent",
+		a.palette.HexLavender, agentName,
+		a.palette.HexDim, a.palette.HexLavender, providerModel,
 		stateTag, a.palette.HexLavender,
 	))
 }
