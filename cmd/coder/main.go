@@ -106,7 +106,7 @@ func main() {
 	model := flag.String("model", "", "override the default model")
 	timeout := flag.Duration("timeout", defaultTimeout(), "HTTP request timeout (e.g. 30s, 10m, 0 to disable)")
 	workspaceRoot := flag.String("workspace-root", mustCWD(), "workspace root")
-	providerName := flag.String("provider", "", "provider: ergo, ollama, ollama-cloud, gemini (default: ergo if signed in or in the TUI; headless falls back to ollama, then ollama-cloud)")
+	providerName := flag.String("provider", "", "provider: ergo, tjcoder, ollama, ollama-cloud, gemini (ergo-gateway is accepted; default: ergo if signed in or in the TUI; headless falls back to ollama, then ollama-cloud)")
 
 	// Headless (non-interactive) flags. Setting any of these — or providing a
 	// positional "ask" subcommand — routes execution through cmdAsk instead of

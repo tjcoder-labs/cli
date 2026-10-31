@@ -210,35 +210,37 @@ type slashCommand struct {
 // slashCommands is the ordered set of commands offered by the inline
 // palette. Keep in sync with handleSlashCommand's switch.
 var slashCommands = []slashCommand{
-	{"agent", "Open agent selector"},
-	{"agentinfo", "View current agent prompt"},
-	{"tools", "Toggle tools"},
-	{"model", "Choose model"},
-	{"scroll", "Scroll transcript"},
-	{"clear", "Clear session"},
-	{"compact", "Summarize transcript to free context"},
-	{"quit", "Quit application"},
+	{"help", "Show this command reference"},
+	{"agent", "Open the agent selector"},
+	{"agentinfo", "View the current agent prompt"},
+	{"tools", "Toggle tools on or off"},
+	{"model", "Choose a model"},
+	{"scroll", "Scroll the transcript"},
+	{"clear", "Clear the session"},
+	{"compact", "Summarize the transcript to free context"},
+	{"quit", "Quit"},
 	{"trigger", "Trigger an event"},
 	{"reminder", "Create a reminder"},
 	{"task", "Create a task"},
 	{"tasks", "Toggle the tasks panel"},
-	{"reminders", "Toggle the reminders panel (schedules and next runs)"},
+	{"reminders", "Toggle the reminders panel"},
 	{"memory", "Store a memory"},
-	{"config", "Edit user config (JSON)"},
-	{"environment", "Edit injected environment/context template"},
-	{"login", "Authenticate with ergo (API key)"},
-	{"logout", "Sign out of ergo"},
-	{"balance", "Show ergo wallet balance"},
-	{"activity", "Open activity panel"},
-	{"canvas", "Open a file/range in the canvas panel (no args toggles)"},
-	{"add", "Add a workspace: folder path or ssh <host>[:<path>]"},
-	{"dirs", "List workspaces (rm <name> removes); alias /workspaces"},
+	{"memories", "Toggle the memories panel"},
+	{"config", "Edit user config"},
+	{"environment", "Edit the injected environment template"},
+	{"login", "Sign in to the TJ Coder gateway"},
+	{"logout", "Sign out of the TJ Coder gateway"},
+	{"balance", "Show the TJ Coder wallet balance"},
+	{"activity", "Open the activity panel"},
+	{"canvas", "Open a file or range in the canvas"},
+	{"add", "Add a workspace: path or ssh <host>[:<path>]"},
+	{"dirs", "List workspaces; /dirs rm <name> removes"},
 	{"use", "Set the active workspace"},
-	{"about", "Open the about / welcome screen"},
+	{"about", "Open the about screen"},
 	{"mcp", "Manage MCP integrations"},
 	{"providers", "Manage model providers"},
-	{"update", "Check for and install a coder update"},
-	{"telemetry", "Anonymous usage stats: on, off or status"},
+	{"update", "Check for and install an update"},
+	{"telemetry", "Anonymous usage stats: on, off, or status"},
 }
 
 type App struct {
@@ -2104,6 +2106,8 @@ func (a *App) handleSlashCommand(cmd string) {
 		}
 	}
 	switch command {
+	case "help", "?":
+		a.showHelp()
 	case "agent":
 		a.openAgentModal()
 	case "about":
@@ -2196,8 +2200,45 @@ func (a *App) handleSlashCommand(cmd string) {
 	case "use":
 		a.handleUseCommand(commandArgs(cmd))
 	default:
-		a.appendActivity(fmt.Sprintf("Unknown command: /%s. Try /login, /agent, /tools, /model, /config, /environment, /scroll, /clear, /quit, /task, /memory, /tasks", command))
+		a.appendActivity(fmt.Sprintf("Unknown command: /%s. Type /help for the command reference.", command))
 	}
+}
+
+// showHelp writes a grouped command reference to the activity pane.
+func (a *App) showHelp() {
+	const help = "" +
+		"Commands  (type / and Tab to browse)\n" +
+		"  /help                 this reference\n" +
+		"  /agent                switch agent          /agentinfo  view the prompt\n" +
+		"  /model                choose a model        /tools      toggle tools\n" +
+		"  /clear                clear the session     /compact    free context\n" +
+		"  /scroll up|down [n]   scroll the transcript /quit       quit\n" +
+		"\n" +
+		"Work\n" +
+		"  /task                 create a task         /tasks      toggle tasks\n" +
+		"  /reminder             create a reminder     /reminders  toggle reminders\n" +
+		"  /memory               store a memory        /memories   same\n" +
+		"  /canvas [path] [a-b]  open a file or range in the canvas\n" +
+		"\n" +
+		"Workspace\n" +
+		"  /add <path|ssh host>  add a workspace\n" +
+		"  /dirs                 list workspaces       /dirs rm <name>  remove\n" +
+		"  /use <name>           set the active workspace\n" +
+		"\n" +
+		"Gateway\n" +
+		"  /login                sign in               /logout     sign out\n" +
+		"  /balance              wallet balance        /providers  manage providers\n" +
+		"\n" +
+		"Session\n" +
+		"  /config               edit config           /environment  edit the env template\n" +
+		"  /mcp                  MCP integrations      /telemetry    on, off, or status\n" +
+		"  /update               check for an update   /about        about screen\n" +
+		"  /activity             activity panel\n" +
+		"\n" +
+		"Mid-turn: send another message to steer the running agent. It appears\n" +
+		"immediately as 'you steered'. Thinking streams in the Cognition pane.\n" +
+		"Keys: Alt+I about  Ctl+F/F11 fullscreen  Alt+A activity  Alt+T tasks  Alt+C code  Ctl+A switch agent"
+	a.appendActivity(help)
 }
 
 // InvokeCLICommand implements the tools.CLICommandSink interface,
@@ -4444,9 +4485,10 @@ func (a *App) renderAboutIntro() string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "[%s::b]%s[-:-:-]\n", a.palette.HexLavender, handle)
 	fmt.Fprintf(&b, "[%s]%s[-]\n\n", a.palette.HexFaint, product)
-	fmt.Fprintf(&b, "[%s]A terminal-first coding TUI that talks to local and remote[-]\n", a.palette.HexDim)
-	fmt.Fprintf(&b, "[%s]models, streams its thinking in a side panel, and routes tool[-]\n", a.palette.HexDim)
-	fmt.Fprintf(&b, "[%s]calls through a curated terminal/code toolkit.[-]\n\n", a.palette.HexDim)
+	fmt.Fprintf(&b, "[%s]A terminal-first coding TUI for the TJ Coder gateway[-]\n", a.palette.HexDim)
+	fmt.Fprintf(&b, "[%s](tjcoder/ergo-flash, ergo-pro, ergo-genius) and local models.[-]\n", a.palette.HexDim)
+	fmt.Fprintf(&b, "[%s]Thinking streams in the Cognition pane. Send a message mid-turn[-]\n", a.palette.HexDim)
+	fmt.Fprintf(&b, "[%s]to steer the running agent. Type /help for every command.[-]\n\n", a.palette.HexDim)
 	fmt.Fprintf(&b, "[%s]Made with love in Salt Lake City by TJ Coder AI Labs.[-]\n\n", a.palette.HexFaint)
 	if a.appVersion != "" {
 		fmt.Fprintf(&b, "[%s]version  %s[-]\n", a.palette.HexPurple, a.appVersion)

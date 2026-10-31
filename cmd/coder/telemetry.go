@@ -30,6 +30,7 @@ const commandsHelp = `
   coder agent list|show|add|remove   manage agents
   coder update | telemetry | version
 
+In the TUI, type /help for the full command reference.
 Global flags go before the command, e.g. coder --workspace-root ~/proj reminders ls.
 `
 
