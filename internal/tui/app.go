@@ -3352,6 +3352,11 @@ func (a *App) submit() {
 		select {
 		case a.steeringCh <- prompt:
 			a.appendActivity(fmt.Sprintf("[%s::b]steering[-::B]: queued %q for the in-flight turn", a.palette.HexPurple, truncateForActivity(prompt)))
+			// Render immediately. The runner emits EventSteering only when it
+			// drains the channel (after the in-flight model call aborts or
+			// finishes). With long tjcoder/ergo reasoning that delay is large;
+			// the user must see their steer in the transcript at once.
+			a.appendSteeredMessage(prompt)
 		default:
 			a.appendActivity(fmt.Sprintf("[%s::b]! steering[-::B]: queue full, message dropped; wait for the current turn to settle and try again", a.palette.HexPurple))
 		}
@@ -3543,6 +3548,7 @@ func (a *App) submitScheduled(agentName, prompt string) {
 			case a.steeringCh <- prompt:
 				a.appendActivity(fmt.Sprintf("[%s::b]schedule[-::B]: turn in flight; prompt steered into the running turn",
 					a.palette.HexPurple))
+				a.appendSteeredMessage(prompt)
 			default:
 				a.appendActivity("[" + a.palette.HexPurple + "::b]! warning[-:-:-]: schedule fired while busy and steering queue is full; prompt dropped")
 			}
@@ -3672,17 +3678,11 @@ func (a *App) handleEvent(event tooling.Event) {
 			}
 			a.refreshContextBar()
 		case tooling.EventSteering:
-			// Mid-turn user steering. Render as a transcript line
-			// distinct from a fresh-turn user message: same body
-			// styling but a "steered:" prefix and a dimmed
-			// "mid-turn" tag so the user can see exactly what was
-			// injected into the in-flight conversation. The
-			// activity log already records the queue event from
-			// submit(), so we don't double-log here.
-			stamp := formatTimestamp(time.Now())
-			fmt.Fprintf(a.transcript, "[%s]%s[-]\n", a.palette.HexDim, stamp)
-			fmt.Fprintf(a.transcript, "[%s::b]you steered[-:-:-] %s\n", a.palette.HexLavender, tview.Escape(event.Text))
-			a.transcript.ScrollToEnd()
+			// Transcript line was already drawn at queue time
+			// (submit / submitScheduled) so the user sees it
+			// immediately. Emitting again here would duplicate it.
+			// The runner still injects the text into history for the
+			// next model call, including tjcoder/ergo gateway models.
 		}
 	})
 }
@@ -4100,6 +4100,21 @@ func (a *App) appendUserMessage(prompt string) {
 	// Timestamp above the user attribution, matching the assistant label style.
 	fmt.Fprintf(a.transcript, "[%s]%s[-]\n", a.palette.HexDim, formatTimestamp(time.Now()))
 	fmt.Fprint(a.transcript, a.renderUserTurn(prompt))
+}
+
+// appendSteeredMessage renders a mid-turn user steer immediately.
+// Distinct from a fresh-turn bubble so the user can see exactly what
+// was injected into the in-flight conversation. Called at queue time
+// (not when the runner later drains the channel) so long tjcoder/ergo
+// reasoning does not hide the message.
+func (a *App) appendSteeredMessage(prompt string) {
+	if a.transcript == nil || strings.TrimSpace(prompt) == "" {
+		return
+	}
+	a.clearStartupSplash()
+	fmt.Fprintf(a.transcript, "[%s]%s[-]\n", a.palette.HexDim, formatTimestamp(time.Now()))
+	fmt.Fprintf(a.transcript, "[%s::b]you steered[-:-:-] %s\n", a.palette.HexLavender, tview.Escape(prompt))
+	a.transcript.ScrollToEnd()
 }
 
 func (a *App) clearStartupSplash() {
