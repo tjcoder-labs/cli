@@ -4,7 +4,7 @@
 
 **An AI-powered terminal coding assistant — designed and built for the future, from the command line.**
 
-A fast, keyboard-driven TUI that pairs a conversational agent with real developer tools: filesystem operations, shell execution, Git, task tracking, and a live "cognition" view of the model's reasoning. Runs against the ergo gateway by default, or local Ollama models and other cloud providers.
+A fast, keyboard-driven TUI that pairs a conversational agent with real developer tools: filesystem operations, shell execution, Git, task tracking, and a live "cognition" view of the model's reasoning. Runs against the TJ Coder (ergo) gateway by default, with three experimental TJ Coder models, or local Ollama models and other cloud providers.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-6E56CF.svg)](./LICENSE)
 [![Go](https://img.shields.io/badge/Go-1.25+-00ADD8.svg)](https://go.dev)
@@ -30,7 +30,8 @@ A fast, keyboard-driven TUI that pairs a conversational agent with real develope
 - **Editable context injection** — a `{{token}}` environment template lets you control exactly what runtime context the model sees.
 - **Robust tool invocation** — native tool-calls plus a fenced-JSON fallback parser, so even smaller local models can use tools reliably.
 - **Session persistence** — conversation history, tasks, and project context survive across runs, per workspace.
-- **Multi-provider** — ergo (default; sign in with `/login`), Ollama (local), Ollama Cloud, and Google Gemini out of the box.
+- **Multi-provider** — the TJ Coder gateway (`tjcoder`, default; sign in via `/providers` or `/login`), Ollama (local), Ollama Cloud, and Google Gemini out of the box.
+- **TJ Coder models (experimental)** — `ergo-flash`, `ergo-pro` and `ergo-genius`, experimental fine-tuned models served by the TJ Coder gateway. See [TJ Coder models](#tj-coder-models-experimental).
 
 ## Installation
 
@@ -71,7 +72,7 @@ make install        # installs `coder` onto your PATH
 
 ### Requirements
 
-- **An LLM provider** — an ergo account (run `/login` in the TUI), a local or cloud [Ollama](https://ollama.com) endpoint, or a Google Gemini API key
+- **An LLM provider** — a TJ Coder account (sign in via `/providers` → `tjcoder`, or `/login`, in the TUI), a local or cloud [Ollama](https://ollama.com) endpoint, or a Google Gemini API key
 - **Go 1.25+** (only for building from source)
 
 ## Quick Start
@@ -80,12 +81,17 @@ make install        # installs `coder` onto your PATH
 # Launch the interactive TUI in the current directory
 coder
 
-# Use a specific model
-coder --model gemma4:cloud
+# Default provider is the TJ Coder gateway (tjcoder). The first time, sign in
+# inside the TUI: /providers -> tjcoder -> Login (or just /login).
 
-# Default provider is ergo — run /login inside the TUI the first time.
-# Use local Ollama instead (ergo is tried first, then ollama, then ollama-cloud):
-coder --provider ollama
+# Use a specific TJ Coder model
+coder --model tjcoder/ergo-genius:cloud
+
+# One-shot, non-interactive
+coder --provider tjcoder --model tjcoder/ergo-pro:cloud -p "Explain this repo"
+
+# Use local Ollama instead
+coder --provider ollama --model gemma4:cloud
 
 # Point at a remote Ollama-compatible endpoint
 coder --host https://your-ollama-endpoint.com
@@ -98,9 +104,47 @@ coder --provider gemini --model gemini-2.5-flash
 If you're running Ollama locally, pull a coding-capable model first:
 
 ```bash
-ollama pull gemma4:cloud        # default for the software-engineer agent
+ollama pull gemma4:cloud        # agents' default model on the ollama provider
 ollama pull minimax-m3:cloud    # strong tool-use alternative
 ```
+
+## TJ Coder models (experimental)
+
+Signing in to the `tjcoder` provider (the TJ Coder gateway at `https://api.tjcoder.com`) unlocks three **experimental** TJ Coder fine-tuned models:
+
+| Model id | Tier |
+| --- | --- |
+| `tjcoder/ergo-flash:cloud` | Fast: quick, economical answers |
+| `tjcoder/ergo-pro:cloud` | Balanced: the default |
+| `tjcoder/ergo-genius:cloud` | Most capable: deepest reasoning for hard problems |
+
+These models are experimental: behaviour, speed and pricing may change between releases. Usage is billed to your TJ Coder wallet (see `/balance`).
+
+**Sign in**
+
+1. Run `coder` and type `/providers`.
+2. Select `tjcoder`, then **Login (device code)**. (`/login` is a shortcut for the same flow.)
+3. Enter your email, then approve the sign-in in your browser using the code and link shown in the TUI.
+4. If another provider is active, choose **Activate** on `tjcoder` (`/providers use tjcoder` does the same).
+
+The key is stored in your OS keychain (with a `0600` file fallback) and is reused by headless runs. `/logout` signs out. For CI you can set `ERGO_API_KEY` instead of signing in.
+
+**Pick a model**
+
+- In the TUI: `/model`, then choose one of the three `tjcoder/ergo-…:cloud` models in the `tjcoder` group.
+- On the command line: `coder --model tjcoder/ergo-flash:cloud`.
+- List what your account can use: `coder --provider tjcoder models`.
+
+Your choice is remembered between sessions and shared with headless runs.
+
+**Non-interactive use**
+
+```bash
+coder --provider tjcoder --model tjcoder/ergo-pro:cloud -p "Summarize the open TODOs in this repo"
+coder --provider tjcoder --model tjcoder/ergo-flash:cloud --no-tools -p "Reply with the word OK"
+```
+
+A headless run whose final reply is empty exits with status 1 and a message on stderr.
 
 ## Interactive Mode
 
@@ -111,6 +155,9 @@ Type a message to chat, or use slash commands. Start typing `/` to see inline su
 | `/agent` | Choose a specialized agent |
 | `/agentinfo` | View the active agent's prompt and tools |
 | `/model` | Switch the active model |
+| `/providers` | Manage providers: sign in, activate, add a gateway |
+| `/login` · `/logout` | Sign in to / out of the TJ Coder gateway |
+| `/balance` | TJ Coder wallet balance and top-up |
 | `/tools` | Toggle which tools are enabled |
 | `/environment` | Edit the injected context template (`{{token}}` interpolation) |
 | `/config` | Edit user config (e.g. `toolMax`, bubble width) |
@@ -212,7 +259,7 @@ export CODER_HTTP_TIMEOUT="5m"      # provider HTTP timeout (Go duration, option
 
 Provider, host, and model are selected per run via flags (`--provider`, `--host`, `--model`) and remembered between sessions (see below).
 
-**Provider priority:** `ergo` → `ollama` (local) → `ollama-cloud`. With no `--provider` flag and no saved choice, the TUI starts on `ergo` and, if you are not signed in, prompts you to run `/login` (it never silently switches to Ollama). Headless runs (`-p`, `ask`) use `ergo` when signed in, otherwise fall back to local Ollama (if reachable), then Ollama Cloud (if `OLLAMA_API_KEY` is set). An explicit `--provider` is saved and always wins over this default.
+**Provider priority:** `tjcoder` → `ollama` (local) → `ollama-cloud`. With no `--provider` flag and no saved choice, the TUI starts on `tjcoder` and, if you are not signed in, prompts you to sign in (it never silently switches to Ollama). An explicit `--provider` is saved and always wins; the active provider set in `/providers` comes next. For scripts and CI, pass `--provider` explicitly (for example `--provider tjcoder` or `--provider ollama`). `ergo` is still accepted as an alias for `tjcoder`.
 
 **Per-workspace state** lives under `.ergo-cli-go/` in your working directory:
 
@@ -233,18 +280,19 @@ The `/environment` editor controls the context block injected ahead of every tur
 
 Unknown tokens are left untouched so typos are easy to spot. Save to persist to `.ergo-cli-go/environment.tmpl`; saving the built-in default removes the file so you always track upstream changes.
 
-### Ergo gateway models
+### TJ Coder gateway models
 
-Ergo serves three tiers — `ergo/flash`, `ergo/pro` (default) and `ergo/genius` —
-plus the full unified catalogue (`xai/…`, `ollama/…`, `google/…`, `openai/…`),
-grouped by provider in `/model` and listed by `coder models`. Legacy saved ids
-(`ergo`, `ergo-lite`, `ergo-genius`) are migrated automatically. Keys come from
-`/login` (scope `ergo-cli`).
+The gateway serves the experimental `tjcoder/ergo-flash:cloud`,
+`tjcoder/ergo-pro:cloud` (default) and `tjcoder/ergo-genius:cloud` models (see
+[TJ Coder models](#tj-coder-models-experimental)), shown under `tjcoder` in
+`/model` and listed by `coder models`. Legacy saved ids (`ergo`, `ergo/pro`,
+`ergo-lite`, `ergo-genius`, …) are migrated automatically. Keys come from the
+`tjcoder` sign-in (scope `ergo-cli`).
 
 The client speaks the OpenAI protocol by default. To use the gateway's
 Ollama-compatible API instead, set `ERGO_PROTOCOL=ollama` (optionally
 `ERGO_OLLAMA_PATH=/ollama/api`; default `/api`), or set `"protocol": "ollama"`
-and `"api_path"` on the `ergo-gateway` entry in `providers.json`. The registry's
+and `"api_path"` on the `tjcoder` entry in `providers.json`. The registry's
 active provider is honored at startup when no `--provider` or saved choice is set.
 
 ### Telemetry

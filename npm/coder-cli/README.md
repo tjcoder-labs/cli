@@ -5,12 +5,12 @@
 `coder` is a Go TUI that pairs a conversational AI agent with real
 developer tools, streams the model's reasoning live in a "cognition"
 pane, and ships 7 specialized agents plus 31 tools. It defaults to the
-TJCoder ergo gateway (sign in with `/login`; models `ergo-flash`,
-`ergo-pro` and `ergo-genius`), and can instead use local Ollama models
-(`--provider ollama`, so your code never leaves your machine), Ollama
-Cloud or Google Gemini. This package is the npm distribution: it downloads the
-right prebuilt binary for your platform on `npm install`, so you don't
-need a Go toolchain.
+TJ Coder ergo gateway (provider `tjcoder`; sign in via `/providers` or
+`/login`) and its three experimental TJ Coder models. It can instead use
+local Ollama models (`--provider ollama`, so your code never leaves your
+machine), Ollama Cloud or Google Gemini. This package is the npm
+distribution: it downloads the right prebuilt binary for your platform on
+`npm install`, so you don't need a Go toolchain.
 
 ## Install
 
@@ -30,8 +30,8 @@ coder --version
 `node >= 18` (to run the postinstall downloader). To actually use the
 TUI you'll also need one LLM provider:
 
-- **TJCoder ergo gateway (default)** — run `coder`, then `/login` to sign
-  in. Nothing else to install.
+- **TJ Coder gateway (default)** — run `coder`, then sign in via
+  `/providers` → `tjcoder` → Login (or `/login`). Nothing else to install.
 - **Local Ollama (optional)** — an [Ollama](https://ollama.com) server
   (default: `http://localhost:11434`) with at least one model pulled
   (`ollama pull gemma4:cloud` or similar), used with `--provider ollama`.
@@ -50,7 +50,41 @@ INSTALL_OLLAMA=1 curl -fsSL https://raw.githubusercontent.com/tjcoder-labs/cli/m
 - **Multi-line paste** — paste code blocks or documents; they're kept as one message
 - **Headless mode** — script it with `coder -p "…"` for CI and automation
 - **Session persistence** — conversation history, tasks, and memories survive across runs
-- **Provider priority** — defaults to ergo (run `/login`), then local Ollama, then Ollama Cloud; use `--provider ollama` to keep everything on your machine
+- **Provider priority** — defaults to the TJ Coder gateway (`tjcoder`), then local Ollama, then Ollama Cloud; use `--provider ollama` to keep everything on your machine
+
+## TJ Coder models (experimental)
+
+Signing in to the `tjcoder` provider unlocks three **experimental** TJ Coder
+fine-tuned models:
+
+| Model id | Tier |
+|---|---|
+| `tjcoder/ergo-flash:cloud` | Fast: quick, economical answers |
+| `tjcoder/ergo-pro:cloud` | Balanced: the default |
+| `tjcoder/ergo-genius:cloud` | Most capable: deepest reasoning for hard problems |
+
+They are experimental: behaviour, speed and pricing may change between
+releases. Usage is billed to your TJ Coder wallet (`/balance`).
+
+**Sign in:** run `coder`, type `/providers`, select `tjcoder`, then
+**Login (device code)** (`/login` is a shortcut). Enter your email and
+approve the sign-in in your browser with the code shown. If another
+provider is active, choose **Activate** (or `/providers use tjcoder`). The
+key is kept in your OS keychain and reused by headless runs; `/logout`
+signs out. In CI, set `ERGO_API_KEY` instead.
+
+**Pick a model:** `/model` in the TUI, or `--model tjcoder/ergo-genius:cloud`
+on the command line. `coder --provider tjcoder models` lists what your
+account can use. The choice is remembered between sessions.
+
+**Non-interactive:**
+
+```bash
+coder --provider tjcoder --model tjcoder/ergo-pro:cloud -p "Summarize this repo"
+```
+
+A headless run whose final reply is empty exits with status 1 and a
+message on stderr.
 
 ## Updating
 
@@ -74,11 +108,12 @@ The `preuninstall` hook removes the cached binary.
 ```bash
 coder                              # launch the TUI
 coder --version                    # print version and exit
+coder --provider tjcoder --model tjcoder/ergo-pro:cloud -p "…"   # one-shot prompt
 coder --provider ollama --host http://localhost:11434
 coder --provider gemini --gemini-api-key $GEMINI_API_KEY
 coder --provider gemini models     # list available Gemini models
 coder --workspace-root ~/code/foo
-coder --model gemma4:cloud
+coder --model tjcoder/ergo-flash:cloud
 coder --timeout 30m
 ```
 
@@ -86,6 +121,7 @@ coder --timeout 30m
 
 | Var | Default | Purpose |
 |---|---|---|
+| `ERGO_API_KEY` | _(unset)_ | TJ Coder gateway key for CI, instead of signing in |
 | `GEMINI_API_KEY` | _(required for gemini)_ | API key for Google's Gemini API |
 | `CODER_HTTP_TIMEOUT` | `5m` | HTTP client timeout (`time.ParseDuration`) |
 | `CODER_CLI_REPO` | `tjcoder-labs/cli` | Override the GitHub repo used by `postinstall` |

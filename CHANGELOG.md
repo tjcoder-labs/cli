@@ -4,6 +4,20 @@
 
 All notable changes to Coder CLI. The source of truth is [release-notes/releases.json](release-notes/releases.json).
 
+## 0.9.226 — 2026-10-31
+
+**README: the experimental TJ Coder models.** Both READMEs now document the three experimental TJ Coder models, how to sign in to the tjcoder provider, and how to use them from the TUI and headless runs.
+
+### Added
+
+- New README section on the experimental TJ Coder models: tjcoder/ergo-flash:cloud, tjcoder/ergo-pro:cloud (default) and tjcoder/ergo-genius:cloud.
+  Covers signing in (/providers, then tjcoder, then Login, or /login), picking a model (/model or --model), listing models, and non-interactive use with coder --provider tjcoder --model tjcoder/ergo-pro:cloud -p. Added to the root README and the npm README.
+
+### Fixed
+
+- Stale README claims: model ids, provider name and providers.json entry now say tjcoder, and the /model picker is described as it works today.
+  The command table lists /providers, /login, /logout and /balance. The provider-priority note no longer promises a headless fallback to local Ollama; scripts are told to pass --provider.
+
 ## 0.9.225 — 2026-10-31
 
 **Release builds report crashes to Sentry.** Release archives built by scripts/build-release.sh now embed the same Sentry DSN as make build when SENTRY_DSN is unset.

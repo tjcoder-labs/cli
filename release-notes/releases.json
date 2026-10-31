@@ -3,6 +3,26 @@
   "schema_version": 1,
   "releases": [
     {
+      "version": "0.9.226",
+      "date": "2026-10-31",
+      "title": "README: the experimental TJ Coder models",
+      "summary": "Both READMEs now document the three experimental TJ Coder models, how to sign in to the tjcoder provider, and how to use them from the TUI and headless runs.",
+      "changes": {
+        "added": [
+          {
+            "text": "New README section on the experimental TJ Coder models: tjcoder/ergo-flash:cloud, tjcoder/ergo-pro:cloud (default) and tjcoder/ergo-genius:cloud.",
+            "details": "Covers signing in (/providers, then tjcoder, then Login, or /login), picking a model (/model or --model), listing models, and non-interactive use with coder --provider tjcoder --model tjcoder/ergo-pro:cloud -p. Added to the root README and the npm README."
+          }
+        ],
+        "fixed": [
+          {
+            "text": "Stale README claims: model ids, provider name and providers.json entry now say tjcoder, and the /model picker is described as it works today.",
+            "details": "The command table lists /providers, /login, /logout and /balance. The provider-priority note no longer promises a headless fallback to local Ollama; scripts are told to pass --provider."
+          }
+        ]
+      }
+    },
+    {
       "version": "0.9.225",
       "date": "2026-10-31",
       "title": "Release builds report crashes to Sentry",
