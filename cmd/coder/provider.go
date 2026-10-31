@@ -37,13 +37,13 @@ type providerInputs struct {
 //  4. Headless with no ergo credentials (nobody to prompt): probe local
 //     Ollama, then ollama-cloud if OLLAMA_API_KEY is set, else local ollama.
 func resolveProvider(in providerInputs) string {
-	if f := strings.TrimSpace(in.Flag); f != "" {
+	if f := normalizeLegacyProvider(strings.TrimSpace(in.Flag)); f != "" {
 		return f
 	}
-	if s := strings.TrimSpace(in.Saved); s != "" {
+	if s := normalizeLegacyProvider(strings.TrimSpace(in.Saved)); s != "" {
 		return s
 	}
-	if r := strings.TrimSpace(in.Registry); r != "" && r != "ergo-gateway" && r != "ergo" {
+	if r := normalizeLegacyProvider(strings.TrimSpace(in.Registry)); r != "" && r != "ergo" {
 		return r
 	}
 	if in.ErgoReady {
@@ -64,6 +64,18 @@ func resolveProvider(in providerInputs) string {
 	}
 	// Final fallback: ollama (errors point at the local host as before).
 	return "ollama"
+}
+
+// normalizeLegacyProvider maps the pre-rename gateway slug onto the
+// current provider name. A saved "ergo-gateway" must not reach NewProvider
+// as an unknown name — that aborts TUI startup on upgraded installs.
+func normalizeLegacyProvider(name string) string {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "ergo-gateway":
+		return "ergo"
+	default:
+		return name
+	}
 }
 
 // ollamaReachable does a short probe of the local Ollama host.

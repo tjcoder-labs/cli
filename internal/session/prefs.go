@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 )
 
@@ -265,6 +266,12 @@ func GetProvider() (string, bool) {
 	p, _, err := loadPrefsLocked()
 	if err != nil || p.Provider == "" {
 		return "", false
+	}
+	// Rewrite the pre-rename gateway slug so an upgraded install does not
+	// keep feeding "ergo-gateway" into NewProvider.
+	if strings.EqualFold(p.Provider, "ergo-gateway") {
+		p.Provider = "ergo"
+		_ = savePrefsLocked(p)
 	}
 	return p.Provider, true
 }

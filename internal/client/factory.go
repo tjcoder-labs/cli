@@ -63,7 +63,7 @@ func NewProvider(name, host, geminiAPIKey string, timeout time.Duration) (Provid
 			return nil, fmt.Errorf("--gemini-api-key or GEMINI_API_KEY required for gemini provider")
 		}
 		return NewGemini(geminiAPIKey, timeout), nil
-	case "tjcoder", "ergo":
+	case "tjcoder", "ergo", "ergo-gateway":
 		// The ergo provider authenticates with a scoped ergo API key. We read
 		// it from ERGO_API_KEY or the token saved by /login. When neither is set we still return a configured
 		// provider so the error surfaces at first chat with a clean 401-typed
@@ -78,7 +78,7 @@ func NewProvider(name, host, geminiAPIKey string, timeout time.Duration) (Provid
 		if cfg, ok := providers.Get(name); ok {
 			return NewProviderFromConfig(cfg, timeout)
 		}
-		return nil, fmt.Errorf("unknown provider %q: supported values are ergo, ollama, ollama-cloud, gemini (or run `coder providers add`)", name)
+		return nil, fmt.Errorf("unknown provider %q: supported values are ergo, tjcoder, ollama, ollama-cloud, gemini (or run `coder providers add`)", name)
 	}
 }
 

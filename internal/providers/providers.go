@@ -302,7 +302,7 @@ func Active() Config {
 	if len(reg.Providers) > 0 {
 		return reg.Providers[0]
 	}
-	return Config{Name: "ergo-gateway", BaseURL: "https://api.tjcoder.com", Auth: AuthDeviceCode}
+	return Config{Name: "tjcoder", BaseURL: "https://api.tjcoder.com", Auth: AuthDeviceCode}
 }
 
 // migrateGatewaySlug renames a saved ergo-gateway entry to tjcoder.
