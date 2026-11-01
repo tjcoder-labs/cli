@@ -239,6 +239,8 @@ var slashCommands = []slashCommand{
 	{"use", "Set the active workspace"},
 	{"about", "Open the about screen"},
 	{"mcp", "Manage MCP integrations"},
+	{"capture", "Record screen: start or stop"},
+	{"screenshot", "Save the current screen as a PNG"},
 	{"providers", "Manage model providers"},
 	{"update", "Check for and install an update"},
 	{"telemetry", "Anonymous usage stats: on, off, or status"},
@@ -267,13 +269,13 @@ type App struct {
 	// a quick double-Enter doesn't drop; submit() does a non-blocking
 	// send and falls back to an activity-log warning if the buffer
 	// is saturated (per the contract documented on Runner.Steering).
-	steeringCh   chan string
+	steeringCh chan string
 	// lastTurnPrompt is the user text of the in-flight turn, so an error
 	// card can offer to retry it.
 	lastTurnPrompt string
-	mcpClient    *mcp.Client
-	sessionState session.State
-	palette      Palette
+	mcpClient      *mcp.Client
+	sessionState   session.State
+	palette        Palette
 
 	workspaceRoot             string
 	productName               string
@@ -2219,6 +2221,10 @@ func (a *App) handleSlashCommand(cmd string) {
 		}
 	case "mcp":
 		a.handleMCPCommand(parts)
+	case "capture":
+		a.handleCapture(parts)
+	case "screenshot":
+		a.handleScreenshot()
 	case "login":
 		a.handleLoginCommand()
 	case "logout":
@@ -2266,6 +2272,10 @@ func (a *App) showHelp() {
 		"  /mcp                  MCP integrations      /telemetry    on, off, or status\n" +
 		"  /update               check for an update   /about        about screen\n" +
 		"  /activity             activity panel\n" +
+		"\n" +
+		"Capture\n" +
+		"  /screenshot           save the screen as PNG (to your capture dir)\n" +
+		"  /capture start|stop   begin or end a recording\n" +
 		"\n" +
 		"Mid-turn: send another message to steer the running agent. It appears\n" +
 		"immediately as 'you steered'. Thinking streams in the Cognition pane.\n" +
@@ -2509,6 +2519,26 @@ func (a *App) openConfigModal() {
 	form.AddDropDown("Automatic updates", []string{"On", "Off"}, autoIdx, func(option string, _ int) {
 		autoUpdate = option == "On"
 	})
+
+	// --- Capture directory ---
+	captureDirDefault := ""
+	if home, err := os.UserHomeDir(); err == nil {
+		captureDirDefault = filepath.Join(home, "Downloads")
+	}
+	captureDirLabel := work.CaptureDir
+	if captureDirLabel == "" {
+		captureDirLabel = captureDirDefault + " (default)"
+	}
+	form.AddInputField("Screenshot/capture directory", captureDirLabel, 0,
+		nil,
+		func(text string) {
+			trimmed := strings.TrimSpace(text)
+			if strings.HasSuffix(trimmed, " (default)") {
+				trimmed = strings.TrimSuffix(trimmed, " (default)")
+				trimmed = strings.TrimSpace(trimmed)
+			}
+			work.CaptureDir = trimmed
+		})
 
 	// --- Actions ---
 	save := func() {
@@ -3620,7 +3650,7 @@ func (a *App) launchTurnWithContext(prompt, agentNameOverride, turnContext strin
 		nextHistory, err := a.runner.Run(ctx, history, prompt, agentCfg, model, enabled, a.handleEvent)
 		a.postUI(func() {
 			a.flushMarkdownStreams()
-				if err != nil {
+			if err != nil {
 				errText := fmt.Sprintf("error: %v", err)
 				if isReasoningRelated(errText) {
 					fmt.Fprintf(a.reasoning, "\n["+a.palette.HexAlert+"::b]✗ %s[-:-:-]\n", tview.Escape(errText))

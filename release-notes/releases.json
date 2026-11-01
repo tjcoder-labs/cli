@@ -3,6 +3,26 @@
   "schema_version": 1,
   "releases": [
     {
+      "version": "0.9.231",
+      "date": "2026-11-01",
+      "title": "Console screenshots: /screenshot and /capture",
+      "summary": "Added /screenshot to render a high-resolution console screenshot to PNG via an embedded Go font, plus a /capture start|stop stub for recording. The output directory is configurable (default ~/Downloads).",
+      "changes": {
+        "added": [
+          {
+            "text": "New /screenshot command renders the console to a high-resolution PNG using an embedded Go font.",
+            "highlight": true
+          },
+          {
+            "text": "New /capture start|stop command (status-marker stub) for recording console frames."
+          },
+          {
+            "text": "Screenshot output directory configurable via /config (captureDir, default ~/Downloads)."
+          }
+        ]
+      }
+    },
+    {
       "version": "0.9.230",
       "date": "2026-11-01",
       "title": "Background job status in prompt + terminal notifications",
@@ -28,9 +48,6 @@
         "added": [
           {
             "text": "New manage_model tool lets agents and users switch ergo tiers (flash\u2194pro\u2194genius) and control reasoning (think on/off/auto) without restarting. Persists choice across sessions.",
-            "commands": [
-              "/manage_model"
-            ],
             "highlight": true
           },
           {

@@ -45,6 +45,9 @@ type AppConfig struct {
 	// command mutates this map; the /config JSON editor round-trips
 	// it verbatim.
 	MCPServers map[string]MCPServerConfig `json:"mcp_servers,omitempty"`
+	// CaptureDir is the directory where /screenshot and /capture save
+	// their media. An empty string means the default (~/Downloads).
+	CaptureDir string `json:"captureDir,omitempty"`
 }
 
 // MCPServerConfig is the on-disk shape of a single MCP integration.

@@ -17,7 +17,7 @@ import (
 // Adding a command without deciding its policy fails here.
 func TestSlashModeForEveryCommand(t *testing.T) {
 	want := map[string]slashMode{
-		"agent": slashImmediate, "agentinfo": slashImmediate, "tools": slashImmediate,
+		"help": slashImmediate, "agent": slashImmediate, "agentinfo": slashImmediate, "tools": slashImmediate,
 		"model": slashImmediate, "scroll": slashImmediate, "quit": slashImmediate,
 		"trigger": slashImmediate, "event": slashImmediate, "reminder": slashImmediate,
 		"reminders": slashImmediate, "task": slashImmediate, "tasks": slashImmediate,
@@ -28,6 +28,7 @@ func TestSlashModeForEveryCommand(t *testing.T) {
 		"test": slashImmediate, "articles": slashImmediate, "dirs": slashImmediate,
 		"add-dir": slashImmediate, "add": slashImmediate, "use": slashImmediate,
 		"workspaces": slashImmediate, "nosuchcommand": slashImmediate,
+		"capture": slashImmediate, "screenshot": slashImmediate,
 
 		"clear": slashBlocked,
 
