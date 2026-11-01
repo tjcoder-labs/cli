@@ -89,6 +89,10 @@ type ergoChatRequest struct {
 	StreamOpts  *ergoStreamOpts   `json:"stream_options,omitempty"`
 	MaxTokens   int               `json:"max_tokens,omitempty"`
 	Temperature float64           `json:"temperature,omitempty"`
+	// Think forwards the client's thinking-mode choice (true = force
+	// reasoning, false = disable). Always serialized so the gateway can
+	// distinguish "off" from an unset/default.
+	Think bool `json:"think"`
 }
 
 type ergoStreamOpts struct {
@@ -252,9 +256,10 @@ func (e *Ergo) Chat(ctx context.Context, request ChatRequest, onEvent func(Strea
 		return e.ollama.Chat(ctx, request, onEvent)
 	}
 	req := ergoChatRequest{
-		Model:      request.Model,
-		Stream:     true, // always stream; matches the TUI's incremental rendering
-		StreamOpts: &ergoStreamOpts{IncludeUsage: true},
+		Model:       request.Model,
+		Stream:      true, // always stream; matches the TUI's incremental rendering
+		StreamOpts:  &ergoStreamOpts{IncludeUsage: true},
+		Think:       request.Think,
 	}
 
 	// Map messages. System messages pass through as role "system".
