@@ -239,21 +239,97 @@ func (a *App) screenCells() (int, int) {
 	return 120, 45
 }
 
-// handleCapture handles "/capture start|stop".
+// captureMinIntervalDefault is the minimum time between sampled frames
+// while recording. It throttles the afterDraw hook so a fast redraw
+// burst doesn't capture hundreds of near-identical frames.
+const captureMinIntervalDefault = 100 * time.Millisecond
+
+// sampleCaptureFrame is called from afterDraw on every draw pass. When a
+// capture is recording, it renders the current screen to a PNG and appends
+// it to captureFrames, throttled so the recording is a smooth slideshow
+// rather than a burst of duplicates.
+func (a *App) sampleCaptureFrame() {
+	if !a.captureRecording {
+		return
+	}
+	now := time.Now()
+	if a.captureMinInterval <= 0 {
+		a.captureMinInterval = captureMinIntervalDefault
+	}
+	if now.Sub(a.captureLastSample) < a.captureMinInterval {
+		return
+	}
+	a.captureLastSample = now
+	cols, rows := a.screenCells()
+	data, err := a.renderScreenPNG(cols, rows)
+	if err != nil {
+		// Don't spam the activity log on every failed frame.
+		a.appendActivity(fmt.Sprintf("["+a.palette.HexAlert+"::b]✗ capture frame failed[-:-:-]: %v", err))
+		return
+	}
+	a.captureFrames = append(a.captureFrames, data)
+}
+
+// finishCapture finalises an in-progress capture: it stops recording and
+// writes the accumulated frames to disk. A single frame is saved as a
+// screenshot; multiple frames are written as a numbered sequence of PNGs
+// (video encoding, e.g. to WebM/GIF, is a follow-up).
+func (a *App) finishCapture() {
+	a.captureRecording = false
+	n := len(a.captureFrames)
+	if n == 0 {
+		a.appendActivity("Capture stopped — no frames were recorded.")
+		return
+	}
+	if n == 1 {
+		path, err := a.writeCaptureFile("screenshot", a.captureFrames[0])
+		if err != nil {
+			a.appendActivity(fmt.Sprintf("["+a.palette.HexAlert+"::b]✗ capture save failed[-:-:-]: %v", err))
+			return
+		}
+		a.appendActivity(fmt.Sprintf("Capture saved %d frame to %s", n, path))
+		return
+	}
+	// Multiple frames: write a numbered sequence under a capture-specific
+	// subdirectory so the frames can later be assembled into a video.
+	base := a.captureDir()
+	dir := filepath.Join(base, fmt.Sprintf("capture-%s", time.Now().Format("20060102-150405")))
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		a.appendActivity(fmt.Sprintf("["+a.palette.HexAlert+"::b]✗ capture save failed[-:-:-]: %v", err))
+		return
+	}
+	for i, frame := range a.captureFrames {
+		name := fmt.Sprintf("frame-%04d.png", i+1)
+		if err := os.WriteFile(filepath.Join(dir, name), frame, 0o644); err != nil {
+			a.appendActivity(fmt.Sprintf("["+a.palette.HexAlert+"::b]✗ capture save failed[-:-:-]: %v", err))
+			return
+		}
+	}
+	a.appendActivity(fmt.Sprintf("Capture saved %d frames to %s", n, dir))
+}
+
+// handleCapture handles "/capture start|stop|screenshot".
 func (a *App) handleCapture(parts []string) {
 	sub := ""
 	if len(parts) > 1 {
 		sub = strings.ToLower(parts[1])
 	}
 	switch sub {
+	case "screenshot":
+		// Shorthand for /screenshot: render a single frame immediately.
+		a.handleScreenshot()
 	case "start":
-		a.appendActivity("Capture started. Frames will be recorded during this turn. Use /capture stop to end, or /screenshot for a single frame.")
-		// Recording of live frames requires a per-frame hook in the draw
-		// loop; for now /capture start is a no-op marker until the frame
-		// sampler is wired in a follow-up.
+		a.captureRecording = true
+		a.captureFrames = a.captureFrames[:0]
+		a.captureLastSample = time.Time{}
+		a.appendActivity("Capture started. Frames will be recorded. Use /capture stop to save, or /capture screenshot for a single frame.")
 	case "stop":
-		a.appendActivity("Capture stopped.")
+		if !a.captureRecording {
+			a.appendActivity("Capture not running. Use /capture start first.")
+			return
+		}
+		a.finishCapture()
 	default:
-		a.appendActivity("Usage: /capture start | stop  ·  /screenshot saves the current screen")
+		a.appendActivity("Usage: /capture start | stop | screenshot  ·  /screenshot saves the current screen")
 	}
 }

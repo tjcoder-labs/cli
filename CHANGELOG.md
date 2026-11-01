@@ -4,6 +4,20 @@
 
 All notable changes to Coder CLI. The source of truth is [release-notes/releases.json](release-notes/releases.json).
 
+## 0.9.232 — 2026-11-01
+
+**manage_model works with any provider + /capture screenshot shorthand.** manage_model now switches models on any provider (Ollama local, Ollama Cloud, Gemini, ergo tiers, OpenAI-compatible gateways) via an explicit model name or ergo tier direction. Added /capture screenshot as a shorthand for /screenshot and a first-pass live frame sampler for /capture start|stop.
+
+### Added
+
+- manage_model switches models on any provider (not just ergo tiers), via an explicit model name.
+- /capture screenshot shorthand renders a single frame like /screenshot.
+- /capture start|stop records live frames to a numbered PNG sequence (video encoding is a follow-up).
+
+### Changed
+
+- manage_model persists think mode and auto-tier alongside the model choice.
+
 ## 0.9.231 — 2026-11-01
 
 **Console screenshots: /screenshot and /capture.** Added /screenshot to render a high-resolution console screenshot to PNG via an embedded Go font, plus a /capture start|stop stub for recording. The output directory is configurable (default ~/Downloads).

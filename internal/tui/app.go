@@ -429,6 +429,15 @@ type App struct {
 	canvasWidth  int
 	canvasReflow bool
 
+	// captureRecording is true between /capture start and /capture stop.
+	// captureFrames accumulates rendered PNG frames (one per draw pass
+	// while recording, throttled by captureMinInterval). captureLastSample
+	// is the last time a frame was actually captured.
+	captureRecording    bool
+	captureFrames       [][]byte
+	captureMinInterval  time.Duration
+	captureLastSample   time.Time
+
 	// mdOut / mdCog render streamed assistant commentary (transcript)
 	// and reasoning (cognition pane) as markdown, one turn at a time.
 	mdOut *render.Stream
@@ -2152,8 +2161,16 @@ func (a *App) handleSlashCommand(cmd string) {
 	case "tools":
 		a.openToolModal()
 	case "model":
-		if len(parts) > 1 && a.isErgoProvider() {
-			a.selectErgoAgentByName(parts[1])
+		if len(parts) > 1 {
+			if a.isErgoProvider() {
+				a.selectErgoAgentByName(parts[1])
+			} else {
+				a.selectModel(parts[1])
+				a.refreshFooter()
+				a.appendActivity("Selected model: " + parts[1])
+				a.saveSession()
+				a.refreshContextForModel(parts[1])
+			}
 		} else {
 			a.openModelModal()
 		}
@@ -3116,6 +3133,10 @@ func (a *App) afterDraw(tcell.Screen) {
 	// the draw pass.
 	a.checkCanvasWidth()
 	a.checkPromptWidth()
+	// While a capture is recording, sample the current frame. Sampling
+	// is throttled to captureMinInterval and rendered on a separate
+	// simulation screen so it never touches the live terminal.
+	a.sampleCaptureFrame()
 }
 
 // checkCanvasWidth runs after every draw. When the canvas is showing a
