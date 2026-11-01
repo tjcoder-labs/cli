@@ -9,26 +9,34 @@ import (
 	"github.com/tjcoder-labs/cli/internal/session"
 )
 
-// Mock provider that satisfies client.Provider but returns fake ergo.
-type mockErgoProvider struct {
-	client.Provider
+// fakeErgo satisfies client.Provider and ergoProvider for testing.
+type fakeErgo struct {
 	authenticated bool
-	model         string
 }
 
-func (m *mockErgoProvider) Authenticated() bool { return m.authenticated }
-func (m *mockErgoProvider) Chat(context.Context, client.ChatRequest, func(client.StreamEvent) error) (*client.ChatResponse, error) {
-	return nil, nil
+func (f *fakeErgo) Authenticated() bool { return f.authenticated }
+func (f *fakeErgo) Chat(context.Context, client.ChatRequest, func(client.StreamEvent) error) (client.Message, error) {
+	return client.Message{}, nil
 }
-func (m *mockErgoProvider) ListAllModels(context.Context) ([]client.ModelInfo, error) {
+func (f *fakeErgo) ListAllModels(context.Context) ([]client.ModelInfo, error) {
 	return []client.ModelInfo{
 		{Name: "tjcoder/ergo-flash:cloud", Family: "tjcoder"},
 		{Name: "tjcoder/ergo-pro:cloud", Family: "tjcoder"},
 		{Name: "tjcoder/ergo-genius:cloud", Family: "tjcoder"},
 	}, nil
 }
-func (m *mockErgoProvider) ListModels(context.Context) ([]client.ModelInfo, error) { return nil, nil }
-func (m *mockErgoProvider) Key() string { return "tjcoder" }
+func (f *fakeErgo) ListModels(context.Context) ([]client.ModelInfo, error) { return nil, nil }
+func (f *fakeErgo) ContextWindow(context.Context, string) (int, error) { return 0, nil }
+func (f *fakeErgo) BaseURL() string { return "https://example.com" }
+func (f *fakeErgo) Key() string { return "tjcoder" }
+
+func mockEnv(authenticated bool, state *session.State) ExecEnv {
+	return ExecEnv{
+		Provider:       &fakeErgo{authenticated: authenticated},
+		SessionState:   state,
+		PersistSession: func() error { return nil },
+	}
+}
 
 func TestManageModelTool(t *testing.T) {
 	tool := manageModelTool{}
@@ -38,23 +46,13 @@ func TestManageModelTool(t *testing.T) {
 
 	// Test unauthenticated ergo
 	state := &session.State{}
-	mock := &mockErgoProvider{authenticated: false}
-	_, err := tool.Execute(context.Background(), nil, client.ExecEnv{
-		Provider: mock,
-		SessionState: state,
-	})
-	if err == nil {
+	if _, err := tool.Execute(context.Background(), nil, mockEnv(false, state)); err == nil {
 		t.Fatal("expected error for unauthenticated ergo")
 	}
 
 	// Authenticated, default case (should keep current model)
-	mock.authenticated = true
 	state.CurrentModel = "tjcoder/ergo-pro:cloud"
-	res, err := tool.Execute(context.Background(), nil, client.ExecEnv{
-		Provider: mock,
-		SessionState: state,
-		PersistSession: func() error { return nil },
-	})
+	res, err := tool.Execute(context.Background(), nil, mockEnv(true, state))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -73,16 +71,12 @@ func TestManageModelTool(t *testing.T) {
 	if result.Think != "auto" {
 		t.Fatalf("expected think auto, got %s", result.Think)
 	}
-	if result.AutoTier {
-		t.Fatalf("expected autoTier false, got %t", result.AutoTier)
+	if !result.AutoTier {
+		t.Fatalf("expected autoTier true for auto direction, got %t", result.AutoTier)
 	}
 
 	// Test direction up
-	res, err = tool.Execute(context.Background(), []byte(`{"direction":"up"}`), client.ExecEnv{
-		Provider: mock,
-		SessionState: state,
-		PersistSession: func() error { return nil },
-	})
+	res, err = tool.Execute(context.Background(), []byte(`{"direction":"up"}`), mockEnv(true, state))
 	if err != nil {
 		t.Fatalf("unexpected error up: %v", err)
 	}
@@ -97,11 +91,7 @@ func TestManageModelTool(t *testing.T) {
 	}
 
 	// Test direction down
-	res, err = tool.Execute(context.Background(), []byte(`{"direction":"down"}`), client.ExecEnv{
-		Provider: mock,
-		SessionState: state,
-		PersistSession: func() error { return nil },
-	})
+	res, err = tool.Execute(context.Background(), []byte(`{"direction":"down"}`), mockEnv(true, state))
 	if err != nil {
 		t.Fatalf("unexpected error down: %v", err)
 	}

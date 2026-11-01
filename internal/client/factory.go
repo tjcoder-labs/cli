@@ -79,7 +79,7 @@ func NewProvider(name, host, geminiAPIKey string, timeout time.Duration) (Provid
 			return NewProviderFromConfig(cfg, timeout)
 		}
 		// Build a helpful error message using ProviderOrder.
-		return nil, fmt.Errorf("unknown provider %q: supported values are %v (or run `coder providers add`)", name, ProviderOrder)
+		return nil, fmt.Errorf("unknown provider %q: supported values are %s (or run `coder providers add`)", name, strings.Join(ProviderOrder, ", "))
 	}
 }
 

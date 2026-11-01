@@ -9,6 +9,11 @@ import (
 	"github.com/tjcoder-labs/cli/internal/client"
 )
 
+// ergoProvider is the subset of the ergo client the manage_model tool needs.
+type ergoProvider interface {
+	Authenticated() bool
+}
+
 // ManageModelArgs are the parameters for the manage_model tool.
 type ManageModelArgs struct {
 	// Direction: "up" (more reasoning), "down" (faster), "auto" (let gateway pick best)
@@ -90,7 +95,7 @@ func (manageModelTool) Execute(ctx context.Context, args json.RawMessage, env Ex
 	}
 
 	// Validate we're using an ergo provider AND it's authenticated
-	e, ok := env.Provider.(*client.Ergo)
+	e, ok := env.Provider.(ergoProvider)
 	if !ok {
 		return Result{}, fmt.Errorf("manage_model only works with the ergo (tjcoder) provider")
 	}
@@ -104,11 +109,8 @@ func (manageModelTool) Execute(ctx context.Context, args json.RawMessage, env Ex
 		currentModel = env.SessionState.CurrentModel
 	}
 	if currentModel == "" {
-		// Try to get from provider prefs
-		if env.Workspaces != nil {
-			// fallback to default
-			currentModel = client.ErgoDefaultModel
-		}
+		// fallback to default
+		currentModel = client.ErgoDefaultModel
 	}
 
 	// Normalize current model
@@ -203,9 +205,4 @@ func (manageModelTool) Execute(ctx context.Context, args json.RawMessage, env Ex
 
 	out, _ := json.Marshal(res)
 	return Result{Content: string(out), Preview: note}, nil
-}
-
-// Register in registry.go init
-func init() {
-	// This will be registered via registry.go
 }

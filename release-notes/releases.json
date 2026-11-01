@@ -3,6 +3,23 @@
   "schema_version": 1,
   "releases": [
     {
+      "version": "0.9.230",
+      "date": "2026-11-01",
+      "title": "Background job status in prompt + terminal notifications",
+      "summary": "Background jobs are now injected into the system prompt as a status table, and terminal states (completed/failed) append a system message so the model is informed without a tool call.",
+      "changes": {
+        "added": [
+          {
+            "text": "Background job status block injected into system prompt on every turn.",
+            "highlight": true
+          },
+          {
+            "text": "System message appended to history when a background job completes or fails."
+          }
+        ]
+      }
+    },
+    {
       "version": "0.9.229",
       "date": "2026-10-31",
       "title": "manage_model tool: dynamic ergo tier switching",
@@ -10,8 +27,10 @@
       "changes": {
         "added": [
           {
-            "text": "New manage_model tool lets agents and users switch ergo tiers (flash↔pro↔genius) and control reasoning (think on/off/auto) without restarting. Persists choice across sessions.",
-            "commands": ["/manage_model"],
+            "text": "New manage_model tool lets agents and users switch ergo tiers (flash\u2194pro\u2194genius) and control reasoning (think on/off/auto) without restarting. Persists choice across sessions.",
+            "commands": [
+              "/manage_model"
+            ],
             "highlight": true
           },
           {
@@ -27,7 +46,7 @@
         ],
         "fixed": [
           {
-            "text": "Corrected NormalizeErgoModel to properly map legacy ids like ergo-lite → tjcoder/ergo-flash:cloud and handle tjcoder/* prefixes consistently.",
+            "text": "Corrected NormalizeErgoModel to properly map legacy ids like ergo-lite \u2192 tjcoder/ergo-flash:cloud and handle tjcoder/* prefixes consistently.",
             "details": "Fixes model resolution for saved legacy aliases and explicit tjcoder/* inputs."
           }
         ]
