@@ -379,11 +379,32 @@ func updateBackgroundJob(env ExecEnv, id string, job session.BackgroundJob) {
 	}
 	for i := range env.SessionState.BackgroundJobs {
 		if env.SessionState.BackgroundJobs[i].ID == id {
+			prev := env.SessionState.BackgroundJobs[i]
 			env.SessionState.BackgroundJobs[i] = job
+			// On transition to a terminal state, append a system message
+			// so the next model call is informed without a tool round-trip.
+			if isTerminal(job.Status) && !isTerminal(prev.Status) {
+				msg := fmt.Sprintf("Background job %s %s.", id, job.Status)
+				if job.Error != "" {
+					msg += " Error: " + job.Error
+				}
+				env.SessionState.History = append(env.SessionState.History, client.Message{
+					Role:    "system",
+					Content: msg,
+				})
+			}
 			_ = env.PersistSession()
 			return
 		}
 	}
+}
+
+func isTerminal(status string) bool {
+	switch status {
+	case "completed", "failed":
+		return true
+	}
+	return false
 }
 
 type gitStatusTool struct{}

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/tjcoder-labs/cli/internal/agent"
+	"github.com/tjcoder-labs/cli/internal/backgroundjobs"
 	"github.com/tjcoder-labs/cli/internal/client"
 	"github.com/tjcoder-labs/cli/internal/memories"
 	"github.com/tjcoder-labs/cli/internal/session"
@@ -349,6 +350,15 @@ func (r *Runner) run(ctx context.Context, history []client.Message, prompt strin
 		taskBlock := tasks.FormatPromptBlock(tasks.Load(*r.SessionState), 15)
 		if strings.TrimSpace(taskBlock) != "" {
 			systemPrompt = taskBlock + "\n\n" + systemPrompt
+		}
+
+		// Inject background job status so the agent sees queued/running/
+		// completed jobs without a tool call. Terminal-state notifications
+		// are also appended to history by the job goroutine.
+		if jobs := r.SessionState.BackgroundJobs; len(jobs) > 0 {
+			if jobBlock := backgroundjobs.FormatPromptBlock(jobs, 20); jobBlock != "" {
+				systemPrompt = jobBlock + "\n\n" + systemPrompt
+			}
 		}
 	}
 
