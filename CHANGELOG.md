@@ -4,6 +4,15 @@
 
 All notable changes to Coder CLI. The source of truth is [release-notes/releases.json](release-notes/releases.json).
 
+## 0.9.233 — 2026-11-01
+
+**manage_model validates against the full catalog.** manage_model now checks an explicit model against the full provider catalog (ergo's unified ListAllModels, or the provider's /tags) and rejects unknown models. The TUI reflects the change via /model and persists it like a manual pick.
+
+### Changed
+
+- manage_model rejects model names not served by the provider instead of switching to a non-existent model.
+- manage_model enumerates ergo's full unified catalog (tiers plus xai/, ollama/, google/, …) when validating a model.
+
 ## 0.9.232 — 2026-11-01
 
 **manage_model works with any provider + /capture screenshot shorthand.** manage_model now switches models on any provider (Ollama local, Ollama Cloud, Gemini, ergo tiers, OpenAI-compatible gateways) via an explicit model name or ergo tier direction. Added /capture screenshot as a shorthand for /screenshot and a first-pass live frame sampler for /capture start|stop.

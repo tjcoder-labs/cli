@@ -119,4 +119,9 @@ func TestManageModelTool(t *testing.T) {
 	if got := decodeResult(t, res); got.Think != "auto" {
 		t.Fatalf("expected think auto, got %s", got.Think)
 	}
+
+	// Unknown model is rejected when the catalogue is known.
+	if _, err := tool.Execute(context.Background(), []byte(`{"model":"no-such-model"}`), mockEnv(state)); err == nil {
+		t.Fatal("expected error for unknown model")
+	}
 }

@@ -118,6 +118,13 @@ func (manageModelTool) Execute(ctx context.Context, args json.RawMessage, env Ex
 	// Determine the target model.
 	targetModel, note := resolveTarget(params, currentModel, available)
 
+	// An explicit model must be in the provider's catalogue when that
+	// catalogue is known; otherwise we'd let the agent pick a non-existent
+	// model and the next chat would fail with model_not_found.
+	if m := strings.TrimSpace(params.Model); m != "" && len(available) > 0 && !contains(available, m) {
+		return Result{}, fmt.Errorf("model %q is not served by this provider; available: %s", m, strings.Join(available, ", "))
+	}
+
 	// Persist if requested. In TUI mode, route the switch through the CLI
 	// command sink (/model <name>) so the live app's currentModel and
 	// context window update immediately; the sink is absent headless, so
@@ -150,13 +157,19 @@ func (manageModelTool) Execute(ctx context.Context, args json.RawMessage, env Ex
 
 // listAvailableModels returns the model names the provider serves, or nil
 // if they cannot be determined. It is best-effort: a network failure does
-// not abort the switch.
+// not abort the switch. For the ergo gateway it uses the full unified
+// catalogue (ListAllModels: ergo tiers plus xai/, ollama/, google/, …)
+// rather than the narrower /v1/models tier list, so an agent can pick any
+// model the gateway actually routes to.
 func listAvailableModels(ctx context.Context, p client.Provider) []string {
 	if p == nil {
 		return nil
 	}
 	if ctx == nil {
 		ctx = context.Background()
+	}
+	if _, ok := p.(*client.Ergo); ok {
+		return client.ErgoAvailableModels(ctx, p)
 	}
 	infos, err := p.ListModels(ctx)
 	if err != nil {
@@ -183,13 +196,12 @@ var ergoTiers = []string{
 // Model wins. Direction up/down walks the ergo tier ladder. auto keeps the
 // current model and enables auto-tier.
 func resolveTarget(params ManageModelArgs, currentModel string, available []string) (string, string) {
-	// Explicit model: switch directly. Validate against the available set
-	// when one is known, but allow through anyway (the gateway may serve
-	// models its catalogue doesn't enumerate).
+	// Explicit model: switch directly. The caller has already validated it
+	// against the available set when one is known.
 	if m := strings.TrimSpace(params.Model); m != "" {
 		note := fmt.Sprintf("Switched to %s", m)
-		if len(available) > 0 && !contains(available, m) {
-			note = fmt.Sprintf("Switched to %s (not in the provider's model list: %s)", m, strings.Join(available, ", "))
+		if params.Think != "auto" {
+			note += fmt.Sprintf(", think=%s", params.Think)
 		}
 		return m, note
 	}
