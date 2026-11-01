@@ -157,10 +157,9 @@ func (manageModelTool) Execute(ctx context.Context, args json.RawMessage, env Ex
 
 // listAvailableModels returns the model names the provider serves, or nil
 // if they cannot be determined. It is best-effort: a network failure does
-// not abort the switch. For the ergo gateway it uses the full unified
-// catalogue (ListAllModels: ergo tiers plus xai/, ollama/, google/, …)
-// rather than the narrower /v1/models tier list, so an agent can pick any
-// model the gateway actually routes to.
+// not abort the switch. For the tjcoder/ergo gateway it validates against
+// exactly the three ergo tiers (flash/pro/genius); everything else uses the
+// provider's /tags enumeration.
 func listAvailableModels(ctx context.Context, p client.Provider) []string {
 	if p == nil {
 		return nil
@@ -169,7 +168,10 @@ func listAvailableModels(ctx context.Context, p client.Provider) []string {
 		ctx = context.Background()
 	}
 	if _, ok := p.(*client.Ergo); ok {
-		return client.ErgoAvailableModels(ctx, p)
+		// The tjcoder gateway only serves the three ergo tiers. Validate
+		// against exactly those (not the wider unified /v1/providers
+		// catalogue of upstream xai/ollama/google ids).
+		return append([]string(nil), ergoTiers...)
 	}
 	infos, err := p.ListModels(ctx)
 	if err != nil {

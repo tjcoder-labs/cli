@@ -4,6 +4,14 @@
 
 All notable changes to Coder CLI. The source of truth is [release-notes/releases.json](release-notes/releases.json).
 
+## 0.9.234 — 2026-11-01
+
+**manage_model validates against the three ergo tiers.** For the tjcoder gateway, manage_model now validates an explicit model against exactly tjcoder/ergo-flash:cloud, tjcoder/ergo-pro:cloud, and tjcoder/ergo-genius:cloud, rejecting anything else.
+
+### Changed
+
+- manage_model accepts only the three ergo tiers (flash/pro/genius) on the tjcoder gateway.
+
 ## 0.9.233 — 2026-11-01
 
 **manage_model validates against the full catalog.** manage_model now checks an explicit model against the full provider catalog (ergo's unified ListAllModels, or the provider's /tags) and rejects unknown models. The TUI reflects the change via /model and persists it like a manual pick.

@@ -3,6 +3,20 @@
   "schema_version": 1,
   "releases": [
     {
+      "version": "0.9.234",
+      "date": "2026-11-01",
+      "title": "manage_model validates against the three ergo tiers",
+      "summary": "For the tjcoder gateway, manage_model now validates an explicit model against exactly tjcoder/ergo-flash:cloud, tjcoder/ergo-pro:cloud, and tjcoder/ergo-genius:cloud, rejecting anything else.",
+      "changes": {
+        "changed": [
+          {
+            "text": "manage_model accepts only the three ergo tiers (flash/pro/genius) on the tjcoder gateway.",
+            "highlight": true
+          }
+        ]
+      }
+    },
+    {
       "version": "0.9.233",
       "date": "2026-11-01",
       "title": "manage_model validates against the full catalog",
