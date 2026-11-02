@@ -837,6 +837,7 @@ func cmdAsk(opts askOptions) {
 	trackReg := tracking.NewRegistry()
 	trackReg.Register(tracking.NewTaskTracker())
 	trackReg.Register(tracking.NewMemoryTracker())
+	trackReg.Register(tracking.NewReminderTracker(opts.WorkspaceRoot))
 	manageItems := tools.NewManageItems(trackReg, &sessionState)
 	registry.RegisterTool(tools.ManageItemsBridge{Impl: manageItems})
 

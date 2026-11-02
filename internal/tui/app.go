@@ -585,6 +585,11 @@ func New(provider client.Provider, registry *tools.Registry, workspaceRoot, mode
 		config:        cfg,
 	}
 	applyTviewStyles(app.palette)
+	if tz := app.config.Timezone; tz != "" {
+		if err := SetTimezone(tz); err != nil {
+			app.appendActivity(fmt.Sprintf("Failed to load TUI timezone %q: %v", tz, err))
+		}
+	}
 	// Set up sinks for tool integration (highlight_code, invoke_cli_command, etc.)
 	app.runner.CLICommandSink = app
 	app.runner.Prompter = app
@@ -593,6 +598,7 @@ func New(provider client.Provider, registry *tools.Registry, workspaceRoot, mode
 	trackReg := tracking.NewRegistry()
 	trackReg.Register(tracking.NewTaskTracker())
 	trackReg.Register(tracking.NewMemoryTracker())
+	trackReg.Register(tracking.NewReminderTracker(workspaceRoot))
 	registry.RegisterTool(tools.ManageItemsBridge{Impl: tools.NewManageItems(trackReg, &app.sessionState)})
 	app.resetEnabledTools(current.ToolNames)
 	app.runner.SessionState = &app.sessionState

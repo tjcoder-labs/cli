@@ -3,6 +3,29 @@
   "schema_version": 1,
   "releases": [
     {
+      "version": "0.9.248",
+      "date": "2026-11-02",
+      "title": "manage_items can list, delete and reference reminders",
+      "summary": "The reminder tracker is now registered in both the TUI and headless modes, so manage_items can list, reference and delete reminders uniformly with tasks and memories. Deleting a reminder now also removes its crontab line when it was installed.",
+      "changes": {
+        "added": [
+          {
+            "text": "manage_items now supports the reminder type (list, get, create, update, delete), backed by the on-disk reminders.json.",
+            "highlight": true
+          }
+        ],
+        "fixed": [
+          {
+            "text": "Deleting a reminder now also strips its crontab line when the entry was installed, instead of leaving a stale cron entry behind.",
+            "highlight": true
+          },
+          {
+            "text": "Fixed two TUI build errors (a palette-field typo and an out-of-scope timezone reference) that prevented go build ./... from completing."
+          }
+        ]
+      }
+    },
+    {
       "version": "0.9.247",
       "covers_from": "0.9.240",
       "date": "2026-11-02",

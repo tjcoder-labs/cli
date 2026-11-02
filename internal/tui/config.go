@@ -44,6 +44,10 @@ type AppConfig struct {
 	// (e.g. 80) triggers /compact automatically once the conversation
 	// passes that threshold.
 	AutoCompactPercent int `json:"autoCompactPercent,omitempty"`
+	// Timezone is the IANA timezone name (e.g. "America/Denver") used for
+	// rendering timestamps in the TUI. If empty, the system's local zone
+	// is used.
+	Timezone string `json:"timezone,omitempty"`
 	// MCPServers is the persisted set of Model Context Protocol
 	// integrations. Each entry maps a stable name (used by /mcp
 	// add|list|remove and by the mcp_{server}_{tool} tool

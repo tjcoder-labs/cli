@@ -134,8 +134,19 @@ func (t *ReminderTracker) Update(state session.State, id string, input map[strin
 }
 
 func (t *ReminderTracker) Delete(state session.State, id string) (session.State, bool, error) {
-	_, removed, err := t.store.Delete(t.workspaceRoot, strings.TrimSpace(id))
-	return state, removed, err
+	// Remove (not Delete) also strips the crontab line when the entry
+	// was installed, so deleting a reminder via manage_items does not
+	// leave a stale cron line behind.
+	res, removed, err := t.store.Remove(t.workspaceRoot, strings.TrimSpace(id), reminders.SystemCrontab{})
+	if err != nil {
+		return state, removed, err
+	}
+	if res.CronErr != nil {
+		// The file entry is already gone; surface the crontab failure
+		// but do not fail the overall delete.
+		return state, removed, fmt.Errorf("reminder removed but crontab cleanup failed: %w", res.CronErr)
+	}
+	return state, removed, nil
 }
 
 func (t *ReminderTracker) Format(obj interface{}) string {
