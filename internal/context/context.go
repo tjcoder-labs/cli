@@ -28,6 +28,7 @@ type Info struct {
 	Locale        string // LANG environment variable
 	WorkspaceRoot string // Working directory root (can differ from CWD in session mode)
 	Model         string // Currently selected model (set by caller)
+	Provider      string // Active provider name (ergo, ollama, gemini, …)
 	Agent         string // Currently selected agent name (set by caller)
 }
 
@@ -46,6 +47,7 @@ const DefaultEnvironmentTemplate = `[execution-context]
 - Home: {{home}}
 - Locale: {{locale}}
 - Model: {{model}}
+- Provider: {{provider}}
 - Agent: {{agent}}
 
 [co-development]
@@ -110,6 +112,7 @@ func (i Info) tokens() map[string]string {
 		"home":        i.HomeDir,
 		"locale":      i.Locale,
 		"model":       i.Model,
+		"provider":    i.Provider,
 		"agent":       i.Agent,
 		"cli_path":    i.CLIPath,
 		"cli_version": i.CLIVersion,

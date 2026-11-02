@@ -25,6 +25,7 @@ import (
 //	▎
 //	▎  hint
 //	▎
+//	▎
 const (
 	cardAccent   = "▎"
 	cardPadLeft  = 2 // cells between the accent and the content
@@ -91,6 +92,6 @@ func renderCard(th theme.Theme, content []render.Line, width int, accent string)
 			rows = append(rows, row(append(append(render.Line{}, indent...), w...)))
 		}
 	}
-	rows = append(rows, row(nil))
+	rows = append(rows, row(nil), row(nil))
 	return strings.Join(rows, "\n")
 }

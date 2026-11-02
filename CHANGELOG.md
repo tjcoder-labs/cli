@@ -4,12 +4,13 @@
 
 All notable changes to Coder CLI. The source of truth is [release-notes/releases.json](release-notes/releases.json).
 
-## 0.9.235 — 2026-11-02
+## 0.9.238 — 2026-11-02
 
-**Auto-compact threshold, think-mode header, focusable canvas, branch in bar.** Added a configurable auto-compact context threshold, forwarded the think mode to the ergo gateway via the X-Ergo-Think header, made the canvas scrollable via Ctrl+E/Esc focus, and annotated the cwd with the current git branch.
+**Provider in context blocks, working /model persistence, prompt-card padding.** Agent context now names the active provider alongside the model, so an id like deepseek-v4.1-flash is no longer ambiguous about where it runs. Model choices on the tjcoder gateway now persist across restarts. Prompt cards for ask_user, sudo authorization and password entry close with a second blank padded row so the accent rule has bottom padding.
 
 ### Added
 
+- Context blocks name the active provider next to the model (e.g. Provider: ollama (local)), so the agent knows where it is running.
 - Auto-compact: /config can set a context-window percentage that triggers automatic compaction after a turn.
 - Ctrl+E focuses the right-hand panel (canvas/activity/tasks) for scrolling; Esc returns focus to input.
 - Context bar now shows the current git branch next to the cwd (e.g. /path [main]).
@@ -17,6 +18,11 @@ All notable changes to Coder CLI. The source of truth is [release-notes/releases
 ### Changed
 
 - Think mode is forwarded to the ergo gateway via the X-Ergo-Think header (auto/on/off).
+
+### Fixed
+
+- Prompt cards for ask_user, sudo authorization and password entry now have an extra blank padded row at the bottom.
+- A model chosen on the tjcoder gateway now persists across restarts; it was saved under one prefs key and read from another.
 
 ## 0.9.234 — 2026-11-01
 

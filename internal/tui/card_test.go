@@ -73,8 +73,16 @@ func TestCardSudoAndAskShareRenderer(t *testing.T) {
 				t.Errorf("%s row %d not on the shared accent/BgInput fill: %q", name, i, raw)
 			}
 		}
-		if strings.TrimSpace(strings.TrimPrefix(rows[0], cardAccent)) != "" || strings.TrimSpace(strings.TrimPrefix(rows[len(rows)-1], cardAccent)) != "" {
-			t.Errorf("%s must open and close with a blank padded row", name)
+		if strings.TrimSpace(strings.TrimPrefix(rows[0], cardAccent)) != "" {
+			t.Errorf("%s must open with a blank padded row", name)
+		}
+		// The card closes with TWO blank padded rows: one for breathing
+		// room under the hint, one so the accent rule keeps its own line
+		// of bottom padding too.
+		for _, i := range []int{len(rows) - 2, len(rows) - 1} {
+			if strings.TrimSpace(strings.TrimPrefix(rows[i], cardAccent)) != "" {
+				t.Errorf("%s row %d must be a blank padded row: %q", name, i, rows[i])
+			}
 		}
 	}
 
@@ -158,5 +166,23 @@ func TestPromptStateDefaultMultiAndFreeText(t *testing.T) {
 	f = newChoicePrompt(tools.PromptRequest{AllowOther: true})
 	if done, ans := f.handleKey(key(tcell.KeyEscape)); !done || !ans.Cancelled {
 		t.Fatal("Esc dismisses a free-text question")
+	}
+}
+
+// TestSecretCardTrailingPadding guards the password/secret card: it shares
+// renderCard, so it must also close with two blank padded accent rows.
+func TestSecretCardTrailingPadding(t *testing.T) {
+	p := darkPalette()
+	rows := plainRows(newSecretPrompt("Login", "Password").render(p, 60))
+	if len(rows) < 3 {
+		t.Fatalf("card too short: %q", rows)
+	}
+	for _, i := range []int{len(rows) - 2, len(rows) - 1} {
+		if got := strings.TrimSpace(strings.TrimPrefix(rows[i], cardAccent)); got != "" {
+			t.Errorf("row %d must be a blank padded row, got %q", i, rows[i])
+		}
+		if !strings.HasPrefix(rows[i], cardAccent) {
+			t.Errorf("row %d must keep the accent rule: %q", i, rows[i])
+		}
 	}
 }

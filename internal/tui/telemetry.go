@@ -40,6 +40,32 @@ func ProviderType(p client.Provider) string {
 	return strings.TrimLeft(strings.TrimPrefix(fmt.Sprintf("%T", p), "*client."), "*")
 }
 
+// providerLabel is the human-facing provider name shown to the agent in
+// context blocks. It tells the model *where* it is running (local Ollama,
+// the tjcoder gateway, Gemini, …) so a bare model id is unambiguous.
+func providerLabel(p client.Provider) string {
+	switch p.(type) {
+	case nil:
+		return ""
+	case *client.Ergo:
+		return "ergo (tjcoder gateway)"
+	case *client.Ollama:
+		if o, ok := p.(*client.Ollama); ok && strings.Contains(o.BaseURL(), "ollama.com") {
+			return "ollama-cloud"
+		}
+		return "ollama (local)"
+	case *client.Gemini:
+		return "gemini"
+	case *client.OpenAICompatible:
+		if name := client.ProviderKey(p); name != "" {
+			return "openai-compatible (" + name + ")"
+		}
+		return "openai-compatible"
+	default:
+		return ProviderType(p)
+	}
+}
+
 // startTelemetry shows the first-run notice and runs the ergo
 // heartbeat. TUI only; both honor the shared opt-out gates.
 func (a *App) startTelemetry(ctx context.Context) {

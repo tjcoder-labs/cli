@@ -81,6 +81,7 @@ type turnContextInfo struct {
 	Email           string
 	Wallet          string
 	Model           string
+	Provider        string
 	Agent           string
 	OS              string
 	Timezone        string
@@ -114,6 +115,7 @@ func formatTurnContext(info turnContextInfo) string {
 	line("email", info.Email)
 	line("wallet", info.Wallet)
 	line("model", info.Model)
+	line("provider", info.Provider)
 	line("agent", info.Agent)
 	line("os", info.OS)
 	line("timezone", info.Timezone)
@@ -285,6 +287,7 @@ func (a *App) buildTurnContext(atts []fileAttachment) string {
 		info.User = localUserName()
 	}
 	info.Model = a.currentModel
+	info.Provider = providerLabel(a.provider)
 	info.Agent = a.currentAgent.Name
 	if a.ergoBalanceKnown {
 		info.Wallet = formatCents(a.ergoBalanceCents) + " remaining (last known)"

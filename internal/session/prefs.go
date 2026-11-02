@@ -294,6 +294,17 @@ func SetProvider(name string) error {
 // ergoProvider is the provider key whose models come from the ergo gateway.
 const ergoProvider = "ergo"
 
+// canonicalProviderKey folds the public gateway name onto the internal
+// prefs slot so a model saved under "tjcoder" (client.ProviderKey) and one
+// saved under "ergo" (legacy/agent defaults) are the same entry.
+func canonicalProviderKey(provider string) string {
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "tjcoder", "ergo", "ergo-gateway":
+		return ergoProvider
+	}
+	return provider
+}
+
 // GetModelForProvider returns the remembered model for one provider. A value
 // stored under that provider wins. Otherwise the legacy single-slot value
 // (LastModel / legacy per-mode slots) is returned as a migration fallback —
@@ -308,7 +319,7 @@ func GetModelForProvider(provider string) (string, bool) {
 		return "", false
 	}
 	if provider != "" {
-		if m := p.ModelsByProvider[provider]; m != "" {
+		if m := p.ModelsByProvider[canonicalProviderKey(provider)]; m != "" {
 			return m, true
 		}
 	}
@@ -331,6 +342,7 @@ func SetModelForProvider(provider, model string) error {
 	if provider == "" {
 		return SetLastModel(true, model)
 	}
+	provider = canonicalProviderKey(provider)
 	prefsMu.Lock()
 	defer prefsMu.Unlock()
 	p, _, err := loadPrefsLocked()
@@ -349,6 +361,7 @@ func SetModelForProvider(provider, model string) error {
 
 // ClearModelForProvider forgets the saved model for one provider only.
 func ClearModelForProvider(provider string) error {
+	provider = canonicalProviderKey(provider)
 	prefsMu.Lock()
 	defer prefsMu.Unlock()
 	p, _, err := loadPrefsLocked()

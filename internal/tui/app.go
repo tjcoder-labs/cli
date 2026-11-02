@@ -2689,6 +2689,7 @@ func (a *App) openConfigModal() {
 func (a *App) buildEnvironmentInfo() ctxpkg.Info {
 	info := ctxpkg.Build(os.Args[0], a.appVersion, a.workspaceRoot)
 	info.Model = a.currentModel
+	info.Provider = providerLabel(a.provider)
 	info.Agent = a.currentAgent.Name
 	return info
 }
