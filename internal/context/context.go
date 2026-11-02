@@ -30,6 +30,7 @@ type Info struct {
 	Model         string // Currently selected model (set by caller)
 	Provider      string // Active provider name (ergo, ollama, gemini, …)
 	Agent         string // Currently selected agent name (set by caller)
+	Git           string // "branch clean|dirty", set by caller (e.g. "main clean")
 }
 
 // DefaultEnvironmentTemplate is the built-in environment/context block
@@ -49,6 +50,7 @@ const DefaultEnvironmentTemplate = `[execution-context]
 - Model: {{model}}
 - Provider: {{provider}}
 - Agent: {{agent}}
+- Git: {{git}}
 
 [co-development]
 - The user can co-develop with you in VS Code using the open_in_ide tool.
@@ -93,7 +95,31 @@ func Build(cliPath, cliVersion, workspaceRoot string) Info {
 	// Locale
 	info.Locale = getEnv("LANG", "C")
 
+	// Git branch + cleanliness, derived from the workspace root.
+	info.Git = gitSnapshot(info.WorkspaceRoot)
+
 	return info
+}
+
+// gitSnapshot reports "<branch> clean" or "<branch> dirty" for dir, or
+// "" when dir is not inside a git repo (or git is unavailable).
+func gitSnapshot(dir string) string {
+	if dir == "" {
+		return ""
+	}
+	branch, err := exec.Command("git", "-C", dir, "rev-parse", "--abbrev-ref", "HEAD").Output()
+	if err != nil {
+		return ""
+	}
+	name := strings.TrimSpace(string(branch))
+	if name == "" {
+		return ""
+	}
+	status, _ := exec.Command("git", "-C", dir, "status", "--porcelain").Output()
+	if strings.TrimSpace(string(status)) == "" {
+		return name + " clean"
+	}
+	return name + " dirty"
 }
 
 // tokens returns the interpolation map used by Render. Keys correspond
@@ -114,6 +140,7 @@ func (i Info) tokens() map[string]string {
 		"model":       i.Model,
 		"provider":    i.Provider,
 		"agent":       i.Agent,
+		"git":         i.Git,
 		"cli_path":    i.CLIPath,
 		"cli_version": i.CLIVersion,
 	}

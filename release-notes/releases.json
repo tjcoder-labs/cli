@@ -3,7 +3,7 @@
   "schema_version": 1,
   "releases": [
     {
-      "version": "0.9.245",
+      "version": "0.9.246",
       "covers_from": "0.9.240",
       "date": "2026-11-02",
       "title": "Formatter-style canvas wrapping; activity no longer bleeds into it",
@@ -63,6 +63,10 @@
           },
           {
             "text": "The chat input surface now shows a single blank row below the context strip, instead of two.",
+            "highlight": true
+          },
+          {
+            "text": "The [execution-context] block now names the current git branch (e.g. Git: main clean) with a {{git}} token available to custom /environment templates.",
             "highlight": true
           },
           {
