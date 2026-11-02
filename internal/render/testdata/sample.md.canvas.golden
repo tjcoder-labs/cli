@@ -6,10 +6,10 @@
  6 │ ###### Heading Six
  7 │
  8 │ Plain paragraph with **bold**, *italic*, ***both***,
-   ┆ ~~strike~~, `inline code`, and a
-   ┆ [link](https://example.com).
- 9 │ Literal tags must stay literal: [red]not red[-] and
-   ┆ [::b]not bold[::-] and [#00ff00]no green[-].
+   ┆    ~~strike~~, `inline code`,
+   ┆    and a [link](https://example.com).
+ 9 │ Literal tags must stay literal: [red]not red[-] and [
+   ┆   ::b]not bold[::-] and [#00ff00]no green[-].
 10 │
 11 │ > A blockquote line
 12 │ > with **bold** inside
@@ -45,14 +45,14 @@
 42 │ ```
 43 │
 44 │ ```json
-45 │ {"name": "coder", "version": "0.9.188", "tags":
-   ┆ ["cli", "tui"], "ok": true, "n": null}
+45 │ {"name": "coder", "version": "0.9.188", "tags": ["cli",
+   ┆    "tui"], "ok": true, "n": null}
 46 │ ```
 47 │
 48 │ ```xml
 49 │ <?xml version="1.0"?>
 50 │ <config enabled="true"><item id="1">Hello &amp;
-   ┆ bye</item><!-- note --></config>
+   ┆   bye</item><!-- note --></config>
 51 │ ```
 52 │
 53 │ ```yaml
@@ -75,8 +75,8 @@
 70 │ ```
 71 │
 72 │ ```sql
-73 │ SELECT id, name FROM users WHERE active = 1 ORDER BY
-   ┆ name;
+73 │ SELECT id, name FROM users WHERE active = 1 ORDER BY na
+   ┆   me;
 74 │ ```
 75 │
 76 │ ```rust
@@ -84,11 +84,11 @@
 78 │ ```
 79 │
 80 │ ```ts
-81 │ const add = (a: number, b: number): number => a + b;
-   ┆ // sum
+81 │ const add = (a: number,
+   ┆    b: number): number => a + b; // sum
 82 │ ```
 83 │
 84 │ A very long line that should wrap sensibly at word
-   ┆ boundaries rather than being chopped mid-word in the
-   ┆ middle of the transcript pane because terminals are
-   ┆ narrow sometimes and the canvas is narrower still.
+   ┆   boundaries rather than being chopped mid-word in the
+   ┆   middle of the transcript pane because terminals are
+   ┆   narrow sometimes and the canvas is narrower still.

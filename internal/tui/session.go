@@ -173,7 +173,7 @@ func (a *App) saveSession() error {
 		RefOrder:       append([]string(nil), a.refOrder...),
 		Transcript:     entries,
 		Reasoning:      a.reasoning.GetText(true),
-		Activity:       a.activity.GetText(true),
+		Activity:       a.activityLogText(),
 		Tasks:          append([]session.Task(nil), a.sessionState.Tasks...),
 		Articles:       append([]session.Article(nil), a.sessionState.Articles...),
 		Memories:       append([]session.Memory(nil), a.sessionState.Memories...),

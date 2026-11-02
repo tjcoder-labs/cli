@@ -3,10 +3,10 @@
   "schema_version": 1,
   "releases": [
     {
-      "version": "0.9.239",
+      "version": "0.9.240",
       "date": "2026-11-02",
-      "title": "Canvas keeps syntax colours instead of a purple wash",
-      "summary": "Highlighted line ranges in the canvas are now marked only on the line-number gutter (a bold number plus the accent rule) rather than by tinting every line. Passing a wide range used to lay a background wash over the whole block, hiding the syntax colours, which already derive from the theme's primary hue.",
+      "title": "Formatter-style canvas wrapping; activity no longer bleeds into it",
+      "summary": "Canvas lines now wrap the way a formatter would: breaks land at argument commas and operators instead of the last space, continued rows hang-indent under the original leading whitespace, and the line-number gutter is capped so long files keep their columns. Separately, the activity stream no longer writes into the canvas or get saved as file contents.",
       "changes": {
         "added": [
           {
@@ -26,10 +26,20 @@
         ],
         "changed": [
           {
+            "text": "Canvas code wraps at commas and operators with a hanging indent, so narrow panes keep code readable instead of breaking mid-string.",
+            "highlight": true
+          },
+          {
             "text": "Think mode is forwarded to the ergo gateway via the X-Ergo-Think header (auto/on/off)."
           }
         ],
         "fixed": [
+          {
+            "text": "Activity output no longer runs into the canvas; switching back to the activity panel restores the log."
+          },
+          {
+            "text": "Saving a session while the canvas is open no longer stores the displayed file as the activity log."
+          },
           {
             "text": "The canvas no longer washes a highlighted line range in purple; code keeps its syntax colours and only the gutter marker shows the range.",
             "highlight": true

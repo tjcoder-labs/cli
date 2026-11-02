@@ -4,9 +4,9 @@
 
 All notable changes to Coder CLI. The source of truth is [release-notes/releases.json](release-notes/releases.json).
 
-## 0.9.239 — 2026-11-02
+## 0.9.240 — 2026-11-02
 
-**Canvas keeps syntax colours instead of a purple wash.** Highlighted line ranges in the canvas are now marked only on the line-number gutter (a bold number plus the accent rule) rather than by tinting every line. Passing a wide range used to lay a background wash over the whole block, hiding the syntax colours, which already derive from the theme's primary hue.
+**Formatter-style canvas wrapping; activity no longer bleeds into it.** Canvas lines now wrap the way a formatter would: breaks land at argument commas and operators instead of the last space, continued rows hang-indent under the original leading whitespace, and the line-number gutter is capped so long files keep their columns. Separately, the activity stream no longer writes into the canvas or get saved as file contents.
 
 ### Added
 
@@ -17,10 +17,13 @@ All notable changes to Coder CLI. The source of truth is [release-notes/releases
 
 ### Changed
 
+- Canvas code wraps at commas and operators with a hanging indent, so narrow panes keep code readable instead of breaking mid-string.
 - Think mode is forwarded to the ergo gateway via the X-Ergo-Think header (auto/on/off).
 
 ### Fixed
 
+- Activity output no longer runs into the canvas; switching back to the activity panel restores the log.
+- Saving a session while the canvas is open no longer stores the displayed file as the activity log.
 - The canvas no longer washes a highlighted line range in purple; code keeps its syntax colours and only the gutter marker shows the range.
 - Prompt cards for ask_user, sudo authorization and password entry now have an extra blank padded row at the bottom.
 - A model chosen on the tjcoder gateway now persists across restarts; it was saved under one prefs key and read from another.

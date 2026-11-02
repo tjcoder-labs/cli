@@ -429,15 +429,22 @@ type App struct {
 	// canvasReflow is set while a re-render for a new width is queued.
 	canvasWidth  int
 	canvasReflow bool
+	// activityLog is the durable activity stream. The visible pane
+	// (a.activity) is shared with tasks/articles/canvas, so the log
+	// cannot live in that TextView: while the canvas is up its content
+	// would bleed into the rendered file, and saveSession would persist
+	// the file as the activity log. Keeping the log here lets the
+	// activity panel be rebuilt on demand.
+	activityLog strings.Builder
 
 	// captureRecording is true between /capture start and /capture stop.
 	// captureFrames accumulates rendered PNG frames (one per draw pass
 	// while recording, throttled by captureMinInterval). captureLastSample
 	// is the last time a frame was actually captured.
-	captureRecording    bool
-	captureFrames       [][]byte
-	captureMinInterval  time.Duration
-	captureLastSample   time.Time
+	captureRecording   bool
+	captureFrames      [][]byte
+	captureMinInterval time.Duration
+	captureLastSample  time.Time
 
 	// mdOut / mdCog render streamed assistant commentary (transcript)
 	// and reasoning (cognition pane) as markdown, one turn at a time.
@@ -2905,13 +2912,28 @@ func (a *App) showPanel(name string) {
 	default:
 		a.setActivePanel("activity")
 		a.setActivityTitle("ACTIVITY", "")
-		if state, ok, err := session.Load(a.workspaceRoot); err == nil && ok {
-			if state.Activity != "" {
-				a.activity.SetText(a.palette.Theme.Normalize(state.Activity))
-			}
-		}
+		a.restoreActivityLog()
 		a.rebuildLayout()
 		a.restoreDefaultFocus()
+	}
+}
+
+// restoreActivityLog repaints the activity panel from the durable log.
+// The visible TextView is shared with the canvas, so switching back to
+// activity must replace whatever file was rendered there.
+func (a *App) restoreActivityLog() {
+	if a.activity == nil {
+		return
+	}
+	if a.activityLog.Len() > 0 {
+		a.activity.SetText(a.activityLog.String())
+		a.activity.ScrollToEnd()
+		return
+	}
+	if state, ok, err := session.Load(a.workspaceRoot); err == nil && ok && state.Activity != "" {
+		restored := a.palette.Theme.Normalize(state.Activity)
+		a.activityLog.WriteString(restored)
+		a.activity.SetText(restored)
 	}
 }
 
@@ -4368,8 +4390,25 @@ func stripTviewTags(s string) string {
 
 func (a *App) appendActivity(line string) {
 	stamp := formatTimestamp(time.Now())
-	fmt.Fprintf(a.activity, "["+a.palette.HexFaint+"]%s[-] %s\n", stamp, line)
-	a.activity.ScrollToEnd()
+	entry := fmt.Sprintf("["+a.palette.HexFaint+"]%s[-] %s\n", stamp, line)
+	a.activityLog.WriteString(entry)
+	// Only touch the shared TextView when the activity stream actually
+	// owns it. While the canvas (or articles) is showing, writing here
+	// would splice log lines into the rendered file.
+	if a.activePanel == "activity" || a.activePanel == "" {
+		fmt.Fprint(a.activity, entry)
+		a.activity.ScrollToEnd()
+	}
+}
+
+// activityLogText returns the durable activity stream for persistence.
+// It never reads the shared TextView, which may be showing a canvas
+// file while the user is looking at code.
+func (a *App) activityLogText() string {
+	if a.activityLog.Len() > 0 {
+		return a.activityLog.String()
+	}
+	return ""
 }
 
 // truncateForActivity shortens a user-typed prompt so that activity

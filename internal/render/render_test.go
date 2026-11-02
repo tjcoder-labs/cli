@@ -332,20 +332,23 @@ func TestGutterRangeAndWrap(t *testing.T) {
 	lines := Code("", "", "one\ntwo two two two two two two two\nthree\nfour", th)
 	m, row := Gutter(lines, 3, 4, 20, th)
 	txt, styles := screen(m, 20, 10)
-	want := "1 │ one\n2 │ two two two two\n  ┆ two two two two\n3 ▌ three\n4 ▌ four"
+	// Continued rows are indented under the line's own leading
+	// whitespace (none here, so the +2 step applies), which costs cells
+	// and so wraps this line once more.
+	want := "1 │ one\n2 │ two two two two\n  ┆   two two two\n  ┆   two\n3 ▌ three\n4 ▌ four"
 	if txt != want {
 		t.Fatalf("gutter:\n%s\nwant:\n%s", txt, want)
 	}
-	if row != 3 {
-		t.Errorf("start row = %d, want 3 (after the wrapped line)", row)
+	if row != 4 {
+		t.Errorf("start row = %d, want 4 (after the wrapped line)", row)
 	}
 	// The range is marked on the gutter (bold number + ▌ rule), not by
 	// tinting the line: a full-line BgSelect wash swallowed the syntax
 	// colours, which already derive from the primary hue.
-	if !contains(styles, fmt.Sprintf("0,3 3 fg=%s bg=default a=1", th.Bright)) {
+	if !contains(styles, fmt.Sprintf("0,4 3 fg=%s bg=default a=1", th.Bright)) {
 		t.Errorf("range line number not emphasized: %v", styles)
 	}
-	if !contains(styles, fmt.Sprintf("2,3 ▌ fg=%s bg=default a=0", th.Primary)) {
+	if !contains(styles, fmt.Sprintf("2,4 ▌ fg=%s bg=default a=0", th.Primary)) {
 		t.Errorf("range line missing the ▌ rule: %v", styles)
 	}
 	if contains(styles, th.BgSelect) {

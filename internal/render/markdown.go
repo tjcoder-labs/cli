@@ -756,6 +756,9 @@ func Gutter(lines []Line, start, end, width int, th theme.Theme) (string, int) {
 		end = start
 	}
 	nw := len(strconv.Itoa(len(lines)))
+	if nw > 4 {
+		nw = 4 // a 2000-line file must not cost the code 3 columns
+	}
 	gw := nw + 3 // "123 │ "
 	var b strings.Builder
 	row, startRow := 0, 0
@@ -774,7 +777,7 @@ func Gutter(lines []Line, start, end, width int, th theme.Theme) (string, int) {
 			// enough to locate the range without recolouring the code.
 			numFg, numAttr, bar, barFg = th.Bright, "b", "▌", th.Primary
 		}
-		parts := Wrap(l, width-gw)
+		parts := WrapCode(l, width-gw)
 		for k, p := range parts {
 			var g Line
 			if k == 0 {
