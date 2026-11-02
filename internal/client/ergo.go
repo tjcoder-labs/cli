@@ -89,10 +89,6 @@ type ergoChatRequest struct {
 	StreamOpts  *ergoStreamOpts   `json:"stream_options,omitempty"`
 	MaxTokens   int               `json:"max_tokens,omitempty"`
 	Temperature float64           `json:"temperature,omitempty"`
-	// Think forwards the client's thinking-mode choice (true = force
-	// reasoning, false = disable). Always serialized so the gateway can
-	// distinguish "off" from an unset/default.
-	Think bool `json:"think"`
 }
 
 type ergoStreamOpts struct {
@@ -259,7 +255,6 @@ func (e *Ergo) Chat(ctx context.Context, request ChatRequest, onEvent func(Strea
 		Model:       request.Model,
 		Stream:      true, // always stream; matches the TUI's incremental rendering
 		StreamOpts:  &ergoStreamOpts{IncludeUsage: true},
-		Think:       request.Think,
 	}
 
 	// Map messages. System messages pass through as role "system".
@@ -288,6 +283,9 @@ func (e *Ergo) Chat(ctx context.Context, request ChatRequest, onEvent func(Strea
 	httpReq.Header.Set("X-Ergo-Client", "tjcoder-cli")
 	httpReq.Header.Set("X-Ergo-Client-Version", Version)
 	httpReq.Header.Set("X-Ergo-Interface", "tui")
+	if tm := strings.TrimSpace(request.ThinkMode); tm != "" {
+		httpReq.Header.Set("X-Ergo-Think", tm)
+	}
 	httpReq.Close = true
 
 	resp, err := e.httpClient.Do(httpReq)

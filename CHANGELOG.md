@@ -4,6 +4,20 @@
 
 All notable changes to Coder CLI. The source of truth is [release-notes/releases.json](release-notes/releases.json).
 
+## 0.9.235 — 2026-11-02
+
+**Auto-compact threshold, think-mode header, focusable canvas, branch in bar.** Added a configurable auto-compact context threshold, forwarded the think mode to the ergo gateway via the X-Ergo-Think header, made the canvas scrollable via Ctrl+E/Esc focus, and annotated the cwd with the current git branch.
+
+### Added
+
+- Auto-compact: /config can set a context-window percentage that triggers automatic compaction after a turn.
+- Ctrl+E focuses the right-hand panel (canvas/activity/tasks) for scrolling; Esc returns focus to input.
+- Context bar now shows the current git branch next to the cwd (e.g. /path [main]).
+
+### Changed
+
+- Think mode is forwarded to the ergo gateway via the X-Ergo-Think header (auto/on/off).
+
 ## 0.9.234 — 2026-11-01
 
 **manage_model validates against the three ergo tiers.** For the tjcoder gateway, manage_model now validates an explicit model against exactly tjcoder/ergo-flash:cloud, tjcoder/ergo-pro:cloud, and tjcoder/ergo-genius:cloud, rejecting anything else.

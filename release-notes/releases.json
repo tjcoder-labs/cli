@@ -3,6 +3,31 @@
   "schema_version": 1,
   "releases": [
     {
+      "version": "0.9.235",
+      "date": "2026-11-02",
+      "title": "Auto-compact threshold, think-mode header, focusable canvas, branch in bar",
+      "summary": "Added a configurable auto-compact context threshold, forwarded the think mode to the ergo gateway via the X-Ergo-Think header, made the canvas scrollable via Ctrl+E/Esc focus, and annotated the cwd with the current git branch.",
+      "changes": {
+        "added": [
+          {
+            "text": "Auto-compact: /config can set a context-window percentage that triggers automatic compaction after a turn.",
+            "highlight": true
+          },
+          {
+            "text": "Ctrl+E focuses the right-hand panel (canvas/activity/tasks) for scrolling; Esc returns focus to input."
+          },
+          {
+            "text": "Context bar now shows the current git branch next to the cwd (e.g. /path [main])."
+          }
+        ],
+        "changed": [
+          {
+            "text": "Think mode is forwarded to the ergo gateway via the X-Ergo-Think header (auto/on/off)."
+          }
+        ]
+      }
+    },
+    {
       "version": "0.9.234",
       "date": "2026-11-01",
       "title": "manage_model validates against the three ergo tiers",

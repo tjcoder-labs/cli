@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -725,6 +726,17 @@ func (a *App) build() {
 	a.activity, a.activityTitle, activityPanel = a.newPanel("ACTIVITY", a.palette.BgReasoning, 1)
 	a.activityPanel = activityPanel
 	a.reasoning.SetTextColor(a.palette.TextDim)
+	// The right-column body (activity/canvas) is scrollable once focused.
+	// Esc hands focus back to the chat input; the transcript/input are
+	// re-focused via Ctrl+Left (see globalKeys).
+	a.activity.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+		switch event.Key() {
+		case tcell.KeyEscape:
+			a.restoreDefaultFocus()
+			return nil
+		}
+		return event
+	})
 
 	// Interactive tasks list. The list is built once and populated
 	// each time the user opens /tasks. Toggling a task (Enter)
@@ -1556,7 +1568,7 @@ func (a *App) refreshHeaderRight() {
 		fsLabel = "Exit Fullscreen"
 	}
 	a.headerRight.SetText(fmt.Sprintf(
-		"[%s][Alt+I][-] About   [%s][Ctl+F][-] %s   [%s][F11][-]",
+		"[%s][Alt+I][-] About   [%s][Ctl+F][-] %s   [%s][Ctl+E][-] Panel",
 		a.palette.HexLavender, a.palette.HexLavender, fsLabel, a.palette.HexLavender,
 	))
 }
@@ -1733,10 +1745,32 @@ func (a *App) renderMultiLineHint() string {
 		a.palette.HexPurple, lines, a.palette.HexDim)
 }
 
+// gitBranchName returns the current git branch for the workspace root, or
+// "" when it can't be determined (not a repo, git missing, detached HEAD).
+// It's used to annotate the context bar's cwd with e.g. "[feat/capture]".
+func (a *App) gitBranchName() string {
+	root := a.workspaceRoot
+	if root == "" {
+		return ""
+	}
+	out, err := exec.Command("git", "-C", root, "rev-parse", "--abbrev-ref", "HEAD").Output()
+	if err != nil {
+		return ""
+	}
+	name := strings.TrimSpace(string(out))
+	if name == "" || name == "HEAD" {
+		return ""
+	}
+	return name
+}
+
 func (a *App) renderMetaBar() string {
 	cwd := a.workspaceRoot
 	if cwd == "" {
 		cwd = "."
+	}
+	if b := a.gitBranchName(); b != "" {
+		cwd = fmt.Sprintf("%s [%s]", cwd, b)
 	}
 	contextText := a.contextStatusText()
 	if contextText == "" {
@@ -2023,6 +2057,34 @@ func (a *App) globalKeys(event *tcell.EventKey) *tcell.EventKey {
 		a.openToolModal()
 		return nil
 	}
+	// Ctrl+E focuses the right-column body (canvas/activity/tasks) so
+	// the user can scroll it with arrows/PgUp/PgDn; Esc returns focus to
+	// the chat input (see the activity TextView's input capture).
+	if event.Key() == tcell.KeyCtrlE {
+		if a.activePanel != "" && a.activePanel != "activity" {
+			switch a.activePanel {
+			case "tasks":
+				if a.tasksList != nil {
+					a.tv.SetFocus(a.tasksList)
+				}
+			case "memories":
+				if a.memoriesList != nil {
+					a.tv.SetFocus(a.memoriesList)
+				}
+			case "reminders":
+				if a.remindersList != nil {
+					a.tv.SetFocus(a.remindersList)
+				}
+			default:
+				if a.activity != nil {
+					a.tv.SetFocus(a.activity)
+				}
+			}
+		} else if a.activity != nil {
+			a.tv.SetFocus(a.activity)
+		}
+		return nil
+	}
 	if event.Key() == tcell.KeyCtrlP || event.Key() == tcell.KeyF2 {
 		a.openModelModal()
 		return nil
@@ -2296,7 +2358,7 @@ func (a *App) showHelp() {
 		"\n" +
 		"Mid-turn: send another message to steer the running agent. It appears\n" +
 		"immediately as 'you steered'. Thinking streams in the Cognition pane.\n" +
-		"Keys: Alt+I about  Ctl+F/F11 fullscreen  Alt+A activity  Alt+T tasks  Alt+C code  Ctl+A switch agent"
+		"Keys: Alt+I about  Ctl+F/F11 fullscreen  Alt+A activity  Alt+T tasks  Alt+C code  Ctl+A switch agent  Ctl+E focus panel (Esc back)"
 	a.appendActivity(help)
 }
 
@@ -2494,6 +2556,25 @@ func (a *App) openConfigModal() {
 			work.CompactModel = option
 		}
 	})
+
+	// --- Auto-compact threshold ---
+	form.AddInputField("Auto-compact at % (0=off)", strconv.Itoa(work.AutoCompactPercent), 4,
+		func(textToCheck string, _ rune) bool {
+			if textToCheck == "" {
+				return true
+			}
+			n, err := strconv.Atoi(textToCheck)
+			return err == nil && n >= 0 && n <= 100
+		},
+		func(text string) {
+			if text == "" {
+				work.AutoCompactPercent = 0
+				return
+			}
+			if n, err := strconv.Atoi(text); err == nil && n >= 0 && n <= 100 {
+				work.AutoCompactPercent = n
+			}
+		})
 
 	// --- Tool step cap ---
 	form.AddInputField("Tool steps per turn", strconv.Itoa(work.ToolMax), 6,
@@ -3269,6 +3350,33 @@ func (a *App) clearSession() {
 //
 // /compact [model] optionally specifies the model used for the
 // compaction; it defaults to the current model.
+// maybeAutoCompact triggers a compaction when the context window has
+// passed the configured AutoCompactPercent threshold. It runs after a
+// turn settles (postUI) and is a no-op when the threshold is 0
+// (disabled), the window is unknown, or a compact is already in flight.
+func (a *App) maybeAutoCompact() {
+	limit := a.config.AutoCompactPercent
+	if limit <= 0 {
+		return
+	}
+	if a.busy {
+		return
+	}
+	u := a.contextUsageFor(a.currentModel)
+	if u.Window <= 0 {
+		return
+	}
+	if _, ok := u.Percent(); !ok {
+		return
+	}
+	pct := int(float64(u.Used) / float64(u.Window) * 100)
+	if pct < limit {
+		return
+	}
+	a.appendActivity(fmt.Sprintf("[%s]auto-compact[-]: context at %d%% (threshold %d%%)", a.palette.HexLavender, pct, limit))
+	a.compactHistory(nil)
+}
+
 func (a *App) compactHistory(parts []string) {
 	if len(a.history) < 4 {
 		a.appendActivity(fmt.Sprintf("[%s]compact[-]: nothing to compact (history has %d messages)", a.palette.HexFaint, len(a.history)))
@@ -3710,6 +3818,9 @@ func (a *App) launchTurnWithContext(prompt, agentNameOverride, turnContext strin
 			a.reloadTasksIfChanged()
 			// Slash commands deferred mid-turn run now.
 			a.runIdleQueue()
+			// Provider-level compaction mandate: when the context window is
+			// past the configured threshold, compact automatically.
+			a.maybeAutoCompact()
 		})
 	}()
 }
