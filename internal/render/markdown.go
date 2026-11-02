@@ -767,8 +767,12 @@ func Gutter(lines []Line, start, end, width int, th theme.Theme) (string, int) {
 		}
 		numFg, numAttr, bar, barFg := th.Faint, "", "│", th.Faint
 		if in {
+			// Mark the range on the gutter only. Tinting the whole line
+			// with BgSelect swallowed the syntax colours (which already
+			// derive from the primary hue), so a wide range read as one
+			// flat purple block. The ▌ bar plus the bold number are
+			// enough to locate the range without recolouring the code.
 			numFg, numAttr, bar, barFg = th.Bright, "b", "▌", th.Primary
-			l = l.WithBg(th.BgSelect)
 		}
 		parts := Wrap(l, width-gw)
 		for k, p := range parts {

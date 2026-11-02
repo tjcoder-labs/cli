@@ -4,9 +4,9 @@
 
 All notable changes to Coder CLI. The source of truth is [release-notes/releases.json](release-notes/releases.json).
 
-## 0.9.238 — 2026-11-02
+## 0.9.239 — 2026-11-02
 
-**Provider in context blocks, working /model persistence, prompt-card padding.** Agent context now names the active provider alongside the model, so an id like deepseek-v4.1-flash is no longer ambiguous about where it runs. Model choices on the tjcoder gateway now persist across restarts. Prompt cards for ask_user, sudo authorization and password entry close with a second blank padded row so the accent rule has bottom padding.
+**Canvas keeps syntax colours instead of a purple wash.** Highlighted line ranges in the canvas are now marked only on the line-number gutter (a bold number plus the accent rule) rather than by tinting every line. Passing a wide range used to lay a background wash over the whole block, hiding the syntax colours, which already derive from the theme's primary hue.
 
 ### Added
 
@@ -21,6 +21,7 @@ All notable changes to Coder CLI. The source of truth is [release-notes/releases
 
 ### Fixed
 
+- The canvas no longer washes a highlighted line range in purple; code keeps its syntax colours and only the gutter marker shows the range.
 - Prompt cards for ask_user, sudo authorization and password entry now have an extra blank padded row at the bottom.
 - A model chosen on the tjcoder gateway now persists across restarts; it was saved under one prefs key and read from another.
 

@@ -3,10 +3,10 @@
   "schema_version": 1,
   "releases": [
     {
-      "version": "0.9.238",
+      "version": "0.9.239",
       "date": "2026-11-02",
-      "title": "Provider in context blocks, working /model persistence, prompt-card padding",
-      "summary": "Agent context now names the active provider alongside the model, so an id like deepseek-v4.1-flash is no longer ambiguous about where it runs. Model choices on the tjcoder gateway now persist across restarts. Prompt cards for ask_user, sudo authorization and password entry close with a second blank padded row so the accent rule has bottom padding.",
+      "title": "Canvas keeps syntax colours instead of a purple wash",
+      "summary": "Highlighted line ranges in the canvas are now marked only on the line-number gutter (a bold number plus the accent rule) rather than by tinting every line. Passing a wide range used to lay a background wash over the whole block, hiding the syntax colours, which already derive from the theme's primary hue.",
       "changes": {
         "added": [
           {
@@ -30,6 +30,10 @@
           }
         ],
         "fixed": [
+          {
+            "text": "The canvas no longer washes a highlighted line range in purple; code keeps its syntax colours and only the gutter marker shows the range.",
+            "highlight": true
+          },
           {
             "text": "Prompt cards for ask_user, sudo authorization and password entry now have an extra blank padded row at the bottom.",
             "highlight": true

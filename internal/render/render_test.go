@@ -339,8 +339,17 @@ func TestGutterRangeAndWrap(t *testing.T) {
 	if row != 3 {
 		t.Errorf("start row = %d, want 3 (after the wrapped line)", row)
 	}
-	if !contains(styles, fmt.Sprintf("4,3 t fg=%s bg=%s a=0", th.Text, th.BgSelect)) {
-		t.Errorf("range line not tinted: %v", styles)
+	// The range is marked on the gutter (bold number + ▌ rule), not by
+	// tinting the line: a full-line BgSelect wash swallowed the syntax
+	// colours, which already derive from the primary hue.
+	if !contains(styles, fmt.Sprintf("0,3 3 fg=%s bg=default a=1", th.Bright)) {
+		t.Errorf("range line number not emphasized: %v", styles)
+	}
+	if !contains(styles, fmt.Sprintf("2,3 ▌ fg=%s bg=default a=0", th.Primary)) {
+		t.Errorf("range line missing the ▌ rule: %v", styles)
+	}
+	if contains(styles, th.BgSelect) {
+		t.Errorf("range must not tint the line with BgSelect: %v", styles)
 	}
 }
 
