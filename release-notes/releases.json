@@ -3,7 +3,7 @@
   "schema_version": 1,
   "releases": [
     {
-      "version": "0.9.243",
+      "version": "0.9.244",
       "covers_from": "0.9.240",
       "date": "2026-11-02",
       "title": "Formatter-style canvas wrapping; activity no longer bleeds into it",
@@ -55,6 +55,10 @@
           },
           {
             "text": "User message bubbles now use pure white text on the purple fill instead of the off-white body tint.",
+            "highlight": true
+          },
+          {
+            "text": "The chat input surface now shows a single blank row between the typed text and the context strip below it, instead of two.",
             "highlight": true
           },
           {

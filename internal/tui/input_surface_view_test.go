@@ -19,7 +19,7 @@ func renderInputRowMask(t *testing.T, width int) []string {
 	a.input.SetBackgroundColor(a.palette.BgInput)
 	a.contextBar.SetDynamicColors(true).SetWrap(false)
 	a.contextBar.SetBackgroundColor(a.palette.BgInput)
-	a.contextBar.SetBorderPadding(1, 1, 2, 2)
+	a.contextBar.SetBorderPadding(0, 1, 2, 2)
 	a.contextBar.SetText("● ~/src/coder  ctx 12K / 128K")
 	row := a.newInputRow()
 	layout := tview.NewFlex().SetDirection(tview.FlexRow).
@@ -69,8 +69,8 @@ func TestInputSurfaceGolden(t *testing.T) {
 		"..│░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░..",
 		"..│░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░..",
 		"..│░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░..",
-		"..│░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░..",
 		"..│░░░░x░xxxxxxxxxxx░░xxx░xxx░x░x░░░░░..",
+		"..│░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░..",
 		"..│░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░..",
 		"........................................",
 	}, "\n")

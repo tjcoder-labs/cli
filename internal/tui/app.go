@@ -830,7 +830,7 @@ func (a *App) build() {
 		SetWrap(false)
 	a.contextBar.SetBackgroundColor(a.palette.BgInput)
 	a.contextBar.SetTextColor(a.palette.TextDim)
-	a.contextBar.SetBorderPadding(1, 1, 2, 2)
+	a.contextBar.SetBorderPadding(0, 1, 2, 2)
 
 	// The prompt bar gets generous padding in its own background color so
 	// it "feels larger" and unmistakably reads as the text-entry surface,
