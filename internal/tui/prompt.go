@@ -627,9 +627,9 @@ func (a *App) runPrompt(ctx context.Context, st *promptState) (tools.PromptAnswe
 	tv.SetBackgroundColor(a.palette.BgRoot)
 	// Same horizontal padding as the transcript body, so the live card
 	// sits exactly where its answered copy will be printed.
-	// One blank row above and below the live card so it does not run
-	// into the transcript text above or the input below.
-	tv.SetBorderPadding(1, 1, 3, 2)
+	// 2 blank rows above and below (padding) plus the card's own 1,
+	// matching the answered card's 3/3 transcript spacing.
+	tv.SetBorderPadding(2, 2, 3, 2)
 	view := newPromptView(tv, st)
 	var finished bool
 	unmount := func() {
