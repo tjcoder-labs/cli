@@ -3,10 +3,11 @@
   "schema_version": 1,
   "releases": [
     {
-      "version": "0.9.240",
+      "version": "0.9.241",
+      "covers_from": "0.9.240",
       "date": "2026-11-02",
       "title": "Formatter-style canvas wrapping; activity no longer bleeds into it",
-      "summary": "Canvas lines now wrap the way a formatter would: breaks land at argument commas and operators instead of the last space, continued rows hang-indent under the original leading whitespace, and the line-number gutter is capped so long files keep their columns. Separately, the activity stream no longer writes into the canvas or get saved as file contents.",
+      "summary": "Canvas lines now wrap the way a formatter would: breaks land at argument commas and operators instead of the last space, continued rows hang-indent under the original leading whitespace, and the line-number gutter is capped so long files keep their columns. Separately, the activity stream no longer writes into the canvas or get saved as file contents, and prompt cards close with a single blank padded row instead of two.",
       "changes": {
         "added": [
           {
@@ -45,7 +46,7 @@
             "highlight": true
           },
           {
-            "text": "Prompt cards for ask_user, sudo authorization and password entry now have an extra blank padded row at the bottom.",
+            "text": "Prompt cards (ask_user, sudo, password, tool budget, error/retry) close with a single blank padded row at the bottom, so the accent rule keeps one line of padding and no longer doubles up.",
             "highlight": true
           },
           {

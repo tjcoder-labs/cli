@@ -10,7 +10,6 @@
 ▎
 ▎  1-9 or ↑↓ Enter to choose · Esc to deny
 ▎
-▎
 == ask_live
 ▎
 ▎  DEPLOY TARGET
@@ -23,7 +22,6 @@
 ▎
 ▎  1-9 or ↑↓ Enter to choose · Esc to dismiss
 ▎
-▎
 == sudo_answered
 ▎
 ▎  SUDO
@@ -32,14 +30,12 @@
 ▎
 ▎  ✓ Allow once
 ▎
-▎
 == ask_answered
 ▎
 ▎  DEPLOY TARGET
 ▎  Which environment should I deploy to?
 ▎
 ▎  ✓ “staging first”
-▎
 ▎
 == ask_dismissed
 ▎
@@ -48,7 +44,6 @@
 ▎
 ▎  • dismissed · the agent will proceed without an answer
 ▎
-▎
 == sudo_denied
 ▎
 ▎  SUDO
@@ -56,5 +51,4 @@
 ▎    $ apt-get install -y ripgrep
 ▎
 ▎  ✗ denied · dismissed with Esc
-▎
 ▎

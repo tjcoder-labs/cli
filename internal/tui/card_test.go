@@ -76,12 +76,16 @@ func TestCardSudoAndAskShareRenderer(t *testing.T) {
 		if strings.TrimSpace(strings.TrimPrefix(rows[0], cardAccent)) != "" {
 			t.Errorf("%s must open with a blank padded row", name)
 		}
-		// The card closes with TWO blank padded rows: one for breathing
-		// room under the hint, one so the accent rule keeps its own line
-		// of bottom padding too.
-		for _, i := range []int{len(rows) - 2, len(rows) - 1} {
-			if strings.TrimSpace(strings.TrimPrefix(rows[i], cardAccent)) != "" {
-				t.Errorf("%s row %d must be a blank padded row: %q", name, i, rows[i])
+		// The card closes with ONE blank padded row: breathing room
+		// under the hint. recordCard adds the blank transcript line
+		// below it, so a second row here read as a double gap.
+		if got := strings.TrimSpace(strings.TrimPrefix(rows[len(rows)-1], cardAccent)); got != "" {
+			t.Errorf("%s must close with a blank padded row, got %q", name, rows[len(rows)-1])
+		}
+		if n := len(rows); n > 1 {
+			// ... and only one: the row above must carry content.
+			if strings.TrimSpace(strings.TrimPrefix(rows[n-2], cardAccent)) == "" {
+				t.Errorf("%s has extra bottom padding: %q", name, rows[n-2])
 			}
 		}
 	}
@@ -170,19 +174,21 @@ func TestPromptStateDefaultMultiAndFreeText(t *testing.T) {
 }
 
 // TestSecretCardTrailingPadding guards the password/secret card: it shares
-// renderCard, so it must also close with two blank padded accent rows.
+// renderCard, so it must also close with exactly one blank padded row.
 func TestSecretCardTrailingPadding(t *testing.T) {
 	p := darkPalette()
 	rows := plainRows(newSecretPrompt("Login", "Password").render(p, 60))
 	if len(rows) < 3 {
 		t.Fatalf("card too short: %q", rows)
 	}
-	for _, i := range []int{len(rows) - 2, len(rows) - 1} {
-		if got := strings.TrimSpace(strings.TrimPrefix(rows[i], cardAccent)); got != "" {
-			t.Errorf("row %d must be a blank padded row, got %q", i, rows[i])
-		}
-		if !strings.HasPrefix(rows[i], cardAccent) {
-			t.Errorf("row %d must keep the accent rule: %q", i, rows[i])
-		}
+	last := rows[len(rows)-1]
+	if got := strings.TrimSpace(strings.TrimPrefix(last, cardAccent)); got != "" {
+		t.Errorf("last row must be blank padding, got %q", last)
+	}
+	if !strings.HasPrefix(last, cardAccent) {
+		t.Errorf("last row must keep the accent rule: %q", last)
+	}
+	if got := strings.TrimSpace(strings.TrimPrefix(rows[len(rows)-2], cardAccent)); got == "" {
+		t.Errorf("only one blank padded row is allowed, got two: %q", rows[len(rows)-2])
 	}
 }
