@@ -1177,15 +1177,23 @@ func wordWrap(s string, width int) []string {
 
 func (a *App) renderUserMessage(prompt string) string {
 	maxWidth := a.userMessageMaxWidth()
-	lines := wordWrap(prompt, maxWidth)
+	// Inner horizontal padding around the message text.
+	padding := userMessagePadding
+	// Wrap to the *inner* content width (maxWidth minus the two padding
+	// cells) so a wrapped line plus its padding never exceeds maxWidth.
+	// Wrapping to maxWidth directly produced content lines one cell wider
+	// than the bubble border, which broke the continuous purple edge.
+	innerWidth := maxWidth - padding*2
+	if innerWidth < userMessageMinWidth {
+		innerWidth = userMessageMinWidth
+	}
+	lines := wordWrap(prompt, innerWidth)
 	maxLen := 0
 	for _, line := range lines {
 		if l := utf8.RuneCountInString(line); l > maxLen {
 			maxLen = l
 		}
 	}
-	// Inner horizontal padding around the message text.
-	padding := userMessagePadding
 	width := maxLen + padding*2
 	// A "wrapped" message is one whose whitespace-normalized length exceeds
 	// a single line, i.e. the text had to break across lines. In that case
@@ -1195,7 +1203,7 @@ func (a *App) renderUserMessage(prompt string) string {
 	// Hard newlines are deliberately collapsed here so a short multi-line
 	// message stays compact instead of stretching edge-to-edge.
 	normalized := utf8.RuneCountInString(strings.Join(strings.Fields(prompt), " "))
-	if normalized > maxWidth {
+	if normalized > innerWidth {
 		width = maxWidth
 	}
 	// Use non-breaking spaces so tview doesn't trim trailing spaces and the
@@ -3541,14 +3549,27 @@ func (a *App) navigateInputHistory(dir int) {
 		a.inputHistoryDraft = a.input.GetText()
 	}
 
-	newIdx := a.inputHistoryIdx + dir
+	// The slice is append-ordered, so the newest entry lives at the
+	// last index. -1 means "at the draft, past the newest entry".
+	var newIdx int
 	if dir < 0 {
-		// Up: clamp at the oldest entry (index 0).
-		if newIdx < 0 {
-			newIdx = 0
+		// Up: from the draft, jump to the newest entry; then walk
+		// towards older entries and clamp at the oldest (index 0).
+		if a.inputHistoryIdx == -1 {
+			newIdx = len(a.inputHistory) - 1
+		} else {
+			newIdx = a.inputHistoryIdx - 1
+			if newIdx < 0 {
+				newIdx = 0
+			}
 		}
 	} else {
-		// Down: past the newest entry returns to draft.
+		// Down: walk towards newer entries; past the newest returns
+		// to the saved draft.
+		if a.inputHistoryIdx == -1 {
+			return
+		}
+		newIdx = a.inputHistoryIdx + 1
 		if newIdx >= len(a.inputHistory) {
 			newIdx = -1
 		}
@@ -4104,7 +4125,36 @@ var timestampLineRe = regexp.MustCompile(`\d{1,2}:\d{2}`)
 // cognition pane, the activity log, and the per-turn transcript labels
 // all share this helper so the format stays consistent across panels.
 func formatTimestamp(t time.Time) string {
+	if timestampLocation != nil {
+		t = t.In(timestampLocation)
+	}
 	return t.Format("3:04 PM")
+}
+
+// timestampLocation is the zone every TUI wall-clock stamp is rendered
+// in. nil means "the host's local zone". The host is often a container
+// or VM running with TZ unset and /etc/localtime pointing at UTC, which
+// made every timestamp read as UTC even though the user is somewhere
+// else; config.Timezone overrides that without changing the system
+// clock. It is set once during New()/loadConfig and never written from
+// the UI goroutine afterwards.
+var timestampLocation *time.Location
+
+// SetTimezone pins the zone used for TUI timestamps. An empty name
+// restores "host local". It reports an error for an unknown zone so
+// the caller can fall back instead of silently rendering UTC again.
+func SetTimezone(name string) error {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		timestampLocation = nil
+		return nil
+	}
+	loc, err := time.LoadLocation(name)
+	if err != nil {
+		return fmt.Errorf("unknown timezone %q: %w", name, err)
+	}
+	timestampLocation = loc
+	return nil
 }
 
 func (a *App) highlightTranscriptText(text string) string {
