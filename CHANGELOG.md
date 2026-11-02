@@ -4,7 +4,7 @@
 
 All notable changes to Coder CLI. The source of truth is [release-notes/releases.json](release-notes/releases.json).
 
-## 0.9.240 – 0.9.244 — 2026-11-02
+## 0.9.240 – 0.9.245 — 2026-11-02
 
 **Formatter-style canvas wrapping; activity no longer bleeds into it.** Canvas lines now wrap the way a formatter would: breaks land at argument commas and operators instead of the last space, continued rows hang-indent under the original leading whitespace, and the line-number gutter is capped so long files keep their columns. Separately, the activity stream no longer writes into the canvas or get saved as file contents, and prompt cards close with a single blank padded row instead of two.
 
@@ -29,6 +29,7 @@ All notable changes to Coder CLI. The source of truth is [release-notes/releases
 - The focused (live) prompt card now matches its answered copy's spacing: two blank rows of padding above and below, instead of one above and three below.
 - User message bubbles now use pure white text on the purple fill instead of the off-white body tint.
 - The chat input surface now shows a single blank row between the typed text and the context strip below it, instead of two.
+- The chat input surface now shows a single blank row below the context strip, instead of two.
 - A model chosen on the tjcoder gateway now persists across restarts; it was saved under one prefs key and read from another.
 
 ## 0.9.234 — 2026-11-01

@@ -202,7 +202,7 @@ func (a *App) buildAboutLeft() tview.Primitive {
 // leave that row 2 columns short on each end with no beam. The gutter
 // between the prompt and the footer is absorbed into this row so the
 // overall vertical layout is unchanged.
-const inputRowHeight = 6
+const inputRowHeight = 5
 
 const modelLoadTimeout = 12 * time.Second
 
@@ -1367,7 +1367,7 @@ func (a *App) newInputRow() *tview.Flex {
 func (a *App) newInputSurface() *tview.Flex {
 	inner := tview.NewFlex().SetDirection(tview.FlexRow).
 		AddItem(a.input, 3, 0, true).
-		AddItem(a.contextBar, 3, 0, false)
+		AddItem(a.contextBar, 2, 0, false)
 	inner.SetBackgroundColor(a.palette.BgInput)
 
 	leftBeam := tview.NewBox()
