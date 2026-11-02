@@ -38,6 +38,12 @@ type AppConfig struct {
 	// lets the user pick a cheaper / faster model for compaction
 	// while keeping a more capable model for the main conversation.
 	CompactModel string `json:"compactModel,omitempty"`
+	// AutoCompactPercent is the context-window fill percentage at which
+	// the app automatically compacts history when a turn settles. 0
+	// (the default) disables automatic compaction; a positive value
+	// (e.g. 80) triggers /compact automatically once the conversation
+	// passes that threshold.
+	AutoCompactPercent int `json:"autoCompactPercent,omitempty"`
 	// MCPServers is the persisted set of Model Context Protocol
 	// integrations. Each entry maps a stable name (used by /mcp
 	// add|list|remove and by the mcp_{server}_{tool} tool
@@ -45,6 +51,9 @@ type AppConfig struct {
 	// command mutates this map; the /config JSON editor round-trips
 	// it verbatim.
 	MCPServers map[string]MCPServerConfig `json:"mcp_servers,omitempty"`
+	// CaptureDir is the directory where /screenshot and /capture save
+	// their media. An empty string means the default (~/Downloads).
+	CaptureDir string `json:"captureDir,omitempty"`
 }
 
 // MCPServerConfig is the on-disk shape of a single MCP integration.

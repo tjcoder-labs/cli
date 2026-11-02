@@ -252,9 +252,9 @@ func (e *Ergo) Chat(ctx context.Context, request ChatRequest, onEvent func(Strea
 		return e.ollama.Chat(ctx, request, onEvent)
 	}
 	req := ergoChatRequest{
-		Model:      request.Model,
-		Stream:     true, // always stream; matches the TUI's incremental rendering
-		StreamOpts: &ergoStreamOpts{IncludeUsage: true},
+		Model:       request.Model,
+		Stream:      true, // always stream; matches the TUI's incremental rendering
+		StreamOpts:  &ergoStreamOpts{IncludeUsage: true},
 	}
 
 	// Map messages. System messages pass through as role "system".
@@ -283,6 +283,9 @@ func (e *Ergo) Chat(ctx context.Context, request ChatRequest, onEvent func(Strea
 	httpReq.Header.Set("X-Ergo-Client", "tjcoder-cli")
 	httpReq.Header.Set("X-Ergo-Client-Version", Version)
 	httpReq.Header.Set("X-Ergo-Interface", "tui")
+	if tm := strings.TrimSpace(request.ThinkMode); tm != "" {
+		httpReq.Header.Set("X-Ergo-Think", tm)
+	}
 	httpReq.Close = true
 
 	resp, err := e.httpClient.Do(httpReq)

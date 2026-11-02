@@ -43,6 +43,11 @@ type ChatRequest struct {
 	Tools    []ToolDefinition `json:"tools,omitempty"`
 	Stream   bool             `json:"stream"`
 	Think    bool             `json:"think,omitempty"`
+	// ThinkMode is the user's thinking preference for providers that
+	// distinguish "auto"/"on"/"off" (the ergo gateway's X-Ergo-Think
+	// header). Empty means "auto". Think (above) is the boolean form used
+	// by Ollama-style providers.
+	ThinkMode string `json:"-"`
 }
 
 type StreamEvent struct {

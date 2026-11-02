@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -239,6 +240,8 @@ var slashCommands = []slashCommand{
 	{"use", "Set the active workspace"},
 	{"about", "Open the about screen"},
 	{"mcp", "Manage MCP integrations"},
+	{"capture", "Record screen: start or stop"},
+	{"screenshot", "Save the current screen as a PNG"},
 	{"providers", "Manage model providers"},
 	{"update", "Check for and install an update"},
 	{"telemetry", "Anonymous usage stats: on, off, or status"},
@@ -267,13 +270,13 @@ type App struct {
 	// a quick double-Enter doesn't drop; submit() does a non-blocking
 	// send and falls back to an activity-log warning if the buffer
 	// is saturated (per the contract documented on Runner.Steering).
-	steeringCh   chan string
+	steeringCh chan string
 	// lastTurnPrompt is the user text of the in-flight turn, so an error
 	// card can offer to retry it.
 	lastTurnPrompt string
-	mcpClient    *mcp.Client
-	sessionState session.State
-	palette      Palette
+	mcpClient      *mcp.Client
+	sessionState   session.State
+	palette        Palette
 
 	workspaceRoot             string
 	productName               string
@@ -426,6 +429,15 @@ type App struct {
 	// canvasReflow is set while a re-render for a new width is queued.
 	canvasWidth  int
 	canvasReflow bool
+
+	// captureRecording is true between /capture start and /capture stop.
+	// captureFrames accumulates rendered PNG frames (one per draw pass
+	// while recording, throttled by captureMinInterval). captureLastSample
+	// is the last time a frame was actually captured.
+	captureRecording    bool
+	captureFrames       [][]byte
+	captureMinInterval  time.Duration
+	captureLastSample   time.Time
 
 	// mdOut / mdCog render streamed assistant commentary (transcript)
 	// and reasoning (cognition pane) as markdown, one turn at a time.
@@ -714,6 +726,17 @@ func (a *App) build() {
 	a.activity, a.activityTitle, activityPanel = a.newPanel("ACTIVITY", a.palette.BgReasoning, 1)
 	a.activityPanel = activityPanel
 	a.reasoning.SetTextColor(a.palette.TextDim)
+	// The right-column body (activity/canvas) is scrollable once focused.
+	// Esc hands focus back to the chat input; the transcript/input are
+	// re-focused via Ctrl+Left (see globalKeys).
+	a.activity.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+		switch event.Key() {
+		case tcell.KeyEscape:
+			a.restoreDefaultFocus()
+			return nil
+		}
+		return event
+	})
 
 	// Interactive tasks list. The list is built once and populated
 	// each time the user opens /tasks. Toggling a task (Enter)
@@ -1545,7 +1568,7 @@ func (a *App) refreshHeaderRight() {
 		fsLabel = "Exit Fullscreen"
 	}
 	a.headerRight.SetText(fmt.Sprintf(
-		"[%s][Alt+I][-] About   [%s][Ctl+F][-] %s   [%s][F11][-]",
+		"[%s][Alt+I][-] About   [%s][Ctl+F][-] %s   [%s][Ctl+E][-] Panel",
 		a.palette.HexLavender, a.palette.HexLavender, fsLabel, a.palette.HexLavender,
 	))
 }
@@ -1722,10 +1745,32 @@ func (a *App) renderMultiLineHint() string {
 		a.palette.HexPurple, lines, a.palette.HexDim)
 }
 
+// gitBranchName returns the current git branch for the workspace root, or
+// "" when it can't be determined (not a repo, git missing, detached HEAD).
+// It's used to annotate the context bar's cwd with e.g. "[feat/capture]".
+func (a *App) gitBranchName() string {
+	root := a.workspaceRoot
+	if root == "" {
+		return ""
+	}
+	out, err := exec.Command("git", "-C", root, "rev-parse", "--abbrev-ref", "HEAD").Output()
+	if err != nil {
+		return ""
+	}
+	name := strings.TrimSpace(string(out))
+	if name == "" || name == "HEAD" {
+		return ""
+	}
+	return name
+}
+
 func (a *App) renderMetaBar() string {
 	cwd := a.workspaceRoot
 	if cwd == "" {
 		cwd = "."
+	}
+	if b := a.gitBranchName(); b != "" {
+		cwd = fmt.Sprintf("%s [%s]", cwd, b)
 	}
 	contextText := a.contextStatusText()
 	if contextText == "" {
@@ -2012,6 +2057,34 @@ func (a *App) globalKeys(event *tcell.EventKey) *tcell.EventKey {
 		a.openToolModal()
 		return nil
 	}
+	// Ctrl+E focuses the right-column body (canvas/activity/tasks) so
+	// the user can scroll it with arrows/PgUp/PgDn; Esc returns focus to
+	// the chat input (see the activity TextView's input capture).
+	if event.Key() == tcell.KeyCtrlE {
+		if a.activePanel != "" && a.activePanel != "activity" {
+			switch a.activePanel {
+			case "tasks":
+				if a.tasksList != nil {
+					a.tv.SetFocus(a.tasksList)
+				}
+			case "memories":
+				if a.memoriesList != nil {
+					a.tv.SetFocus(a.memoriesList)
+				}
+			case "reminders":
+				if a.remindersList != nil {
+					a.tv.SetFocus(a.remindersList)
+				}
+			default:
+				if a.activity != nil {
+					a.tv.SetFocus(a.activity)
+				}
+			}
+		} else if a.activity != nil {
+			a.tv.SetFocus(a.activity)
+		}
+		return nil
+	}
 	if event.Key() == tcell.KeyCtrlP || event.Key() == tcell.KeyF2 {
 		a.openModelModal()
 		return nil
@@ -2150,8 +2223,16 @@ func (a *App) handleSlashCommand(cmd string) {
 	case "tools":
 		a.openToolModal()
 	case "model":
-		if len(parts) > 1 && a.isErgoProvider() {
-			a.selectErgoAgentByName(parts[1])
+		if len(parts) > 1 {
+			if a.isErgoProvider() {
+				a.selectErgoAgentByName(parts[1])
+			} else {
+				a.selectModel(parts[1])
+				a.refreshFooter()
+				a.appendActivity("Selected model: " + parts[1])
+				a.saveSession()
+				a.refreshContextForModel(parts[1])
+			}
 		} else {
 			a.openModelModal()
 		}
@@ -2219,6 +2300,10 @@ func (a *App) handleSlashCommand(cmd string) {
 		}
 	case "mcp":
 		a.handleMCPCommand(parts)
+	case "capture":
+		a.handleCapture(parts)
+	case "screenshot":
+		a.handleScreenshot()
 	case "login":
 		a.handleLoginCommand()
 	case "logout":
@@ -2267,9 +2352,13 @@ func (a *App) showHelp() {
 		"  /update               check for an update   /about        about screen\n" +
 		"  /activity             activity panel\n" +
 		"\n" +
+		"Capture\n" +
+		"  /screenshot           save the screen as PNG (to your capture dir)\n" +
+		"  /capture start|stop   begin or end a recording\n" +
+		"\n" +
 		"Mid-turn: send another message to steer the running agent. It appears\n" +
 		"immediately as 'you steered'. Thinking streams in the Cognition pane.\n" +
-		"Keys: Alt+I about  Ctl+F/F11 fullscreen  Alt+A activity  Alt+T tasks  Alt+C code  Ctl+A switch agent"
+		"Keys: Alt+I about  Ctl+F/F11 fullscreen  Alt+A activity  Alt+T tasks  Alt+C code  Ctl+A switch agent  Ctl+E focus panel (Esc back)"
 	a.appendActivity(help)
 }
 
@@ -2468,6 +2557,25 @@ func (a *App) openConfigModal() {
 		}
 	})
 
+	// --- Auto-compact threshold ---
+	form.AddInputField("Auto-compact at % (0=off)", strconv.Itoa(work.AutoCompactPercent), 4,
+		func(textToCheck string, _ rune) bool {
+			if textToCheck == "" {
+				return true
+			}
+			n, err := strconv.Atoi(textToCheck)
+			return err == nil && n >= 0 && n <= 100
+		},
+		func(text string) {
+			if text == "" {
+				work.AutoCompactPercent = 0
+				return
+			}
+			if n, err := strconv.Atoi(text); err == nil && n >= 0 && n <= 100 {
+				work.AutoCompactPercent = n
+			}
+		})
+
 	// --- Tool step cap ---
 	form.AddInputField("Tool steps per turn", strconv.Itoa(work.ToolMax), 6,
 		func(textToCheck string, _ rune) bool {
@@ -2509,6 +2617,26 @@ func (a *App) openConfigModal() {
 	form.AddDropDown("Automatic updates", []string{"On", "Off"}, autoIdx, func(option string, _ int) {
 		autoUpdate = option == "On"
 	})
+
+	// --- Capture directory ---
+	captureDirDefault := ""
+	if home, err := os.UserHomeDir(); err == nil {
+		captureDirDefault = filepath.Join(home, "Downloads")
+	}
+	captureDirLabel := work.CaptureDir
+	if captureDirLabel == "" {
+		captureDirLabel = captureDirDefault + " (default)"
+	}
+	form.AddInputField("Screenshot/capture directory", captureDirLabel, 0,
+		nil,
+		func(text string) {
+			trimmed := strings.TrimSpace(text)
+			if strings.HasSuffix(trimmed, " (default)") {
+				trimmed = strings.TrimSuffix(trimmed, " (default)")
+				trimmed = strings.TrimSpace(trimmed)
+			}
+			work.CaptureDir = trimmed
+		})
 
 	// --- Actions ---
 	save := func() {
@@ -3086,6 +3214,10 @@ func (a *App) afterDraw(tcell.Screen) {
 	// the draw pass.
 	a.checkCanvasWidth()
 	a.checkPromptWidth()
+	// While a capture is recording, sample the current frame. Sampling
+	// is throttled to captureMinInterval and rendered on a separate
+	// simulation screen so it never touches the live terminal.
+	a.sampleCaptureFrame()
 }
 
 // checkCanvasWidth runs after every draw. When the canvas is showing a
@@ -3218,6 +3350,33 @@ func (a *App) clearSession() {
 //
 // /compact [model] optionally specifies the model used for the
 // compaction; it defaults to the current model.
+// maybeAutoCompact triggers a compaction when the context window has
+// passed the configured AutoCompactPercent threshold. It runs after a
+// turn settles (postUI) and is a no-op when the threshold is 0
+// (disabled), the window is unknown, or a compact is already in flight.
+func (a *App) maybeAutoCompact() {
+	limit := a.config.AutoCompactPercent
+	if limit <= 0 {
+		return
+	}
+	if a.busy {
+		return
+	}
+	u := a.contextUsageFor(a.currentModel)
+	if u.Window <= 0 {
+		return
+	}
+	if _, ok := u.Percent(); !ok {
+		return
+	}
+	pct := int(float64(u.Used) / float64(u.Window) * 100)
+	if pct < limit {
+		return
+	}
+	a.appendActivity(fmt.Sprintf("[%s]auto-compact[-]: context at %d%% (threshold %d%%)", a.palette.HexLavender, pct, limit))
+	a.compactHistory(nil)
+}
+
 func (a *App) compactHistory(parts []string) {
 	if len(a.history) < 4 {
 		a.appendActivity(fmt.Sprintf("[%s]compact[-]: nothing to compact (history has %d messages)", a.palette.HexFaint, len(a.history)))
@@ -3620,7 +3779,7 @@ func (a *App) launchTurnWithContext(prompt, agentNameOverride, turnContext strin
 		nextHistory, err := a.runner.Run(ctx, history, prompt, agentCfg, model, enabled, a.handleEvent)
 		a.postUI(func() {
 			a.flushMarkdownStreams()
-				if err != nil {
+			if err != nil {
 				errText := fmt.Sprintf("error: %v", err)
 				if isReasoningRelated(errText) {
 					fmt.Fprintf(a.reasoning, "\n["+a.palette.HexAlert+"::b]✗ %s[-:-:-]\n", tview.Escape(errText))
@@ -3659,6 +3818,9 @@ func (a *App) launchTurnWithContext(prompt, agentNameOverride, turnContext strin
 			a.reloadTasksIfChanged()
 			// Slash commands deferred mid-turn run now.
 			a.runIdleQueue()
+			// Provider-level compaction mandate: when the context window is
+			// past the configured threshold, compact automatically.
+			a.maybeAutoCompact()
 		})
 	}()
 }

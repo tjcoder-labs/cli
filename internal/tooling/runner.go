@@ -290,6 +290,39 @@ func (p *thoughtParser) Flush() (reasoning, commentary string) {
 	return reasoning, commentary
 }
 
+// thinkEnabled maps the persisted ThinkMode to the ChatRequest.Think flag
+// sent to the provider. "on" forces reasoning, "off" disables it, and the
+// default ("auto"/unset) leaves the provider's own default in force.
+func thinkEnabled(state *session.State) bool {
+	if state == nil {
+		return true
+	}
+	switch strings.ToLower(strings.TrimSpace(state.ThinkMode)) {
+	case "off":
+		return false
+	case "on":
+		return true
+	default:
+		return true
+	}
+}
+
+// thinkMode returns the raw persisted ThinkMode ("on"/"off"/"auto"), or
+// "auto" when unset. It feeds the ergo gateway's X-Ergo-Think header, which
+// distinguishes auto from an explicit on/off.
+func thinkMode(state *session.State) string {
+	if state == nil {
+		return "auto"
+	}
+	m := strings.ToLower(strings.TrimSpace(state.ThinkMode))
+	switch m {
+	case "on", "off":
+		return m
+	default:
+		return "auto"
+	}
+}
+
 func (r *Runner) Run(ctx context.Context, history []client.Message, prompt string, agentCfg agent.Config, model string, enabledTools []string, onEvent func(Event)) ([]client.Message, error) {
 	if r.Observer == nil {
 		return r.run(ctx, history, prompt, agentCfg, model, enabledTools, onEvent)
@@ -688,8 +721,9 @@ func (r *Runner) runChatTurn(ctx context.Context, model, systemPrompt string, hi
 		Messages: append([]client.Message{
 			{Role: "system", Content: systemPrompt},
 		}, sanitized...),
-		Tools: defs,
-		Think: true,
+		Tools:     defs,
+		Think:     thinkEnabled(r.SessionState),
+		ThinkMode: thinkMode(r.SessionState),
 	}
 	msg, err := r.Provider.Chat(turnCtx, req, func(stream client.StreamEvent) error {
 		if stream.Reasoning != "" && onEvent != nil {

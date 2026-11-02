@@ -19,6 +19,7 @@ require (
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/hashicorp/golang-lru/v2 v2.0.7 // indirect
 	github.com/klauspost/compress v1.17.11 // indirect
+	golang.org/x/image v0.28.0 // indirect
 )
 
 require (
