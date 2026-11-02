@@ -40,7 +40,7 @@ func TestRenderUserMessageBuildsFullPurpleBubble(t *testing.T) {
 	if strings.Contains(got, "You") {
 		t.Fatalf("expected no user label in bubble, got %q", got)
 	}
-	if !strings.Contains(got, "["+app.palette.HexMain+":"+app.palette.HexPurple+":b]") {
+	if !strings.Contains(got, "["+app.palette.HexWhite+":"+app.palette.HexPurple+":b]") {
 		t.Fatalf("expected purple message body, got %q", got)
 	}
 	if !strings.Contains(got, "hello world") {

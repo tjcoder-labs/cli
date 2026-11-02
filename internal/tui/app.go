@@ -67,9 +67,14 @@ type Palette struct {
 	HexRoot     string
 	HexPurple   string
 	HexLavender string
-	HexViolet   string
-	HexSoft     string
-	HexMuted    string
+	// HexWhite is pure white, used for text on filled purple surfaces
+	// (the user message bubble) where the theme's Text tint would read
+	// as off-white. It is hue-neutral, so it is exempt from the
+	// one-primary-colour rule.
+	HexWhite  string
+	HexViolet string
+	HexSoft   string
+	HexMuted  string
 	// HexAlert is the emphasis shade used for errors and warnings. It
 	// is deliberately an on-scheme shade (Bright); callers must pair it
 	// with a glyph and bold (see errMark / warnMark).
@@ -105,6 +110,7 @@ func paletteFromTheme(t theme.Theme) Palette {
 		HexRoot:     t.BgRoot,
 		HexPurple:   t.Primary,
 		HexLavender: t.Bright,
+		HexWhite:    "#FFFFFF",
 		HexViolet:   t.Deep,
 		HexSoft:     t.Soft,
 		HexMuted:    t.Muted,
@@ -1208,7 +1214,7 @@ func (a *App) renderUserMessage(prompt string) string {
 	// other. The visible output is identical: the border lines are
 	// still non-breaking spaces fully painted in HexPurple.
 	purple := a.palette.HexPurple
-	main := a.palette.HexMain
+	main := a.palette.HexWhite
 	root := a.palette.HexRoot
 	var b strings.Builder
 	fmt.Fprintf(&b, "[%[1]s:%[1]s:-]%[3]s[%[2]s:%[2]s:-]\n", purple, root, blank)
