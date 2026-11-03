@@ -3,6 +3,38 @@
   "schema_version": 1,
   "releases": [
     {
+      "version": "0.9.251",
+      "date": "2026-11-03",
+      "title": "Wallet top-up flow, reminders, and TUI polish",
+      "summary": "This release adds a Stripe top-up path directly from the out-of-credits error card and a wallet pane with live balance polling, plus reminder support in manage_items, git-branch context, and a batch of TUI rendering fixes.",
+      "changes": {
+        "added": [
+          {
+            "text": "Insufficient-credits (402) error cards now offer a \"Top up now (Stripe)\" option that opens the wallet pane.",
+            "highlight": true
+          },
+          {
+            "text": "The wallet pane polls your balance every few seconds while open, so a completed payment shows up without reopening.",
+            "highlight": true
+          },
+          {
+            "text": "manage_items now supports reminders (list, get, create, update, delete), backed by the on-disk reminders store."
+          },
+          {
+            "text": "The execution-context block now names the current git branch next to the working directory."
+          }
+        ],
+        "fixed": [
+          {
+            "text": "Deleting an installed reminder also strips its crontab entry instead of leaving a stale cron line behind."
+          },
+          {
+            "text": "Canvas code wrapping, user-bubble colors, and input/context spacing all render cleanly."
+          }
+        ]
+      }
+    },
+    {
       "version": "0.9.250",
       "date": "2026-11-02",
       "title": "TUI header shows @tjcoder/cli",

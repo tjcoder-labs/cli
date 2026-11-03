@@ -4,6 +4,22 @@
 
 All notable changes to Coder CLI. The source of truth is [release-notes/releases.json](release-notes/releases.json).
 
+## 0.9.251 — 2026-11-03
+
+**Wallet top-up flow, reminders, and TUI polish.** This release adds a Stripe top-up path directly from the out-of-credits error card and a wallet pane with live balance polling, plus reminder support in manage_items, git-branch context, and a batch of TUI rendering fixes.
+
+### Added
+
+- Insufficient-credits (402) error cards now offer a "Top up now (Stripe)" option that opens the wallet pane.
+- The wallet pane polls your balance every few seconds while open, so a completed payment shows up without reopening.
+- manage_items now supports reminders (list, get, create, update, delete), backed by the on-disk reminders store.
+- The execution-context block now names the current git branch next to the working directory.
+
+### Fixed
+
+- Deleting an installed reminder also strips its crontab entry instead of leaving a stale cron line behind.
+- Canvas code wrapping, user-bubble colors, and input/context spacing all render cleanly.
+
 ## 0.9.250 — 2026-11-02
 
 **TUI header shows @tjcoder/cli.** The TUI header (and version/product identity) now reads @tjcoder/cli instead of @tjcoder, matching the published npm package name.
