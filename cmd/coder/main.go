@@ -121,6 +121,7 @@ func main() {
 	askQuiet := flag.Bool("quiet", false, "headless ask mode: suppress tool activity on stderr")
 	askSystem := flag.String("system", "", "headless ask mode: extra text prepended to the system prompt")
 	askSession := flag.Bool("session", true, "headless ask mode: load and save session history from/to the workspace session file")
+	askSessionPath := flag.String("session-path", "", "headless ask mode: load/save history from this explicit session.json path instead (enables subsessions)")
 	askToolMax := flag.Int("tool-max", 0, "headless ask mode: maximum number of tool calls (persisted in session)")
 	askFormat := flag.String("format", "text", "headless ask mode: coerce model output — one of {text, json, xml}. For json/xml the response is extracted, validated, and pretty-printed; tool activity remains enabled unless --no-tools is also set.")
 	flag.StringVar(askFormat, "output-format", "", "alias for --format (overrides --format when set)")
@@ -224,6 +225,7 @@ func main() {
 				System:        *askSystem,
 				Prompt:        text,
 				Session:       *askSession,
+				SessionPath:   *askSessionPath,
 				ToolMax:       askToolMax,
 				Format:        resolveFormatFlag(*askFormat),
 				AllowSudo:     *askAllowSudo,
@@ -267,6 +269,7 @@ func main() {
 			System:        *askSystem,
 			Prompt:        text,
 			Session:       *askSession,
+			SessionPath:   *askSessionPath,
 			ToolMax:       askToolMax,
 			Format:        resolveFormatFlag(*askFormat),
 			AllowSudo:     *askAllowSudo,
@@ -625,6 +628,15 @@ func fatal(format string, args ...any) {
 	os.Exit(1)
 }
 
+// saveSessionState persists a session to either the explicit --session-path
+// file or the workspace default, matching how cmdAsk loaded it.
+func saveSessionState(opts askOptions, state session.State) error {
+	if opts.SessionPath != "" {
+		return session.SaveFile(opts.SessionPath, state)
+	}
+	return session.Save(opts.WorkspaceRoot, state)
+}
+
 // askOptions bundles the headless ask-mode inputs so cmdAsk's signature
 // stays readable as we add flags.
 type askOptions struct {
@@ -642,6 +654,7 @@ type askOptions struct {
 	System        string
 	Prompt        string
 	Session       bool
+	SessionPath   string
 	ToolMax       *int
 	ExplicitAgent bool
 	ExplicitModel bool
@@ -708,6 +721,15 @@ func cmdAsk(opts askOptions) {
 	// run wrote. sessionExists gates only whether we *restore* the saved
 	// agent/model/tools/history as defaults for this invocation.
 	sessionState, existsOnDisk, _ := session.Load(opts.WorkspaceRoot)
+	if opts.SessionPath != "" {
+		// Load from an explicit subsession file instead of the workspace
+		// default, so separate conversations can target their own history.
+		var err error
+		sessionState, existsOnDisk, err = session.LoadFile(opts.SessionPath)
+		if err != nil {
+			fatal("session: %v", err)
+		}
+	}
 	sessionExists := opts.Session && existsOnDisk
 
 	agentName := opts.Agent
@@ -967,7 +989,7 @@ func cmdAsk(opts askOptions) {
 		sessionState.Reasoning += reasoningBuf.String()
 		sessionState.Activity += activityBuf.String()
 
-		if err := session.Save(opts.WorkspaceRoot, sessionState); err != nil && !opts.Quiet {
+		if err := saveSessionState(opts, sessionState); err != nil && !opts.Quiet {
 			fmt.Fprintf(os.Stderr, "warning: failed to persist session: %v\n", err)
 		}
 	}

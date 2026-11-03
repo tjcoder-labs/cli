@@ -109,11 +109,11 @@ type Memory struct {
 // what either consumer writes today, which lets the TUI and headless
 // paths evolve independently without losing each other's data.
 type State struct {
-	CurrentAgent string           `json:"current_agent"`
-	CurrentModel string           `json:"current_model"`
+	CurrentAgent string `json:"current_agent"`
+	CurrentModel string `json:"current_model"`
 	// Persisted model management settings
-	ThinkMode    string           `json:"think_mode,omitempty"`   // on|off|auto
-	AutoTier     bool             `json:"auto_tier,omitempty"`    // let gateway pick best tier
+	ThinkMode    string           `json:"think_mode,omitempty"` // on|off|auto
+	AutoTier     bool             `json:"auto_tier,omitempty"`  // let gateway pick best tier
 	ToolMax      int              `json:"tool_max,omitempty"`
 	EnabledTools []string         `json:"enabled_tools"`
 	History      []client.Message `json:"history"`
@@ -257,7 +257,17 @@ func Save(workspaceRoot string, state State) error {
 	if workspaceRoot == "" {
 		return fmt.Errorf("session: empty workspace root")
 	}
-	dir := filepath.Join(workspaceRoot, DirName)
+	return SaveFile(Path(workspaceRoot), state)
+}
+
+// SaveFile writes the state to an explicit session.json path (used by
+// `coder ask --session <path>` to persist subsessions). Same atomic
+// write semantics as Save.
+func SaveFile(path string, state State) error {
+	if path == "" {
+		return fmt.Errorf("session: empty path")
+	}
+	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
@@ -283,7 +293,7 @@ func Save(workspaceRoot string, state State) error {
 		os.Remove(tmpName)
 		return err
 	}
-	if err := os.Rename(tmpName, Path(workspaceRoot)); err != nil {
+	if err := os.Rename(tmpName, path); err != nil {
 		os.Remove(tmpName)
 		return err
 	}

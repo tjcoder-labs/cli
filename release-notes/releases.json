@@ -3,6 +3,23 @@
   "schema_version": 1,
   "releases": [
     {
+      "version": "0.9.252",
+      "date": "2026-11-03",
+      "title": "Generalized event ledger tool",
+      "summary": "A new manage_ledger tool replaces the social-only interaction log with a schema-free event ledger for tracking arbitrary events and enforcing deduplication, plus a --session flag for coder ask so separate conversations can target their own session files.",
+      "changes": {
+        "added": [
+          {
+            "text": "New manage_ledger tool records, checks, and lists arbitrary events keyed by free-form namespace:key with optional JSON payloads and TTL.",
+            "highlight": true
+          },
+          {
+            "text": "coder ask now accepts --session <path> to load and save history from an explicit session file, enabling subsessions."
+          }
+        ]
+      }
+    },
+    {
       "version": "0.9.251",
       "date": "2026-11-03",
       "title": "Wallet top-up flow, reminders, and TUI polish",

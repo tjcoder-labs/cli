@@ -4,6 +4,15 @@
 
 All notable changes to Coder CLI. The source of truth is [release-notes/releases.json](release-notes/releases.json).
 
+## 0.9.252 — 2026-11-03
+
+**Generalized event ledger tool.** A new manage_ledger tool replaces the social-only interaction log with a schema-free event ledger for tracking arbitrary events and enforcing deduplication, plus a --session flag for coder ask so separate conversations can target their own session files.
+
+### Added
+
+- New manage_ledger tool records, checks, and lists arbitrary events keyed by free-form namespace:key with optional JSON payloads and TTL.
+- coder ask now accepts --session &lt;path&gt; to load and save history from an explicit session file, enabling subsessions.
+
 ## 0.9.251 — 2026-11-03
 
 **Wallet top-up flow, reminders, and TUI polish.** This release adds a Stripe top-up path directly from the out-of-credits error card and a wallet pane with live balance polling, plus reminder support in manage_items, git-branch context, and a batch of TUI rendering fixes.

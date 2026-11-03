@@ -95,6 +95,7 @@ func NewRegistry(provider client.Provider) *Registry {
 		invokeCliCommandTool{},
 		browserBridgeTool{},
 		interactionLogTool{},
+		manageLedgerTool{},
 		researchNoteTool{},
 		cloudflareTool{},
 		resendTool{},
