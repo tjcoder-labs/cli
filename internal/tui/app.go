@@ -248,6 +248,8 @@ var slashCommands = []slashCommand{
 	{"mcp", "Manage MCP integrations"},
 	{"capture", "Record screen: start or stop"},
 	{"screenshot", "Save the current screen as a PNG"},
+	{"ask", "Send a message to a subsession: /ask @name <message>"},
+	{"btw", "Alias for /ask: /btw @name <message>"},
 	{"providers", "Manage model providers"},
 	{"update", "Check for and install an update"},
 	{"telemetry", "Anonymous usage stats: on, off, or status"},
@@ -2333,6 +2335,8 @@ func (a *App) handleSlashCommand(cmd string) {
 		a.handleCapture(parts)
 	case "screenshot":
 		a.handleScreenshot()
+	case "ask", "btw":
+		a.handleSubsessionCommand(parts)
 	case "login":
 		a.handleLoginCommand()
 	case "logout":
@@ -2384,6 +2388,10 @@ func (a *App) showHelp() {
 		"Capture\n" +
 		"  /screenshot           save the screen as PNG (to your capture dir)\n" +
 		"  /capture start|stop   begin or end a recording\n" +
+		"\n" +
+		"Subsessions\n" +
+		"  /ask @name <message>  send a message to a named subsession\n" +
+		"  /btw @name <message>  alias for /ask; subsessions auto-create\n" +
 		"\n" +
 		"Mid-turn: send another message to steer the running agent. It appears\n" +
 		"immediately as 'you steered'. Thinking streams in the Cognition pane.\n" +
