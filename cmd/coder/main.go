@@ -82,7 +82,7 @@ var (
 
 	// Plain string so the Makefile -X flag sticks. A function initializer
 	// runs at init and overwrites the injected value.
-	productName = "@tjcoder"
+	productName = "@tjcoder/cli"
 
 	author = func() string {
 		if a := loadPackageMeta().Author; a != "" {

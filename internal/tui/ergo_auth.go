@@ -277,10 +277,17 @@ func (a *App) handleBalanceCommand() {
 	a.styleModalList(list)
 	list.ShowSecondaryText(true)
 	// Esc always closes. tview calls DoneFunc for Esc on a focused list.
-	list.SetDoneFunc(func() { a.closeModal() })
+	stopPoll := func() {
+		if a.balanceCancel != nil {
+			a.balanceCancel()
+			a.balanceCancel = nil
+		}
+		a.closeModal()
+	}
+	list.SetDoneFunc(stopPoll)
 	list.SetInputCapture(func(ev *tcell.EventKey) *tcell.EventKey {
 		if ev.Key() == tcell.KeyEsc {
-			a.closeModal()
+			stopPoll()
 			return nil
 		}
 		return ev
@@ -317,6 +324,32 @@ func (a *App) handleBalanceCommand() {
 			}
 			a.tv.SetFocus(list)
 		})
+
+		// Poll the balance every few seconds while the wallet pane is open,
+		// so a completed Stripe payment is reflected without reopening.
+		pollCtx, pollCancel := context.WithCancel(context.Background())
+		a.postUI(func() { a.balanceCancel = pollCancel })
+		go func() {
+			t := time.NewTicker(3 * time.Second)
+			defer t.Stop()
+			for {
+				select {
+				case <-pollCtx.Done():
+					return
+				case <-t.C:
+					ctx, cancel := context.WithTimeout(context.Background(), ergoAuthTimeout)
+					newCents, err := fetchErgoBalanceCents(ctx, key)
+					cancel()
+					if err != nil {
+						continue
+					}
+					a.postUI(func() {
+						a.setErgoBalanceCents(newCents)
+						header.SetText(walletHeader(a.palette, newCents))
+					})
+				}
+			}
+		}()
 	}()
 }
 
@@ -559,6 +592,10 @@ func (a *App) startTopup(key string, p walletPack) {
 				return
 			}
 			a.appendActivity(fmt.Sprintf("Stripe Checkout opened for %s. Balance updates after payment.", formatCents(p.USDCents)))
+			if a.balanceCancel != nil {
+				a.balanceCancel()
+				a.balanceCancel = nil
+			}
 			a.closeModal()
 		})
 	}()

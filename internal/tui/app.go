@@ -265,6 +265,8 @@ type App struct {
 	provider client.Provider
 	// loginCancel cancels an in-flight device-code /login (nil when idle).
 	loginCancel context.CancelFunc
+	// balanceCancel cancels the wallet pane's balance poll (nil when idle).
+	balanceCancel context.CancelFunc
 	// ergoBalanceCents is the last known wallet balance; valid only when
 	// ergoBalanceKnown. Touched only on the UI goroutine.
 	ergoBalanceCents int64
