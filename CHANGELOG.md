@@ -4,6 +4,14 @@
 
 All notable changes to Coder CLI. The source of truth is [release-notes/releases.json](release-notes/releases.json).
 
+## 0.9.249 — 2026-11-02
+
+**Out-of-credits error card offers Stripe top-up.** When the ergo gateway returns a 402 (insufficient credits), the error card now includes a second numbered option: "Top up now (Stripe)". Selecting it opens the existing wallet pane (balance + numbered Stripe packs) so the user can top up and retry without leaving the conversation.
+
+### Added
+
+- Insufficient-credits error card adds a "Top up now (Stripe)" option that launches the wallet pane.
+
 ## 0.9.248 — 2026-11-02
 
 **manage_items can list, delete and reference reminders.** The reminder tracker is now registered in both the TUI and headless modes, so manage_items can list, reference and delete reminders uniformly with tasks and memories. Deleting a reminder now also removes its crontab line when it was installed.

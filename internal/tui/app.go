@@ -3755,14 +3755,31 @@ func (a *App) offerRetry(prompt string, err error) {
 		return
 	}
 	reason := friendlyError(err)
-	ans, askErr := a.Ask(context.Background(), tools.PromptRequest{
+	// Out of credits: add a second numbered option that opens the wallet
+	// pane (balance + numbered Stripe packs) so the user can top up in one
+	// keypress instead of leaving the error to run /balance manually.
+	req := tools.PromptRequest{
 		Kind:     tools.PromptError,
 		Title:    "ERROR",
 		Question: reason,
 		Detail:   "Retry sending this message?",
 		Options:  []string{"Retry"},
-	})
-	if askErr != nil || ans.Cancelled || ans.Index != 0 || strings.TrimSpace(prompt) == "" {
+	}
+	topup := client.IsInsufficientCredits(err)
+	if topup {
+		req.Options = append(req.Options, "Top up now (Stripe)")
+	}
+	ans, askErr := a.Ask(context.Background(), req)
+	if askErr != nil || ans.Cancelled || strings.TrimSpace(prompt) == "" {
+		return
+	}
+	if topup && ans.Index == 1 {
+		// Open the wallet pane on the UI thread; it already shows the
+		// balance and numbered Stripe packs and opens checkout on pick.
+		a.postUI(a.handleBalanceCommand)
+		return
+	}
+	if ans.Index != 0 {
 		return
 	}
 	a.postUI(func() {
