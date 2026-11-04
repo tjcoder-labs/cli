@@ -12,8 +12,6 @@ A fast, keyboard-driven TUI that pairs a conversational agent with real develope
 [![Built by TJ Coder / AI Labs](https://img.shields.io/badge/by-TJ%20Coder%20%2F%20AI%20Labs-6E56CF.svg)](https://github.com/tjcoder-labs)
 [![LinkedIn](https://img.shields.io/badge/LinkedIn-tjcoder-0A66C2.svg)](https://www.linkedin.com/in/tjcoder)
 
-![Coder CLI in action](./cli.png)
-
 [![▶ Coder CLI demo — watch it in action](./demo/demo-poster.png)](./demo/coder-cli-demo.mp4)
 
 </div>
