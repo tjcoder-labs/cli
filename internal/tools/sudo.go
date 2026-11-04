@@ -327,6 +327,69 @@ func authorizeSudo(ctx context.Context, command string, env ExecEnv) (*sudoGrant
 	return g, nil
 }
 
+// ElevationRequest describes why the TUI needs sudo and what will run,
+// for the authorization card.
+type ElevationRequest struct {
+	Title    string
+	Question string
+	Detail   string // the exact command/operation elevation covers
+}
+
+// Elevate authorizes and primes sudo for a privileged operation outside
+// run_command (e.g. replacing a binary in a root-owned directory during
+// update). It shows the same authorization card and masked password
+// prompt as the sudo gate, and on success returns a cleanup func the
+// caller must invoke after the privileged work. Headless (nil Prompter)
+// returns an error: elevation always requires an interactive user.
+//
+// The returned cleanup drops the primed ticket (`sudo -k`) so the
+// elevation cannot be reused later by anything else in the process.
+func Elevate(ctx context.Context, p Prompter, req ElevationRequest) (cleanup func(), err error) {
+	if p == nil {
+		return nil, fmt.Errorf("%w: elevation requires an interactive session", errSudoDenied)
+	}
+	if _, err := sudoOps.Path(); err != nil {
+		return nil, fmt.Errorf("%w: sudo is not installed", errSudoDenied)
+	}
+
+	ans, err := p.Ask(ctx, PromptRequest{
+		Kind:     PromptAuthorization,
+		Title:    req.Title,
+		Question: req.Question,
+		Detail:   req.Detail,
+		Options:  []string{"Allow", "Deny"},
+	})
+	if err != nil {
+		return nil, err
+	}
+	// Only an explicit "Allow" grants elevation; Esc/Deny never do.
+	if ans.Cancelled || ans.Index != 0 || ans.Choice != "Allow" {
+		p.Record(req.Title + " denied: " + req.Detail)
+		return nil, fmt.Errorf("%w: the user denied elevation", errSudoDenied)
+	}
+
+	if !sudoOps.Cached(ctx) {
+		who := "you"
+		if u, err := user.Current(); err == nil {
+			who = u.Username
+		}
+		pw, err := p.AskSecret(ctx, "sudo password", "[sudo] password for "+who)
+		if err != nil || pw == nil {
+			zero(pw)
+			p.Record(req.Title + " cancelled at password prompt: " + req.Detail)
+			return nil, fmt.Errorf("%w: the user cancelled the password prompt", errSudoDenied)
+		}
+		verr := sudoOps.Validate(ctx, pw)
+		zero(pw)
+		if verr != nil {
+			p.Record(req.Title + " authentication failed: " + req.Detail)
+			return nil, fmt.Errorf("%w: sudo authentication failed", errSudoDenied)
+		}
+	}
+	p.Record(req.Title + " allowed: " + req.Detail)
+	return func() { sudoOps.Invalidate(context.Background()) }, nil
+}
+
 // newSudoShim writes a tiny `sudo` wrapper that forces -n (never
 // prompt) and returns the PATH override that puts it first. The shim
 // holds no secrets.

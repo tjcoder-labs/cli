@@ -10,6 +10,7 @@ A fast, keyboard-driven TUI that pairs a conversational agent with real develope
 [![Go](https://img.shields.io/badge/Go-1.25+-00ADD8.svg)](https://go.dev)
 [![npm](https://img.shields.io/npm/v/@tjcoder/cli.svg)](https://www.npmjs.com/package/@tjcoder/cli)
 [![Built by TJ Coder / AI Labs](https://img.shields.io/badge/by-TJ%20Coder%20%2F%20AI%20Labs-6E56CF.svg)](https://github.com/tjcoder-labs)
+[![LinkedIn](https://img.shields.io/badge/LinkedIn-tjcoder-0A66C2.svg)](https://www.linkedin.com/in/tjcoder)
 
 ![Coder CLI in action](./cli.png)
 
@@ -363,4 +364,4 @@ MIT — see [LICENSE](./LICENSE).
 
 ## Attribution
 
-**Coder CLI** is developed and maintained by [TJ Coder](mailto:tj@tjcoder.com) at [tjcoder-labs](https://github.com/tjcoder-labs) — part of the TJ Coder / AI Labs platform ecosystem of modern, AI-powered tooling for developers.
+**Coder CLI** is developed and maintained by [TJ Coder](mailto:tj@tjcoder.com) — [LinkedIn](https://www.linkedin.com/in/tjcoder) · [tjcoder-labs](https://github.com/tjcoder-labs) — part of the TJ Coder / AI Labs platform ecosystem of modern, AI-powered tooling for developers.

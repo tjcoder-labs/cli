@@ -102,6 +102,9 @@ func NewRegistry(provider client.Provider) *Registry {
 		askUserTool{},
 		// Model management
 		manageModelTool{},
+		// Code panel + Android device tools
+		highlightCodeTool{},
+		adbShellTool{},
 	} {
 		r.tools[tool.Definition().Function.Name] = tool
 	}

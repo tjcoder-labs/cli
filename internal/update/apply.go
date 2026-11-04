@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 )
 
 // Method is how the running binary was installed.
@@ -57,6 +58,12 @@ type Plan struct {
 
 // ErrNoBinaryRelease means no published release is newer than current.
 var ErrNoBinaryRelease = errors.New("no newer release binary is published yet")
+
+// ErrPermissionDenied wraps a failure that requires elevated permissions
+// to complete — e.g. replacing a binary in /usr/local/bin (macOS
+// Homebrew) owned by root. Callers detect it with errors.Is and may
+// re-run the install with sudo.
+var ErrPermissionDenied = errors.New("permission denied")
 
 // SourceInstructions is shown for source builds; nothing is executed.
 const SourceInstructions = "git pull && make install   (or: go install github.com/" + Repo + "/cmd/coder@latest)"
@@ -161,6 +168,13 @@ var execCommand = exec.CommandContext
 const maxAssetSize = 200 << 20
 
 func (c *Checker) applyBinary(ctx context.Context, p Plan) error {
+	return c.applyBinaryMode(ctx, p, false)
+}
+
+// applyBinaryMode performs a binary install; when elevated it performs
+// the final replacement via sudo (the caller has primed sudo's
+// timestamp so `sudo -n` succeeds).
+func (c *Checker) applyBinaryMode(ctx context.Context, p Plan, elevated bool) error {
 	archive, err := c.get(ctx, p.Asset, maxAssetSize)
 	if err != nil {
 		return fmt.Errorf("download %s: %w", p.Asset, err)
@@ -176,7 +190,61 @@ func (c *Checker) applyBinary(ctx context.Context, p Plan) error {
 	if err != nil {
 		return err
 	}
+	if elevated {
+		return replaceExecutableElevated(p.Target, bin)
+	}
 	return replaceExecutable(p.Target, bin)
+}
+
+// ApplyElevated applies a binary plan using sudo for the final
+// replacement — the fallback when Apply fails with ErrPermissionDenied
+// (e.g. /usr/local/bin on macOS is root-owned). The caller must have
+// already authorized elevation and primed sudo's timestamp.
+func (c *Checker) ApplyElevated(ctx context.Context, p Plan, out io.Writer) error {
+	switch p.Method {
+	case MethodBinary:
+		return c.applyBinaryMode(ctx, p, true)
+	case MethodNPM:
+		return fmt.Errorf("elevated update unsupported for npm installs (run: %s)", p.Command)
+	default:
+		return fmt.Errorf("elevated update unsupported for source builds (%s)", SourceInstructions)
+	}
+}
+
+// replaceExecutableElevated stages bin in a user-writable temp file and
+// copies it into target with `sudo -n`, so an otherwise read-only target
+// directory (root-owned /usr/local/bin) can be updated without a shell.
+// `sudo -n` never prompts: the caller primed the timestamp first.
+func replaceExecutableElevated(target string, bin []byte) error {
+	if len(bin) == 0 {
+		return errors.New("empty binary in archive")
+	}
+	if real, err := filepath.EvalSymlinks(target); err == nil {
+		target = real
+	}
+	tmp, err := os.CreateTemp("", "coder-update-*")
+	if err != nil {
+		return fmt.Errorf("stage update binary: %w", err)
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName)
+	if _, err := tmp.Write(bin); err != nil {
+		tmp.Close()
+		return fmt.Errorf("stage update binary: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Chmod(tmpName, 0o755); err != nil {
+		return err
+	}
+	if out, err := execCommand(context.Background(), "sudo", "-n", "cp", tmpName, target).CombinedOutput(); err != nil {
+		return fmt.Errorf("%w: sudo cp %s: %v: %s", ErrPermissionDenied, target, err, strings.TrimSpace(string(out)))
+	}
+	if out, err := execCommand(context.Background(), "sudo", "-n", "chmod", "755", target).CombinedOutput(); err != nil {
+		return fmt.Errorf("%w: sudo chmod %s: %v: %s", ErrPermissionDenied, target, err, strings.TrimSpace(string(out)))
+	}
+	return nil
 }
 
 // verifyChecksum checks the archive against a published checksum when
@@ -264,6 +332,9 @@ func replaceExecutable(target string, bin []byte) error {
 	dir := filepath.Dir(target)
 	tmp, err := os.CreateTemp(dir, ".coder-update-*")
 	if err != nil {
+		if isPermissionErr(err) {
+			return fmt.Errorf("%w: cannot write to %s (needs elevated permissions): %v", ErrPermissionDenied, dir, err)
+		}
 		return fmt.Errorf("cannot write to %s (try reinstalling with the original method): %w", dir, err)
 	}
 	tmpName := tmp.Name()
@@ -286,5 +357,21 @@ func replaceExecutable(target string, bin []byte) error {
 			return err
 		}
 	}
-	return os.Rename(tmpName, target)
+	if err := os.Rename(tmpName, target); err != nil {
+		if isPermissionErr(err) {
+			return fmt.Errorf("%w: cannot replace %s (needs elevated permissions): %v", ErrPermissionDenied, target, err)
+		}
+		return err
+	}
+	return nil
+}
+
+// isPermissionErr reports whether err is an EACCES/EPERM-style
+// permission failure (or a wrapped one), covering the errors os
+// returns when a directory or file isn't writable without elevation.
+func isPermissionErr(err error) bool {
+	return errors.Is(err, os.ErrPermission) ||
+		errors.Is(err, syscall.EACCES) ||
+		errors.Is(err, syscall.EPERM) ||
+		errors.Is(err, syscall.EROFS)
 }

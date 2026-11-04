@@ -50,6 +50,12 @@ var all = []Config{
 			"browser_bridge",
 			"cloudflare",
 			"resend",
+			"manage_ledger",
+			"manage_model",
+			"highlight_code",
+			"research_note",
+			"interaction_log",
+			"adb_shell",
 		},
 		Prompt: `You are the TJ Coder CLI Software Engineer.
 

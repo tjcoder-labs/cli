@@ -37,6 +37,9 @@ var (
 	applyUpdate = func(ctx context.Context, c *update.Checker, p update.Plan, out io.Writer) error {
 		return c.Apply(ctx, p, out)
 	}
+	applyUpdateElevated = func(ctx context.Context, c *update.Checker, p update.Plan, out io.Writer) error {
+		return c.ApplyElevated(ctx, p, out)
+	}
 )
 
 // installing is set while an update is being installed (automatic or
@@ -134,6 +137,11 @@ func (a *App) autoInstall(ctx context.Context, c *update.Checker, method update.
 		if ctx.Err() != nil {
 			return // coder is exiting; npm/the download was cancelled
 		}
+		if err := a.retryElevated(ictx, c, plan, err); err == nil {
+			report(true)
+			a.Notice(fmt.Sprintf("Updated to v%s (with elevated permissions) · restart coder to use it", plan.Version))
+			return
+		}
 		report(false)
 		a.Notice(fmt.Sprintf("Automatic update to v%s failed: %s · run /update", plan.Version, firstLine(err.Error())))
 		return
@@ -202,10 +210,39 @@ func (a *App) runUpdate(parts []string) {
 	a.Notice(fmt.Sprintf("Updating to v%s…", plan.Version))
 	var out strings.Builder
 	if err := applyUpdate(ctx, c, plan, &out); err != nil {
+		if err := a.retryElevated(ctx, c, plan, err); err == nil {
+			a.Notice(fmt.Sprintf("Updated to v%s (with elevated permissions). Restart coder to use it.", plan.Version))
+			return
+		}
 		a.Notice("Update failed: " + firstLine(err.Error()) + lastLine(out.String()))
 		return
 	}
 	a.Notice(fmt.Sprintf("Updated to v%s. Restart coder to use it.", plan.Version))
+}
+
+// retryElevated is invoked after an update fails. If the failure was a
+// permission problem (e.g. /usr/local/bin on macOS is root-owned), it
+// shows the sudo card, primes sudo, and retries the binary install
+// elevated. It returns nil on success, or the original error (or a
+// denial) otherwise. The caller is on a non-UI goroutine.
+func (a *App) retryElevated(ctx context.Context, c *update.Checker, plan update.Plan, orig error) error {
+	if !errors.Is(orig, update.ErrPermissionDenied) {
+		return orig
+	}
+	cleanup, err := tools.Elevate(ctx, a, tools.ElevationRequest{
+		Title:    "Update",
+		Question: "Updating coder needs elevated permissions (sudo) to replace the binary.",
+		Detail:   "replace " + plan.Target + " (sudo cp + chmod)",
+	})
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+	var out strings.Builder
+	if err := applyUpdateElevated(ctx, c, plan, &out); err != nil {
+		return err
+	}
+	return nil
 }
 
 func firstLine(s string) string {
