@@ -4,6 +4,15 @@
 
 All notable changes to Coder CLI. The source of truth is [release-notes/releases.json](release-notes/releases.json).
 
+## 0.9.253 — 2026-11-03
+
+**Sudo-elevated binary updates and more engineering tools.** Automatic and manual binary updates can now escalate to sudo when the install directory is root-owned, and the software-engineer agent gains the highlight_code, adb_shell, manage_ledger, manage_model, research_note, and interaction_log tools.
+
+### Added
+
+- Binary updates that fail with a permission error now offer sudo elevation and retry the install, so root-owned install directories (e.g. /usr/local/bin on macOS) update without reinstalling. (`/update`)
+- The software-engineer agent now has access to the highlight_code, adb_shell, manage_ledger, manage_model, research_note, and interaction_log tools.
+
 ## 0.9.252 — 2026-11-03
 
 **Generalized event ledger tool.** A new manage_ledger tool replaces the social-only interaction log with a schema-free event ledger for tracking arbitrary events and enforcing deduplication, plus a --session flag for coder ask so separate conversations can target their own session files.
