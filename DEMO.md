@@ -23,6 +23,12 @@ agents, approving a `sudo` command, choosing a demo direction). It drives the
 right-hand panels (tasks, canvas, activity) so you can just watch. Answer its
 cards, steer it mid-turn if you want to skip ahead, and it keeps going.
 
+**Before anything else, the agent MUST open with an `ask_user` card** asking how
+you intend to use the app (coding assistant / system admin / research / creative),
+and then tailor the demo order to your answer. Do this first — it doubles as the
+Section 9 `ask_user` showcase. Right after the card, jump into the **sudo
+elevation demo (Section 8)** while the authorization flow is fresh.
+
 ---
 
 ## 0. First things first — the anatomy of the TUI
@@ -220,14 +226,17 @@ When a command invokes sudo, a gate kicks in:
 ticket (`sudo -k`) after the single command. Headless runs deny sudo unless
 `--allow-sudo` was passed, and even then never prompt.
 
-Demo:
+Demo (works on macOS **or** Linux — the agent detects the OS and picks the
+native service manager):
 
 ```
-What packages are installed as root-managed system services? Use sudo to check systemctl status of one service.
+What services are installed as root-managed system services? Use sudo to check the
+status of one of them (systemctl on Linux, launchctl list on macOS).
 ```
 
 Watch the card appear, then either allow or deny. Esc is always a denial — no
-option is ever applied without an explicit choice.
+option is ever applied without an explicit choice. On macOS there is no
+`systemctl`; the agent falls back to `launchctl list` automatically.
 
 ---
 
@@ -354,7 +363,9 @@ Run through the command surface grouped by theme:
 ---
 
 ## Suggested demo order (15-minute version)
-1. `/about` + `/help` — orient (0:30)
+1. `ask_user` intro card → tailor demo to user's intent (0:30)
+2. sudo elevation demo — Section 8 (1:30)
+3. `/about` + `/help` — orient (0:30)
 2. software-engineer: build-the-word-counter script (4:00)
 3. git status/log + background job (1:30)
 4. `/agent` → cloud-expert: gcloud preflight + Cloudflare list (2:30)

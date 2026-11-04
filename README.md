@@ -14,6 +14,8 @@ A fast, keyboard-driven TUI that pairs a conversational agent with real develope
 
 ![Coder CLI in action](./cli.png)
 
+[![▶ Coder CLI demo — watch it in action](./demo/demo-poster.png)](./demo/coder-cli-demo.mp4)
+
 </div>
 
 ---
