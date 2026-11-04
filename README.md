@@ -44,22 +44,26 @@ npm install -g @tjcoder/cli
 
 The `postinstall` hook downloads the right prebuilt binary for your platform — no Go toolchain required. After install, `coder` is on your `PATH`.
 
-### One-line install (recommended for everyone else)
+### One-line install (macOS + Linux)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/tjcoder-labs/cli/main/install.sh | bash
+# macOS (Homebrew)
+brew install tjcoder-labs/tap/coder
+
+# Linux (or macOS without Homebrew) — pipe into zsh/bash
+curl -fsSL https://raw.githubusercontent.com/tjcoder-labs/cli/main/install.sh | zsh
 ```
 
-The installer detects your OS/arch, downloads a prebuilt binary when available (falling back to a source build if `go` is present), and installs `coder` to `~/.local/bin`. It also checks for Ollama and offers to install it with a default model. Override with `INSTALL_DIR=/usr/local`, pin a release with `VERSION=…`, or auto-install Ollama with `INSTALL_OLLAMA=1`.
+The one-line `curl | zsh` installer detects your OS/arch, downloads a prebuilt binary when available (falling back to a source build if `go` is present), and installs `coder` to `~/.local/bin`. It also checks for Ollama and offers to install it with a default model. Override with `INSTALL_DIR=/usr/local`, pin a release with `VERSION=…`, or auto-install Ollama with `INSTALL_OLLAMA=1`. `bash` works in place of `zsh` on any POSIX shell.
 
 ### Install with Ollama
 
 ```bash
 # Install Coder CLI + Ollama + pull a default model in one go
-INSTALL_OLLAMA=1 curl -fsSL https://raw.githubusercontent.com/tjcoder-labs/cli/main/install.sh | bash
+INSTALL_OLLAMA=1 curl -fsSL https://raw.githubusercontent.com/tjcoder-labs/cli/main/install.sh | zsh
 
 # Specify a different model
-OLLAMA_MODEL=minimax-m3:cloud INSTALL_OLLAMA=1 curl -fsSL https://raw.githubusercontent.com/tjcoder-labs/cli/main/install.sh | bash
+OLLAMA_MODEL=minimax-m3:cloud INSTALL_OLLAMA=1 curl -fsSL https://raw.githubusercontent.com/tjcoder-labs/cli/main/install.sh | zsh
 ```
 
 ### From source

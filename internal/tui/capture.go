@@ -84,22 +84,13 @@ func (a *App) renderScreenPNG(cols, rows int) ([]byte, error) {
 	}
 
 	// Rasterize into an RGBA image with a dark terminal background.
+	// Cell width follows the font's real advance width, not a hardcoded
+	// fraction, so the frame keeps the correct character aspect ratio.
 	d := defaultCapture
 	cellH := d.fontSizePx
-	cellW := cellH // Go Mono is 1:2 aspect ratio: advance = ~0.6em, height = 1em
-	imgW := d.padPx*2 + cols*cellW
-	imgH := d.padPx*2 + rows*cellH
-	img := image.NewRGBA(image.Rect(0, 0, imgW, imgH))
 
 	bg := color.RGBA{0x12, 0x12, 0x18, 0xff}
 	fg := color.RGBA{0xdc, 0xdc, 0xe0, 0xff}
-
-	// Fill background.
-	for y := 0; y < imgH; y++ {
-		for x := 0; x < imgW; x++ {
-			img.SetRGBA(x, y, bg)
-		}
-	}
 
 	faceOpts := &opentype.FaceOptions{
 		Size:    float64(cellH),
@@ -111,6 +102,23 @@ func (a *App) renderScreenPNG(cols, rows int) ([]byte, error) {
 		return nil, fmt.Errorf("new face: %w", err)
 	}
 	defer face.Close()
+
+	// Cell width follows the font's real advance width, not a hardcoded
+	// fraction, so the frame keeps the correct character aspect ratio.
+	cellW := font.MeasureString(face, " ").Ceil()
+	if cellW <= 0 {
+		cellW = cellH * 6 / 10
+	}
+	imgW := d.padPx*2 + cols*cellW
+	imgH := d.padPx*2 + rows*cellH
+	img := image.NewRGBA(image.Rect(0, 0, imgW, imgH))
+
+	// Fill background.
+	for y := 0; y < imgH; y++ {
+		for x := 0; x < imgW; x++ {
+			img.SetRGBA(x, y, bg)
+		}
+	}
 
 	drawString := func(x, y int, s string, c color.RGBA) {
 		d := font.Drawer{

@@ -7,6 +7,6 @@
   "author": "TJ Coder / AI Labs",
   "license": "MIT",
   "scripts": {
-    "release": "npm --no-git-tag-version version patch && make build && bash install.sh"
+    "release": "npm --no-git-tag-version version patch && bash scripts/build-release.sh"
   }
 }
