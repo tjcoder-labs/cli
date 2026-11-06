@@ -1,10 +1,7 @@
-<div align="center">
 
-# Coder CLI
+# @tjcoder/cli
 
-![Coder CLI — AI-powered terminal coding assistant](./coder-cli.png)
-
-**An AI-powered terminal coding assistant — designed and built for the future, from the command line.**
+## **An AI-powered terminal coding assistant — designed and built for the future, from the command line.**
 
 A fast, keyboard-driven TUI that pairs a conversational agent with real developer tools: filesystem operations, shell execution, Git, task tracking, and a live "cognition" view of the model's reasoning. Runs against the TJ Coder (ergo) gateway by default, with three experimental TJ Coder models, or local Ollama models and other cloud providers.
 
@@ -16,8 +13,6 @@ A fast, keyboard-driven TUI that pairs a conversational agent with real develope
 
 [![▶ Coder CLI demo — watch it in action](./demo/demo-poster.png)](./demo/coder-cli-demo.mp4)
 
-</div>
-
 ---
 
 ## Highlights
@@ -27,7 +22,7 @@ A fast, keyboard-driven TUI that pairs a conversational agent with real develope
 - **Interactive *and* headless** — drive it as a full TUI, or script it non-interactively with `coder -p "…"` (great for pipelines and CI).
 - **Specialized agents** — swap between purpose-built agents (software engineer, terminal specialist, code reviewer, Android assistant, cloud expert, social researcher, storyteller).
 - **Browser bridge** — drive real Chrome over CDP: navigate, click, type, screenshot, manage cookies and tabs across multiple isolated profiles. Lifecycle tools (`start_chrome` / `stop_chrome` / `chrome_status`) let agents spin up and clean up per-port browser sessions.
-- **Social research mode** — the `social-researcher` agent combines `browser_bridge` with a persistent interaction ledger and scoped note store to research Reddit/LinkedIn/Gemini without ever repeating an upvote, like, comment, or DM.
+- **Social research mode** — the `social-researcher` agent combines `browser_bridge` with a persistent interaction ledger and scoped note store to research and search the web using Google Chrome in debug mode.
 - **Multi-line paste** — paste entire code blocks or documents into the input field; they're kept as one message, not split at each newline.
 - **Markdown table rendering** — GFM pipe tables in model output are rendered as box-drawn tables in the transcript, cognition, and recap panes.
 - **Editable context injection** — a `{{token}}` environment template lets you control exactly what runtime context the model sees.
