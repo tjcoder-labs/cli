@@ -10,10 +10,10 @@
 class Coder < Formula
   desc "Terminal-first AI coding assistant (TJ Coder / AI Labs)"
   homepage "https://github.com/tjcoder-labs/cli"
-  version "0.9.251"
+  version "0.9.253"
   license "MIT"
 
-  VERSION_TAG = "v0.9.251"
+  VERSION_TAG = "v0.9.253"
 
   on_macos do
     if Hardware::CPU.arm?
