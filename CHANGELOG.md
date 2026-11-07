@@ -4,6 +4,15 @@
 
 All notable changes to Coder CLI. The source of truth is [release-notes/releases.json](release-notes/releases.json).
 
+## 0.9.267 — 2026-11-07
+
+**Workspace-aware standalone MCP tunnel activity.** The themed standalone tunnel log now includes the last tool call, timestamp, tool name, and cwd without exposing secrets or changing JSON-RPC output.
+
+### Changed
+
+- Standalone tunnel activity includes safe session cwd and the most recent consumer tool invocation on start and completion lines.
+  Uses the existing TUI theme and CLI painter, honors NO_COLOR and TERM=dumb, and keeps activity on stderr only.
+
 ## 0.9.266 — 2026-11-07
 
 **Canvas-sized code excerpts and in-TUI settings from the software engineer.** The software-engineer agent now sizes code and config excerpts to the live canvas, switches panes contextually with ui_control, and opens pickers and settings for you with invoke_cli_command.

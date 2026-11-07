@@ -23,9 +23,12 @@ import (
 // contents, command arguments and raw errors are intentionally NOT printed:
 // filesystem/shell results may contain credentials (including the MCP URL).
 type mcpToolPrinter struct {
-	env cliEnv
-	mu  sync.Mutex
-	now func() time.Time
+	env       cliEnv
+	mu        sync.Mutex
+	now       func() time.Time
+	cwd       string
+	lastName  string
+	lastStamp string
 }
 
 func (p *mcpToolPrinter) clock() time.Time {
@@ -36,17 +39,22 @@ func (p *mcpToolPrinter) clock() time.Time {
 }
 
 func (p *mcpToolPrinter) line(mark, name, text string, start bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	th := theme.Current()
 	st := style{th.Bright, true}
 	if start {
 		st = style{th.Deep, false}
 	}
-	stamp := p.env.paint(style{th.Dim, false}, p.clock().Format("3:04 PM"))
+	at := p.clock().Format("3:04:05 PM MST")
+	if start {
+		p.lastName, p.lastStamp = mcpSafeName(name), at
+	}
+	stamp := p.env.paint(style{th.Dim, false}, at)
 	label := p.env.paint(st, mark+" "+mcpSafeName(name))
-	body := p.env.paint(style{th.Text, false}, text)
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	fmt.Fprintf(p.env.stderr, "%s  %s %s\n", stamp, label, body)
+	body := p.env.paint(style{th.Text, false}, "cwd="+mcpSafePath(p.cwd)+" · "+text)
+	last := p.env.paint(style{th.Dim, false}, "last call="+p.lastStamp+" "+p.lastName)
+	fmt.Fprintf(p.env.stderr, "%s  %s %s · %s\n", stamp, label, body, last)
 }
 
 func (p *mcpToolPrinter) started(name string, args json.RawMessage) func(tools.Result, error) {

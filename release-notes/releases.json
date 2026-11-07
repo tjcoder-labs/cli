@@ -3,6 +3,20 @@
   "schema_version": 1,
   "releases": [
     {
+      "version": "0.9.267",
+      "date": "2026-11-07",
+      "title": "Workspace-aware standalone MCP tunnel activity",
+      "summary": "The themed standalone tunnel log now includes the last tool call, timestamp, tool name, and cwd without exposing secrets or changing JSON-RPC output.",
+      "changes": {
+        "changed": [
+          {
+            "text": "Standalone tunnel activity includes safe session cwd and the most recent consumer tool invocation on start and completion lines.",
+            "details": "Uses the existing TUI theme and CLI painter, honors NO_COLOR and TERM=dumb, and keeps activity on stderr only."
+          }
+        ]
+      }
+    },
+    {
       "version": "0.9.266",
       "date": "2026-11-07",
       "title": "Canvas-sized code excerpts and in-TUI settings from the software engineer",

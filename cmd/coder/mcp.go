@@ -68,7 +68,7 @@ func mcpCommand(args []string) error {
 		return fmt.Errorf("sign in with /login in interactive coder before starting an MCP tunnel")
 	}
 	// Operator-only activity goes to terminal stderr, never the MCP stream.
-	printer := &mcpToolPrinter{env: cliEnv{stderr: os.Stderr, color: colorEnabled(os.Stderr)}}
+	printer := &mcpToolPrinter{cwd: server.Env.WorkspaceRoot, env: cliEnv{stderr: os.Stderr, color: colorEnabled(os.Stderr)}}
 	server.OnToolCall = printer.started
 	// Foreground invocation is explicit delegation of this toolset, not a sandbox.
 	fmt.Fprintf(os.Stderr, "Tunneling %d local tools in %s. Anyone holding the secret URL can use them until exit/expiry. Sudo remains denied. Ctrl-C revokes.\n", len(server.Registry.Names()), abs)
