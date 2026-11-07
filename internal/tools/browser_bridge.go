@@ -76,7 +76,7 @@ type browserBridgeTool struct{}
 func (browserBridgeTool) Definition() client.ToolDefinition {
 	props := map[string]any{
 		"transport":     stringProp("cdp (default): existing raw CDP websocket, no extension needed. stealth: opt-in local native extension, no debugger."),
-		"incognito":     boolProp("new_tab: open a new private window; enable Allow in incognito on the extension."),
+		"incognito":     boolProp("new_tab: requires transport=stealth; open a new private window after enabling Allow in incognito on the extension."),
 		"action":        stringProp("Operation to perform. One of: list_tabs, new_tab, close_tab, inspect, claim_tab, release_tab, release_all, navigate, reload, back, forward, evaluate, click, type, press_key, wait_for, get_dom, screenshot, get_cookies, set_cookie, delete_cookie, clear_site_data, storage_get, storage_set, storage_keys, emulate, intercept_enable, intercept_disable, start_chrome, stop_chrome, chrome_status, reconnect."),
 		"tab_id":        stringProp("Target tab ID. Required for most actions except list_tabs/new_tab/start_chrome/stop_chrome/chrome_status. Use list_tabs to find IDs. Tabs you create via new_tab are auto-owned."),
 		"url":           stringProp("URL for new_tab / navigate. Also used as the start page for start_chrome if provided."),
@@ -166,6 +166,9 @@ func (browserBridgeTool) Execute(ctx context.Context, raw json.RawMessage, env E
 	tier, err := browserTransport(a.Transport)
 	if err != nil {
 		return Result{}, err
+	}
+	if a.Action == "new_tab" && a.Incognito && tier == "raw_cdp" {
+		return Result{}, fmt.Errorf("incognito:true requires transport=stealth; refusing to open a private URL in a normal CDP tab")
 	}
 	if a.Action != "start_chrome" && a.Action != "stop_chrome" && tier != "raw_cdp" {
 		if a.Action == "chrome_status" || a.Action == "ping" {

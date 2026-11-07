@@ -4,6 +4,18 @@
 
 All notable changes to Coder CLI. The source of truth is [release-notes/releases.json](release-notes/releases.json).
 
+## 0.9.255 — 2026-11-06
+
+**Fail closed for private browser tabs.** Private-window requests must explicitly use the stealth extension transport.
+
+### Security
+
+- Reject incognito requests on raw CDP instead of risking opening a private URL in a normal tab.
+
+### Known limits
+
+- Coder Browser Bridge extension remains version 0.9.254 and is compatible with CLI 0.9.255.
+
 ## 0.9.254 — 2026-11-06
 
 **Local stealth browser extension bridge.** Opt into a local native messaging bridge while preserving the default CDP path.

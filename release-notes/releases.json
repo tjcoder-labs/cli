@@ -3,6 +3,22 @@
   "schema_version": 1,
   "releases": [
     {
+      "version": "0.9.255",
+      "date": "2026-11-06",
+      "title": "Fail closed for private browser tabs",
+      "summary": "Private-window requests must explicitly use the stealth extension transport.",
+      "changes": {
+        "security": [
+          {
+            "text": "Reject incognito requests on raw CDP instead of risking opening a private URL in a normal tab."
+          }
+        ]
+      },
+      "notes": [
+        "Coder Browser Bridge extension remains version 0.9.254 and is compatible with CLI 0.9.255."
+      ]
+    },
+    {
       "version": "0.9.254",
       "date": "2026-11-06",
       "title": "Local stealth browser extension bridge",
