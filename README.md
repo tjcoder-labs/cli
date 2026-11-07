@@ -366,3 +366,18 @@ MIT — see [LICENSE](./LICENSE).
 ## Attribution
 
 **Coder CLI** is developed and maintained by [TJ Coder](mailto:tj@tjcoder.com) — [LinkedIn](https://www.linkedin.com/in/tjcoder) · [tjcoder-labs](https://github.com/tjcoder-labs) — part of the TJ Coder / AI Labs platform ecosystem of modern, AI-powered tooling for developers.
+
+### MCP tunnels
+
+After `/login` in interactive `coder`, run `coder mcp tunnel --workspace-root DIR`
+in a terminal for a public, ephemeral secret capability URL. Bare `coder mcp`
+shows usage on a terminal; `coder mcp --stdio` (or piped stdin/stdout) stays local.
+Standalone tunnels deny sudo.
+
+Inside the TUI, `/mcp tunnel` exposes that live session's tool registry and
+workspace through the same relay. The temporary dialog shows the secret link
+and expiry without saving them in history. `/mcp tunnel stop` or TUI exit revokes
+it. Interactive sudo remains gated by the owner's existing approval/password
+cards; consumers never receive passwords or approval choices. Treat the link
+as a password, not permission for unattended root. `/mcp` tips adapt to login,
+server names, subcommands and tunnel state. See [MCP_SPEC.md](MCP_SPEC.md).

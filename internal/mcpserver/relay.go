@@ -75,7 +75,7 @@ func (r *Relay) Run(ctx context.Context, announce func(Publication)) error {
 		return fmt.Errorf("relay requires an HTTPS base URL")
 	}
 	if r.Key == "" {
-		return fmt.Errorf("run coder login first")
+		return fmt.Errorf("sign in with /login in interactive coder before starting an MCP tunnel")
 	}
 	createCtx, stop := context.WithTimeout(ctx, 15*time.Second)
 	resp, e := r.request(createCtx, "POST", "/cli/mcp/sessions", r.Key, map[string]any{})

@@ -52,7 +52,7 @@ type AppConfig struct {
 	Timezone string `json:"timezone,omitempty"`
 	// MCPServers is the persisted set of Model Context Protocol
 	// integrations. Each entry maps a stable name (used by /mcp
-	// add|list|status|remove and by the mcp_{server}_{tool} tool
+	// add|list|status|remove|tunnel and by the mcp_{server}_{tool} tool
 	// namespace) onto the connection details. The /mcp slash
 	// command mutates this map; the /config JSON editor round-trips
 	// it verbatim.

@@ -4,6 +4,29 @@
 
 All notable changes to Coder CLI. The source of truth is [release-notes/releases.json](release-notes/releases.json).
 
+## 0.9.261 — 2026-11-07
+
+**Explicit MCP tunnels and contextual command tips.** Use coder mcp tunnel or /mcp tunnel to open a short-lived secret link; interactive calls reuse the live session and its user-controlled sudo gate.
+
+### Added
+
+- /mcp tunnel starts an outbound relay for the live interactive registry and workspace; /mcp tunnel stop or TUI exit revokes it. The capability URL and expiry appear in a non-persisted dialog.
+- MCP input tips adapt to the subcommand, configured server names, login state and tunnel lifecycle, with escaped names and actionable usage.
+
+### Changed
+
+- coder mcp tunnel [--workspace-root DIR] is the explicit public command. Bare coder mcp on a terminal shows usage; --stdio and piped stdin/stdout remain local-only.
+
+### Security
+
+- Interactive MCP calls use the live session’s Prompter and SudoPolicy; only the TUI owner approves sudo and enters a masked password. Standalone tunnels still deny sudo.
+  Consumers receive command output or a denial, never passwords or whether approval was once-only or session-wide. Calls reserve the interactive execution slot instead of racing an agent turn.
+
+### Known limits
+
+- The entire URL is a credential. Interactive sudo is user-gated, not unattended root. Allow sudo for this session is the existing explicit owner choice and applies to the shared session.
+- No infrastructure, server routes or Slack integrations changed. Remote calls return a retryable tool error while the interactive agent is busy.
+
 ## 0.9.260 — 2026-11-07
 
 **Ledger count skips expired entries.** manage_ledger count now totals every live ledger entry and ignores expired ones, instead of asking ListRecent for zero rows.

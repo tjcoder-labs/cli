@@ -245,7 +245,7 @@ var slashCommands = []slashCommand{
 	{"dirs", "List workspaces; /dirs rm <name> removes"},
 	{"use", "Set the active workspace"},
 	{"about", "Open the about screen"},
-	{"mcp", "Manage MCP integrations"},
+	{"mcp", "Connect servers or open a secret MCP tunnel"},
 	{"capture", "Record screen: start or stop"},
 	{"screenshot", "Save the current screen as a PNG"},
 	{"ask", "Send a message to a subsession: /ask @name <message>"},
@@ -285,6 +285,8 @@ type App struct {
 	// card can offer to retry it.
 	lastTurnPrompt string
 	mcpClient      *mcp.Client
+	mcpTunnel      *interactiveMCPTunnel
+	mcpExecuting   bool
 	sessionState   session.State
 	palette        Palette
 
@@ -663,6 +665,7 @@ func (a *App) Run() error {
 	defer a.closeWorkspaces()
 	defer a.stopRemindersWatch()
 	defer a.saveSession()
+	defer a.shutdownMCPTunnel()
 	defer a.stopSpinner()
 	a.running = true
 	defer func() { a.running = false }()
@@ -1606,6 +1609,8 @@ func (a *App) refreshContextBar() string {
 	switch a.hintMode {
 	case "command":
 		line = a.renderCommandPalette()
+	case "mcp":
+		line = tview.Escape(a.mcpTip(a.hintInput()))
 	case "wsargs":
 		line = a.renderWorkspaceArgPalette()
 	case "reference":
@@ -1616,6 +1621,7 @@ func (a *App) refreshContextBar() string {
 		line = a.renderMetaBar()
 	}
 	if a.contextBar != nil {
+		a.contextBar.SetWrap(a.hintMode == "mcp")
 		a.contextBar.SetText(line)
 	}
 	return line
@@ -1632,6 +1638,10 @@ func (a *App) updateInputHint(text string) {
 		// Multi-line input (pasted block): no palette. The meta bar
 		// renders a dedicated multi-line cue instead.
 		a.hintMode = "multiline"
+		a.hintMatches = nil
+		a.hintSelected = 0
+	case isMCPHint(text):
+		a.hintMode = "mcp"
 		a.hintMatches = nil
 		a.hintSelected = 0
 	case strings.HasPrefix(text, "/") && a.wsArgHint(text):
@@ -1744,6 +1754,9 @@ func (a *App) renderCommandPalette() string {
 	// Append the highlighted command's description as a faint trailer
 	// when there's room, so the user knows what the selection does.
 	desc := a.hintMatches[a.hintSelected].desc
+	if a.hintMatches[a.hintSelected].cmd == "mcp" {
+		desc = tview.Escape(a.mcpTip(a.hintInput()))
+	}
 	if a.hintMatches[a.hintSelected].cmd == "compact" {
 		// /compact: show which model will summarise and how full the
 		// context is relative to that model's window.
@@ -2384,7 +2397,9 @@ func (a *App) showHelp() {
 		"\n" +
 		"Session\n" +
 		"  /config               edit config           /environment  edit the env template\n" +
-		"  /mcp                  MCP integrations      /telemetry    on, off, or status\n" +
+		"  /mcp                  Servers + tunnel      /telemetry    on, off, or status\n" +
+		"  /mcp tunnel           secret link; sudo is gated by your TUI approval\n" +
+		"  /mcp tunnel stop      revoke the link and cancel its tool calls\n" +
 		"  /update               check for an update   /about        about screen\n" +
 		"  /activity             activity panel\n" +
 		"\n" +
@@ -3627,6 +3642,11 @@ func (a *App) recordInputHistory(prompt string) {
 
 func (a *App) submit() {
 	a.mu.Lock()
+	if a.mcpExecuting && !isSlashCommandLine(strings.TrimSpace(a.input.GetText())) {
+		a.mu.Unlock()
+		a.appendActivity("An MCP tool call is running; answer its approval card or wait before sending a message. /mcp tunnel stop cancels it.")
+		return
+	}
 	if a.busy {
 		// Mid-turn: route the prompt into the runner's steering
 		// channel instead of dropping it. Non-blocking send: if the
@@ -5437,12 +5457,14 @@ func (a *App) referenceSummary() string {
 
 func (a *App) handleMCPCommand(parts []string) {
 	if len(parts) < 2 {
-		a.appendActivity("Usage: /mcp [add|list|status|remove] [args...]")
+		a.appendActivity("Usage: /mcp [add|list|status|remove|tunnel] [args...]")
 		return
 	}
 
 	action := strings.ToLower(parts[1])
 	switch action {
+	case "tunnel":
+		a.handleMCPTunnel(parts[2:])
 	case "add":
 		if len(parts) < 4 {
 			a.appendActivity("Usage: /mcp add <name> <url|command> [args...]")
@@ -5479,6 +5501,19 @@ func (a *App) handleMCPCommand(parts []string) {
 		a.appendActivity(fmt.Sprintf("Successfully added MCP server [%s]%s[-] and registered tools", a.palette.HexLavender, name))
 
 	case "list", "status":
+		if action == "status" {
+			state := "not running"
+			if a.mcpTunnel != nil {
+				state = "connecting"
+				if a.mcpTunnel.ready {
+					state = "active (link is the credential; sudo is user-gated)"
+				}
+				if a.mcpTunnel.stopping {
+					state = "stopping; revocation requested"
+				}
+			}
+			a.appendActivity("MCP tunnel: " + state + ". /mcp tunnel [stop]")
+		}
 		statuses := a.mcpClient.Statuses()
 		for name, sc := range a.config.MCPServers {
 			if _, exists := statuses[name]; !exists {
@@ -5562,6 +5597,6 @@ func (a *App) handleMCPCommand(parts []string) {
 		a.appendActivity(fmt.Sprintf("Removed MCP server [%s]%s[-]", a.palette.HexLavender, name))
 
 	default:
-		a.appendActivity("Unknown MCP action. Use add, list, status, or remove.")
+		a.appendActivity("Unknown MCP action. Use add, list, status, remove, or tunnel.")
 	}
 }

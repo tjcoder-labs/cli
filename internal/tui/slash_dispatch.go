@@ -64,7 +64,7 @@ func slashModeFor(parts []string) slashMode {
 		}
 		return slashQueued // may switch the live provider
 	case "mcp":
-		if sub == "list" || sub == "" {
+		if sub == "list" || sub == "status" || sub == "tunnel" || sub == "" {
 			return slashImmediate
 		}
 		return slashQueued // add/remove mutate the tool registry

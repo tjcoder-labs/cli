@@ -89,7 +89,7 @@ HTTP session-header negotiation, full long-lived SSE/cancellation support,
 auth-header/credential-store integration and newer MCP revisions remain future
 work; this change does not claim modern Streamable HTTP completeness.
 
-## Implemented `coder mcp` host sessions (0.9.259)
+## Implemented MCP tunnels (0.9.261)
 
 The product goal is to let a remote consuming agent or service call the same
 tools an interactive `coder` session already has. **No Slack integration**, no
@@ -100,8 +100,57 @@ Slack proxy, and no re-export of ergo-ai-server's own `/mcp` tools.
 Sign in in interactive `coder` with `/login`, then run in a terminal:
 
 ```sh
-coder mcp --workspace-root /path/to/project
+coder mcp tunnel --workspace-root /path/to/project
 ```
+
+Bare `coder mcp` on a terminal shows usage; it never silently opens a public
+session. `coder mcp tunnel --help` describes the explicit public command and
+local `--stdio` alternative. Standalone tunnels deny sudo.
+
+#### Interactive tunnel
+
+From an already-running interactive session:
+
+```text
+/login
+/mcp tunnel
+/mcp tunnel stop
+```
+
+The TUI opens the same outbound HTTPS relay without a local network listener.
+It exposes **the running session's registry and workspace set**, including
+connected MCP tools, rather than creating a second independent session. Calls
+reserve the same busy slot as an agent turn; if the session is busy, consumers
+receive a tool error asking them to retry. Registry discovery and lifecycle
+updates are marshalled through the UI event loop. `/mcp tunnel stop` works even
+while a tool is waiting for approval, cancels outstanding calls and best-effort
+revokes the session. Exiting the TUI also cancels and revokes it. A failed DELETE
+falls back to relay lease expiry; cancellation is not command rollback.
+
+The secret capability URL and local-time expiry are displayed in a temporary
+dialog, **not** activity history, conversation, or saved configuration. Copy it
+before closing the dialog. Closing the dialog does not stop the tunnel. A second
+`/mcp tunnel` reports that one is already running; use `stop` before restarting.
+
+Interactive tools use exactly the runner's `ExecEnv`, including its Prompter
+and SudoPolicy. A consuming service calling `run_command` with sudo must pass
+the **existing TUI sudo gate**: the owner chooses Allow once, Allow sudo for this
+session, or Deny. When required, only the owner types the password into the
+masked card; validation uses `sudo -S -v` privately. The password never goes to
+the consumer, model, logs, transcript or disk, and the PATH shim uses `sudo -n`.
+The consumer receives only command output or a denial/error, not the approval
+choice. Explicit session-wide approval has the same scope as in interactive
+agent turns; the URL itself does not grant unattended root. No `--allow-sudo`
+flag is passed or implied. Standalone `coder mcp tunnel` has no TUI prompter and
+continues to deny sudo.
+
+The `/mcp` hint line describes add/list/status/remove/tunnel and adapts to
+configured names, the selected subcommand, login requirements, and whether the
+tunnel is connecting, active, or stopping. Add explains URL versus command/args;
+remove suggests configured names (escaped for UI markup); tunnel explains the
+secret-link credential and the user-controlled sudo gate.
+
+#### Standalone tunnel
 
 This loads `tools.NewRegistry`, the same default registry used by the TUI,
 plus its task/memory/reminder `manage_items` bridge and workspace session state.
@@ -144,7 +193,8 @@ command `coder`, args
 only protocol messages; login is not required for local stdio (provider-backed
 tools may still need it). No local HTTP port is opened in either mode. An
 internal authenticated HTTP handler is available/tested for loopback adapters,
-but is not exposed as a CLI listener.
+but is not exposed as a CLI listener. Even `coder mcp tunnel` falls back to
+local stdio if stdin or stdout is piped; no public session is created.
 
 ### Minimal relay architecture
 
@@ -189,7 +239,7 @@ Ctrl-C/SIGTERM, observed stream disconnect and server restart revoke sessions;
 the CLI also best-effort DELETEs on exit. A crashed/partitioned host loses its
 lease within 30 seconds. New calls authenticate against revocation/expiry before
 dispatch; in-flight host contexts are cancelled on stream exit where possible.
-There is no automatic reconnection/republishing. Restart `coder mcp` for a fresh
+There is no automatic reconnection/republishing. Restart `coder mcp tunnel` for a fresh
 secret URL. A capability can intentionally be reused during its lease.
 
 **The entire URL is a credential.** Anyone who has the link can call the toolset
@@ -208,9 +258,10 @@ required for this link-only flow; 0.9.258 used a separate Bearer credential.
   sampling, OAuth discovery or per-consumer identities. Multiple consumers share
   the delegated session. Remote cancellation notifications are not implemented;
   disconnect/lease/deadline cancellation is best effort, not command rollback.
-- This creates a separate foreground tool session, not an attachment to an
-  already-running TUI. Saved `/mcp add` clients are **not** automatically restored
-  or re-exported, avoiding trivial recursive proxies in this first release.
+- The standalone command creates a separate foreground tool session and does
+  not restore saved `/mcp add` clients. Interactive `/mcp tunnel` instead attaches
+  to the live registry, including connected client tools. Do not import a tunnel
+  back into its own session: recursive tool proxies are not a supported setup.
 - In-memory, single-server store: a restart intentionally drops all publications.
   Multi-replica routing/shared leases and reconnect/resume are deferred.
 - Lifetime and quotas are code constants initially. No persistent or unattended

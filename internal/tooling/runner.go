@@ -526,17 +526,7 @@ budget:
 			if !offered[call.Function.Name] {
 				err = fmt.Errorf("tool %q is not enabled for this turn", call.Function.Name)
 			} else {
-				result, err = r.Registry.Execute(toolCtx, call.Function.Name, call.Function.Arguments, tools.ExecEnv{
-					WorkspaceRoot:  r.WorkspaceRoot,
-					Provider:       r.Provider,
-					Sink:           r.HighlightSink,
-					CommandSink:    r.CLICommandSink,
-					SessionState:   r.SessionState,
-					PersistSession: r.PersistSession,
-					Prompter:       r.Prompter,
-					Sudo:           r.Sudo,
-					Workspaces:     r.Workspaces,
-				})
+				result, err = r.Registry.Execute(toolCtx, call.Function.Name, call.Function.Arguments, r.ExecEnv())
 			}
 			stopWatch()
 			if r.Observer != nil {
@@ -849,4 +839,13 @@ func formatTokensCompact(n int) string {
 		return fmt.Sprintf("%dM", int(v))
 	}
 	return fmt.Sprintf("%.1fM", v)
+}
+
+// ExecEnv is the execution context shared by agent turns and interactive MCP
+// calls. In particular, neither transport can bypass the TUI sudo gate.
+func (r *Runner) ExecEnv() tools.ExecEnv {
+	return tools.ExecEnv{WorkspaceRoot: r.WorkspaceRoot, Provider: r.Provider,
+		Sink: r.HighlightSink, CommandSink: r.CLICommandSink,
+		SessionState: r.SessionState, PersistSession: r.PersistSession,
+		Prompter: r.Prompter, Sudo: r.Sudo, Workspaces: r.Workspaces}
 }
