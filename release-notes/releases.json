@@ -3,6 +3,30 @@
   "schema_version": 1,
   "releases": [
     {
+      "version": "0.9.254",
+      "date": "2026-11-06",
+      "title": "Local stealth browser extension bridge",
+      "summary": "Opt into a local native messaging bridge while preserving the default CDP path.",
+      "changes": {
+        "added": [
+          {
+            "text": "MV3 Coder Browser Bridge, native host registration, private Unix-socket transport, tabs, navigation, isolated evaluation, DOM inspection and screenshots."
+          },
+          {
+            "text": "Stable extension ID, reproducible downloadable zip and install guide."
+          }
+        ],
+        "security": [
+          {
+            "text": "Exact extension-origin allowlist and owner-only local sockets; no telemetry or public listener."
+          }
+        ]
+      },
+      "notes": [
+        "Native cookies, storage, trusted input and advanced CDP are deferred. Chrome 135+ and Allow User Scripts are required for evaluate."
+      ]
+    },
+    {
       "version": "0.9.253",
       "date": "2026-11-03",
       "title": "Sudo-elevated binary updates and more engineering tools",
@@ -12,7 +36,9 @@
           {
             "text": "Binary updates that fail with a permission error now offer sudo elevation and retry the install, so root-owned install directories (e.g. /usr/local/bin on macOS) update without reinstalling.",
             "highlight": true,
-            "commands": ["/update"]
+            "commands": [
+              "/update"
+            ]
           },
           {
             "text": "The software-engineer agent now has access to the highlight_code, adb_shell, manage_ledger, manage_model, research_note, and interaction_log tools."

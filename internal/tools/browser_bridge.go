@@ -19,7 +19,7 @@ import (
 // don't force-reconnect every call. Key is the CDP port number.
 var (
 	bridgeMu    sync.Mutex
-	bridgeInsts = map[int]*browser.Bridge{}
+	bridgeInsts = map[string]*browser.Bridge{}
 )
 
 // getBridge dials (once per port) and returns the process-wide bridge for
@@ -29,25 +29,30 @@ var (
 // If the cached bridge's WebSocket is dead (Chrome crashed or was killed),
 // it is dropped and a fresh connection is attempted so the agent sees an
 // auto-reconnect instead of "broken pipe" errors on every call.
-func getBridge(ctx context.Context, port int, agent string) (*browser.Bridge, error) {
+func getBridge(ctx context.Context, port int, agent string, tiers ...string) (*browser.Bridge, error) {
 	if port <= 0 {
 		port = 9222
 	}
+	tier := "raw_cdp"
+	if len(tiers) > 0 {
+		tier = tiers[0]
+	}
+	cacheKey := fmt.Sprintf("%s:%d", tier, port)
 	bridgeMu.Lock()
 	defer bridgeMu.Unlock()
-	if b, ok := bridgeInsts[port]; ok && b != nil {
+	if b, ok := bridgeInsts[cacheKey]; ok && b != nil {
 		if b.IsAlive() {
 			return b, nil
 		}
 		// Stale bridge: Chrome crashed or was killed. Drop it and reconnect.
 		_ = b.Close()
-		delete(bridgeInsts, port)
+		delete(bridgeInsts, cacheKey)
 	}
-	b, err := browser.DialBridge(ctx, port, agent)
+	b, err := browser.DialBridgeTransport(ctx, port, agent, tier)
 	if err != nil {
 		return nil, err
 	}
-	bridgeInsts[port] = b
+	bridgeInsts[cacheKey] = b
 	return b, nil
 }
 
@@ -56,11 +61,12 @@ func dropBridge(port int) {
 	if port <= 0 {
 		port = 9222
 	}
+	cacheKey := fmt.Sprintf("raw_cdp:%d", port)
 	bridgeMu.Lock()
 	defer bridgeMu.Unlock()
-	if b, ok := bridgeInsts[port]; ok && b != nil {
+	if b, ok := bridgeInsts[cacheKey]; ok && b != nil {
 		_ = b.Close()
-		delete(bridgeInsts, port)
+		delete(bridgeInsts, cacheKey)
 	}
 }
 
@@ -69,7 +75,9 @@ type browserBridgeTool struct{}
 
 func (browserBridgeTool) Definition() client.ToolDefinition {
 	props := map[string]any{
-		"action":        stringProp("Operation to perform. One of: list_tabs, new_tab, close_tab, claim_tab, release_tab, release_all, navigate, reload, back, forward, evaluate, click, type, press_key, wait_for, get_dom, screenshot, get_cookies, set_cookie, delete_cookie, clear_site_data, storage_get, storage_set, storage_keys, emulate, intercept_enable, intercept_disable, start_chrome, stop_chrome, chrome_status, reconnect."),
+		"transport":     stringProp("cdp (default): existing raw CDP websocket, no extension needed. stealth: opt-in local native extension, no debugger."),
+		"incognito":     boolProp("new_tab: open a new private window; enable Allow in incognito on the extension."),
+		"action":        stringProp("Operation to perform. One of: list_tabs, new_tab, close_tab, inspect, claim_tab, release_tab, release_all, navigate, reload, back, forward, evaluate, click, type, press_key, wait_for, get_dom, screenshot, get_cookies, set_cookie, delete_cookie, clear_site_data, storage_get, storage_set, storage_keys, emulate, intercept_enable, intercept_disable, start_chrome, stop_chrome, chrome_status, reconnect."),
 		"tab_id":        stringProp("Target tab ID. Required for most actions except list_tabs/new_tab/start_chrome/stop_chrome/chrome_status. Use list_tabs to find IDs. Tabs you create via new_tab are auto-owned."),
 		"url":           stringProp("URL for new_tab / navigate. Also used as the start page for start_chrome if provided."),
 		"selector":      stringProp("CSS selector, supports shadow piercing with '>>>' e.g. 'my-app >>> #inner'. Used by click/type/wait_for/get_dom."),
@@ -109,7 +117,7 @@ func (browserBridgeTool) Definition() client.ToolDefinition {
 		Type: "function",
 		Function: client.FunctionDefinition{
 			Name:        "browser_bridge",
-			Description: "Control a locally running Chrome (started with --remote-debugging-port) over CDP. Manage tabs, navigate, run JS, click/type (trusted input), wait with shadow-DOM-piercing selectors, capture screenshots/DOM, and manage cookies/storage/emulation. Tabs created or claimed by this session are tracked so concurrent agents don't interfere with each other's or the user's tabs.",
+			Description: "Control Chrome through the local Coder extension (opt-in transport=stealth, no debug port), or existing raw CDP (default). Manage tabs, navigate, run JS, click/type (trusted input), wait with shadow-DOM-piercing selectors, capture screenshots/DOM, and manage cookies/storage/emulation. Tabs created or claimed by this session are tracked so concurrent agents don't interfere with each other's or the user's tabs.",
 			Parameters:  objectSchema([]string{"action"}, props),
 		},
 	}
@@ -118,6 +126,8 @@ func (browserBridgeTool) Definition() client.ToolDefinition {
 func (browserBridgeTool) Execute(ctx context.Context, raw json.RawMessage, env ExecEnv) (Result, error) {
 	var a struct {
 		Action       string `json:"action"`
+		Transport    string `json:"transport"`
+		Incognito    bool   `json:"incognito"`
 		TabID        string `json:"tab_id"`
 		URL          string `json:"url"`
 		Selector     string `json:"selector"`
@@ -153,6 +163,31 @@ func (browserBridgeTool) Execute(ctx context.Context, raw json.RawMessage, env E
 		return Result{}, err
 	}
 	a.Action = strings.TrimSpace(strings.ToLower(a.Action))
+	tier, err := browserTransport(a.Transport)
+	if err != nil {
+		return Result{}, err
+	}
+	if a.Action != "start_chrome" && a.Action != "stop_chrome" && tier != "raw_cdp" {
+		if a.Action == "chrome_status" || a.Action == "ping" {
+			c, e := browser.ConnectNative(ctx, tier)
+			if e != nil {
+				return Result{}, fmt.Errorf("native browser host unavailable: install and register coder-browser-host, then load the extension: %w", e)
+			}
+			defer c.Close()
+			r, e := c.Call(ctx, "Bridge.ping", nil)
+			return Result{Content: string(r), Preview: "native browser"}, e
+		}
+		if a.Action == "reconnect" {
+			bridgeMu.Lock()
+			for k, b := range bridgeInsts {
+				if strings.HasPrefix(k, tier+":") {
+					b.Close()
+					delete(bridgeInsts, k)
+				}
+			}
+			bridgeMu.Unlock()
+		}
+	}
 	if a.Action == "" {
 		return Result{}, fmt.Errorf("action is required")
 	}
@@ -233,8 +268,8 @@ func (browserBridgeTool) Execute(ctx context.Context, raw json.RawMessage, env E
 				tail = "\nstderr (last 500 chars):\n" + s
 			}
 			return Result{
-				Content:  fmt.Sprintf("port %d: nothing listening%s", port, tail),
-				Preview:  "down",
+				Content: fmt.Sprintf("port %d: nothing listening%s", port, tail),
+				Preview: "down",
 			}, nil
 		}
 		ctx2, cancel := context.WithTimeout(ctx, 2*time.Second)
@@ -267,7 +302,7 @@ func (browserBridgeTool) Execute(ctx context.Context, raw json.RawMessage, env E
 		// Drop any stale cached bridge and re-dial. If Chrome isn't
 		// running, report that clearly so the agent can start_chrome.
 		dropBridge(port)
-		b, err := getBridge(ctx, port, agent)
+		b, err := getBridge(ctx, port, agent, tier)
 		if err != nil {
 			return Result{}, fmt.Errorf("reconnect to port %d failed (is Chrome running?): %w", port, err)
 		}
@@ -276,7 +311,7 @@ func (browserBridgeTool) Execute(ctx context.Context, raw json.RawMessage, env E
 		return Result{Content: msg, Preview: msg}, nil
 	}
 
-	b, err := getBridge(ctx, a.Port, agent)
+	b, err := getBridge(ctx, a.Port, agent, tier)
 	if err != nil {
 		return Result{}, err
 	}
@@ -312,7 +347,21 @@ func (browserBridgeTool) Execute(ctx context.Context, raw json.RawMessage, env E
 		return Result{Content: out, Preview: preview(out)}, nil
 
 	case "new_tab":
-		id, err := b.Client.NewTab(ctx, a.URL)
+		var id string
+		var err error
+		if a.Incognito {
+			var r json.RawMessage
+			r, err = b.Client.Call(ctx, "Target.createTarget", map[string]any{"url": a.URL, "incognito": true})
+			if err == nil {
+				var out struct {
+					TargetID string `json:"targetId"`
+				}
+				err = json.Unmarshal(r, &out)
+				id = out.TargetID
+			}
+		} else {
+			id, err = b.Client.NewTab(ctx, a.URL)
+		}
 		if err != nil {
 			return Result{}, err
 		}
@@ -381,6 +430,10 @@ func (browserBridgeTool) Execute(ctx context.Context, raw json.RawMessage, env E
 		case "reload":
 			method = "Page.reload"
 		case "back", "forward":
+			if tier != "raw_cdp" {
+				_, err := b.Client.CallSession(ctx, sid, "Bridge."+a.Action, nil)
+				return Result{Content: a.Action + " ok", Preview: a.Action}, err
+			}
 			// Use history navigation via JS (simplest reliable path).
 			delta := "-1"
 			if a.Action == "forward" {
@@ -483,7 +536,7 @@ func (browserBridgeTool) Execute(ctx context.Context, raw json.RawMessage, env E
 		msg := fmt.Sprintf("found %q (%s %v)", a.Selector, rr.Tag, rr.Visible)
 		return Result{Content: msg, Preview: msg}, nil
 
-	case "get_dom":
+	case "get_dom", "inspect":
 		sid, err := sessionFor(a.TabID)
 		if err != nil {
 			return Result{}, err
@@ -604,5 +657,17 @@ func (browserBridgeTool) Execute(ctx context.Context, raw json.RawMessage, env E
 
 	default:
 		return Result{}, fmt.Errorf("unknown browser_bridge action %q", a.Action)
+	}
+}
+
+// browserTransport preserves the pre-extension default for existing callers.
+func browserTransport(value string) (string, error) {
+	switch value {
+	case "", "cdp":
+		return "raw_cdp", nil
+	case "stealth":
+		return "stealth", nil
+	default:
+		return "", fmt.Errorf("transport must be cdp or stealth")
 	}
 }

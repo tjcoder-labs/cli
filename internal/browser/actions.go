@@ -195,6 +195,17 @@ func merge(a, b map[string]any) map[string]any {
 // is set). When selector is empty it returns the whole document; otherwise it
 // returns the outerHTML of the resolved fragment.
 func GetDOM(ctx context.Context, c *Client, sessionID, selector string, pierce bool, maxChars int) (string, error) {
+	if c.tier != "" {
+		res, err := c.CallSession(ctx, sessionID, "Bridge.getDOM", map[string]any{"selector": selector, "maxChars": maxChars})
+		if err != nil {
+			return "", err
+		}
+		var out struct {
+			HTML string `json:"html"`
+		}
+		err = json.Unmarshal(res, &out)
+		return out.HTML, err
+	}
 	var expr string
 	if selector == "" {
 		expr = "document.documentElement.outerHTML"

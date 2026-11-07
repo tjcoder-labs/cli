@@ -4,6 +4,23 @@
 
 All notable changes to Coder CLI. The source of truth is [release-notes/releases.json](release-notes/releases.json).
 
+## 0.9.254 — 2026-11-06
+
+**Local stealth browser extension bridge.** Opt into a local native messaging bridge while preserving the default CDP path.
+
+### Added
+
+- MV3 Coder Browser Bridge, native host registration, private Unix-socket transport, tabs, navigation, isolated evaluation, DOM inspection and screenshots.
+- Stable extension ID, reproducible downloadable zip and install guide.
+
+### Security
+
+- Exact extension-origin allowlist and owner-only local sockets; no telemetry or public listener.
+
+### Known limits
+
+- Native cookies, storage, trusted input and advanced CDP are deferred. Chrome 135+ and Allow User Scripts are required for evaluate.
+
 ## 0.9.253 — 2026-11-03
 
 **Sudo-elevated binary updates and more engineering tools.** Automatic and manual binary updates can now escalate to sudo when the install directory is root-owned, and the software-engineer agent gains the highlight_code, adb_shell, manage_ledger, manage_model, research_note, and interaction_log tools.

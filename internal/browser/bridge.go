@@ -27,10 +27,22 @@ type Bridge struct {
 // DialBridge connects to Chrome on port, loads the shared registry, and
 // returns a ready bridge. agent names the owning agent for bookkeeping.
 func DialBridge(ctx context.Context, port int, agent string) (*Bridge, error) {
+	return DialBridgeTransport(ctx, port, agent, "raw_cdp")
+}
+
+// DialBridgeTransport chooses the native extension tier or explicit legacy CDP.
+func DialBridgeTransport(ctx context.Context, port int, agent, tier string) (*Bridge, error) {
 	if port <= 0 {
 		port = 9222
 	}
-	cli, err := Connect(ctx, port)
+	var cli *Client
+	var err error
+	if tier == "raw_cdp" {
+		cli, err = Connect(ctx, port)
+	} else {
+		cli, err = ConnectNative(ctx, tier)
+		port = 0
+	}
 	if err != nil {
 		return nil, err
 	}

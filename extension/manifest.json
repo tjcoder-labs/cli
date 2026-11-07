@@ -1,0 +1,31 @@
+{
+  "manifest_version": 3,
+  "name": "Coder Browser Bridge",
+  "version": "0.9.254",
+  "description": "Local-only stealth-first browser bridge for Coder CLI",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAxN0HkYwl83E085xMNzYRs3Trzf/PslycryGeEV7GPpL8DPRdx5S+zcUnwetxsI4NgYqjPMI+NX19ZfVglM3TpuRTKPwH/7+z5KxOejZ7RZBjmFcdY5mu66acHRRBcEvYeU3MQnjItUFlraDvAknrgEbvNi0FX6bXi+pATFQMMvhpwkDcqEucqqEpfaGd2tGxFIoUwjNKCCpd7hczvFqqUuiZwz/Wx475sd5/pW8n32u9kulEEhG/rWe2mm+/OczQI7MVap66iQUTaMUPdJhR48MXwWb3+WU4A6qXCWub8v+69BzJkH1f5P8LqTL2qu0EWntOfHgrzEnR+GwahOZygwIDAQAB",
+  "permissions": [
+    "debugger",
+    "tabs",
+    "nativeMessaging",
+    "cookies",
+    "storage",
+    "scripting",
+    "activeTab",
+    "webNavigation",
+    "alarms",
+    "userScripts"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "incognito": "split",
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "Reconnect Coder Browser Bridge"
+  },
+  "minimum_chrome_version": "135"
+}

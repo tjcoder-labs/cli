@@ -39,7 +39,8 @@ type Client struct {
 	wsURL string
 
 	mu      sync.Mutex // guards conn writes + waiters + subs
-	conn    *websocket.Conn
+	conn    Transport
+	tier    string
 	waiters map[int64]chan rpcMessage
 	subs    map[string][]chan Event // method -> subscribers
 	seq     int64
@@ -117,7 +118,7 @@ func Connect(ctx context.Context, port int) (*Client, error) {
 	}
 	c := &Client{
 		wsURL:   wsURL,
-		conn:    conn,
+		conn:    websocketTransport{conn},
 		waiters: map[int64]chan rpcMessage{},
 		subs:    map[string][]chan Event{},
 		done:    make(chan struct{}),
@@ -143,8 +144,9 @@ func (c *Client) Close() error {
 // pump reads frames, routing command responses to waiters and events to subs.
 func (c *Client) pump() {
 	for {
-		_, data, err := c.conn.ReadMessage()
+		data, err := c.conn.ReadMessage()
 		if err != nil {
+			c.Close()
 			c.failAll()
 			return
 		}
@@ -216,6 +218,9 @@ func (c *Client) CallSession(ctx context.Context, sessionID, method string, para
 	}
 
 	req := map[string]any{"id": id, "method": method}
+	if c.tier != "" {
+		req["transport"] = c.tier
+	}
 	if sessionID != "" {
 		req["sessionId"] = sessionID
 	}
