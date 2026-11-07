@@ -4,6 +4,26 @@
 
 All notable changes to Coder CLI. The source of truth is [release-notes/releases.json](release-notes/releases.json).
 
+## 0.9.265 — 2026-11-07
+
+**Persistent MCP tunnels, live banner status and /mcp completions.** MCP tunnels now keep the same link across network changes and dropouts, the tunnel banner shows connections and in-flight tool calls, and /mcp completes as you type like /add.
+
+### Added
+
+- The interactive tunnel banner shows unique consumer connections, the tool call in flight (for example → run_command) and reconnecting… while the relay redials.
+  Connections are counted by opaque server-assigned IDs; caller IP and user agent never reach the CLI. Consumers idle for five minutes drop off the count.
+- /mcp now completes as you type with the same argument palette as /add: Tab inserts the highlighted option and Shift+Tab cycles.
+  Suggestions cover list, status, add, remove, tunnel and tunnel stop, plus configured server names for remove. /mcp rm is accepted as an alias for /mcp remove.
+
+### Changed
+
+- coder mcp tunnel and /mcp tunnel reconnect automatically with the same capability URL after a dropout, sleep or network change.
+  The relay redials the same session with backoff and keeps heartbeating; the server holds the link for a 10-minute reconnect grace within the unchanged one-hour maximum. A revoked or expired session ends the tunnel with a message instead of silently minting a new URL. Requires server 1.1.752 or later.
+
+### Known limits
+
+- The secret URL is still never written to activity or history; reconnect notices contain no link.
+
 ## 0.9.264 — 2026-11-07
 
 **An input-style surface for the MCP tunnel banner.** The pinned interactive tunnel banner now has its own surface modeled after the chat input, instead of appearing as loose text above it.

@@ -66,8 +66,29 @@ func (a *App) refreshMCPTunnelBar() {
 			detail = "expires " + expiry.Local().Format("Jan 2 3:04 PM MST")
 		}
 	}
-	a.mcpURLHint.SetText(fmt.Sprintf("MCP TUNNEL · F7 %s · F8 copy link · %s", action, detail))
+	a.mcpURLHint.SetText(fmt.Sprintf("MCP TUNNEL · %s · F7 %s · F8 copy link · %s", a.mcpTunnelStatus(), action, detail))
 	a.mcpURLView.SetText(a.mcpDisplayedURL()).ScrollToBeginning()
+}
+
+// mcpTunnelStatus is the live banner status: reconnecting, unique consumer
+// connections (idle >5m drop off), and the tool currently in flight.
+func (a *App) mcpTunnelStatus() string {
+	t := a.mcpTunnel
+	if t.reconnecting {
+		return "reconnecting…"
+	}
+	n := t.connectionCount(time.Now())
+	status := fmt.Sprintf("%d connections", n)
+	if n == 1 {
+		status = "1 connection"
+	}
+	if k := len(t.inFlight); k > 0 {
+		status += " · → " + t.inFlight[k-1]
+		if k > 1 {
+			status += fmt.Sprintf(" +%d", k-1)
+		}
+	}
+	return status
 }
 
 // The dock spans the full terminal width. Banner and input are sibling surfaces
@@ -163,6 +184,9 @@ func (a *App) scrubMCPTunnelLink() {
 		a.mcpTunnel.expires = ""
 		a.mcpTunnel.revealed = false
 		a.mcpTunnel.notice = ""
+		a.mcpTunnel.consumers = nil
+		a.mcpTunnel.inFlight = nil
+		a.mcpTunnel.reconnecting = false
 	}
 	if a.mcpURLView != nil {
 		a.mcpURLView.SetText("")

@@ -25,6 +25,50 @@ type interactiveMCPTunnel struct {
 	expires  string
 	revealed bool
 	notice   string
+	// Live status only; consumer ids are opaque server-assigned values and
+	// never include caller IP/UA. Nothing here is persisted.
+	reconnecting bool
+	consumers    map[string]time.Time
+	inFlight     []string
+}
+
+const mcpConsumerIdle = 5 * time.Minute
+
+func (t *interactiveMCPTunnel) connectionCount(now time.Time) int {
+	n := 0
+	for id, seen := range t.consumers {
+		if now.Sub(seen) >= mcpConsumerIdle {
+			delete(t.consumers, id)
+			continue
+		}
+		n++
+	}
+	return n
+}
+
+// handleMCPRelayEvent runs on the UI goroutine.
+func (a *App) handleMCPRelayEvent(tunnel *interactiveMCPTunnel, ev mcpserver.RelayEvent) {
+	if a.mcpTunnel != tunnel || tunnel.stopping {
+		return
+	}
+	switch ev.Kind {
+	case mcpserver.RelayReconnecting:
+		if !tunnel.reconnecting {
+			a.appendActivity("MCP tunnel connection dropped; reconnecting with the same link…")
+		}
+		tunnel.reconnecting = true
+	case mcpserver.RelayReconnected:
+		if tunnel.reconnecting {
+			a.appendActivity("MCP tunnel reconnected; the same link is live again.")
+		}
+		tunnel.reconnecting = false
+	case mcpserver.RelayConsumer:
+		if tunnel.consumers == nil {
+			tunnel.consumers = map[string]time.Time{}
+		}
+		tunnel.consumers[ev.ConsumerID] = time.Now()
+	}
+	a.refreshMCPTunnelBar()
 }
 
 func (a *App) handleMCPTunnel(args []string) {
@@ -62,7 +106,9 @@ func (a *App) handleMCPTunnel(args []string) {
 	a.mcpTunnel = tunnel
 	registry := &interactiveMCPRegistry{app: a, ctx: ctx}
 	server := &mcpserver.Server{Registry: registry, Version: a.appVersion}
-	relay := &mcpserver.Relay{BaseURL: client.ErgoDefaultBaseURL, Key: key, Server: server}
+	relay := &mcpserver.Relay{BaseURL: client.ErgoDefaultBaseURL, Key: key, Server: server, Events: func(ev mcpserver.RelayEvent) {
+		a.postUI(func() { a.handleMCPRelayEvent(tunnel, ev) })
+	}}
 	a.appendActivity("Opening MCP tunnel for this interactive workspace. Anyone holding its secret link can call tools; sudo uses your existing TUI approval gate, not unattended root.")
 	a.runMCPTunnel(ctx, tunnel, relay.Run)
 }
@@ -70,6 +116,23 @@ func (a *App) handleMCPTunnel(args []string) {
 // The runner is injected here so lifecycle tests need not create a real public
 // capability or contact the production relay.
 func (a *App) runMCPTunnel(ctx context.Context, tunnel *interactiveMCPTunnel, run func(context.Context, func(mcpserver.Publication)) error) {
+	go func() {
+		// Idle consumers age out of the banner count even without new events.
+		tick := time.NewTicker(30 * time.Second)
+		defer tick.Stop()
+		for {
+			select {
+			case <-tunnel.done:
+				return
+			case <-tick.C:
+				a.postUI(func() {
+					if a.mcpTunnel == tunnel {
+						a.refreshMCPTunnelBar()
+					}
+				})
+			}
+		}
+	}()
 	go func() {
 		defer close(tunnel.done)
 		err := run(ctx, func(p mcpserver.Publication) {
@@ -181,6 +244,10 @@ func (r *interactiveMCPRegistry) Execute(ctx context.Context, name string, args 
 		r.app.busy = true
 		r.app.mcpExecuting = true
 		r.app.appendActivity("MCP consumer is calling " + tview.Escape(name) + "; any sudo approval is yours to grant or deny.")
+		if t := r.app.mcpTunnel; t != nil {
+			t.inFlight = append(t.inFlight, name)
+			r.app.refreshMCPTunnelBar()
+		}
 		out <- reservation{env: r.app.runner.ExecEnv()}
 	})
 	// Always observe the reservation result, even if cancellation races it; if it
@@ -193,7 +260,7 @@ func (r *interactiveMCPRegistry) Execute(ctx context.Context, name string, args 
 			select {
 			case v := <-out:
 				if v.err == nil {
-					r.release()
+					r.release(name)
 				}
 			case <-r.app.uiq.stopped:
 			}
@@ -203,7 +270,7 @@ func (r *interactiveMCPRegistry) Execute(ctx context.Context, name string, args 
 	if v.err != nil {
 		return tools.Result{}, v.err
 	}
-	defer r.release()
+	defer r.release(name)
 	if err := ctx.Err(); err != nil {
 		return tools.Result{}, err
 	}
@@ -216,8 +283,17 @@ func (r *interactiveMCPRegistry) Execute(ctx context.Context, name string, args 
 	}
 	return result, err
 }
-func (r *interactiveMCPRegistry) release() {
+func (r *interactiveMCPRegistry) release(name string) {
 	r.app.postUI(func() {
+		if t := r.app.mcpTunnel; t != nil {
+			for i := len(t.inFlight) - 1; i >= 0; i-- {
+				if t.inFlight[i] == name {
+					t.inFlight = append(t.inFlight[:i], t.inFlight[i+1:]...)
+					break
+				}
+			}
+			r.app.refreshMCPTunnelBar()
+		}
 		r.app.mcpExecuting = false
 		r.app.busy = false
 		if err := r.app.saveSession(); err != nil {

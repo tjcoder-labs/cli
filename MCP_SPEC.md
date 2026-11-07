@@ -147,6 +147,12 @@ The bar also shows expiry and keyboard hints:
   URL-only row(s) with normal terminal selection instead. No overlay can
   contaminate that selection; expand a narrow terminal to keep it on one row.
 
+Since 0.9.265 the banner hint also shows live status: the number of unique
+consumer connections (opaque server-assigned IDs; a consumer idle for 5 minutes
+drops off), the tool currently in flight (`→ run_command`, `+N` when several are
+queued), and `reconnecting…` while the relay redials. Activity gets one line when
+a drop starts and one when the same link is live again; the URL is never logged.
+
 The link is held only in tunnel-owned memory/the dedicated view, **not** activity
 history, conversation, input history, or saved configuration. Toggling and copying
 do not log it. Stop immediately hides/scrubs the bar and requests revocation;
@@ -258,8 +264,13 @@ One in-memory session store and two isolated Express routers on api.tjcoder.com:
   random correlation ID and JSON-RPC body; no HTTP caller headers are forwarded.
 - `POST /cli/mcp/sessions/:id/responses/:requestId`: bounded host responses,
   also using the relay credential. Single-use correlation, not an upstream proxy.
-- `POST /cli/mcp/sessions/:id/heartbeat`: host heartbeat every 10 seconds;
-  renews a 30-second lease while connected, never beyond the one-hour hard age.
+- `GET .../connect` again (same session ID and relay credential) replaces any
+  existing or half-open stream; it never returns 409. Frames also carry an
+  opaque `consumerId` (the consumer's `Mcp-Session-Id`), never caller IP/UA.
+- `POST /cli/mcp/sessions/:id/heartbeat`: host heartbeat every 10 seconds; works
+  with or without an attached stream. A new session holds a 30-second lease;
+  after the first connect, renewals and stream drops extend the lease to
+  `min(expiresAt, max(leaseUntil, now + 10 minutes))`, never beyond one hour.
 - `DELETE /cli/mcp/sessions/:id`: relay credential revokes this session only.
 - `POST /mcp/hosts/:capability`: public MCP JSON responses and 202 for notifications;
   the 43-character unpadded base64url path secret authenticates **every** request.
@@ -283,12 +294,18 @@ guesses per minute per IP, three active sessions per validated owner key,
 match the interactive session's mutable tool state. Calls have a 115-second
 host context and a 120-second relay deadline; tools must honor cancellation.
 
-Ctrl-C/SIGTERM, observed stream disconnect and server restart revoke sessions;
-the CLI also best-effort DELETEs on exit. A crashed/partitioned host loses its
-lease within 30 seconds. New calls authenticate against revocation/expiry before
-dispatch; in-flight host contexts are cancelled on stream exit where possible.
-There is no automatic reconnection/republishing. Restart `coder mcp tunnel` for a fresh
-secret URL. A capability can intentionally be reused during its lease.
+Persistence (0.9.265, server 1.1.752+): the **same capability URL survives
+network changes, sleep and dropouts**. When the SSE stream ends or goes silent
+for 35 seconds (server keepalives arrive every 10s), the relay backs off
+(1s doubling to 30s) and GETs `connect` again with the same session ID and relay
+credential. It never POSTs a new session or mints a new URL silently.
+Heartbeats continue throughout. The server keeps the session for a 10-minute
+reconnect grace after a drop; consumers receive 503 "host not connected" in the
+meantime, and calls that were in flight at the drop fail rather than replay.
+The relay DELETEs only on Ctrl-C/SIGTERM, `/mcp tunnel stop` or TUI exit. A 401
+(session revoked/expired, e.g. server restart) or reaching the one-hour hard
+maximum ends the tunnel with a clear message; start a new tunnel for a new link.
+New calls authenticate against revocation/expiry before dispatch.
 
 **The entire URL is a credential.** Anyone who has the link can call the toolset
 until the session ends; do not paste it publicly. Browser Referer headers,
@@ -311,6 +328,6 @@ required for this link-only flow; 0.9.258 used a separate Bearer credential.
   to the live registry, including connected client tools. Do not import a tunnel
   back into its own session: recursive tool proxies are not a supported setup.
 - In-memory, single-server store: a restart intentionally drops all publications.
-  Multi-replica routing/shared leases and reconnect/resume are deferred.
+  Multi-replica routing/shared leases and replay of in-flight calls are deferred.
 - Lifetime and quotas are code constants initially. No persistent or unattended
   publications, no per-tool capability narrowing, no new OS sandbox.

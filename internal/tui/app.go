@@ -1657,12 +1657,13 @@ func (a *App) updateInputHint(text string) {
 		a.hintMode = "multiline"
 		a.hintMatches = nil
 		a.hintSelected = 0
-	case isMCPHint(text):
+	case strings.HasPrefix(text, "/") && a.wsArgHint(text):
+		// "/add …", "/use …", "/dirs rm …", "/mcp …": argument palette.
+	case isMCPHint(text) && strings.ContainsAny(text, " \t"):
+		// Free-form /mcp add arguments: keep the contextual usage tip.
 		a.hintMode = "mcp"
 		a.hintMatches = nil
 		a.hintSelected = 0
-	case strings.HasPrefix(text, "/") && a.wsArgHint(text):
-		// "/add …", "/use …", "/dirs rm …": argument palette.
 	case strings.HasPrefix(text, "/"):
 		q := strings.ToLower(strings.TrimPrefix(text, "/"))
 		// Match on the first token only so arguments don't disturb the
@@ -5591,9 +5592,9 @@ func (a *App) handleMCPCommand(parts []string) {
 		}
 		a.appendActivity(tview.Escape(b.String()))
 
-	case "remove":
+	case "remove", "rm":
 		if len(parts) < 3 {
-			a.appendActivity("Usage: /mcp remove <name>")
+			a.appendActivity("Usage: /mcp remove <name> (alias: rm)")
 			return
 		}
 		name := parts[2]

@@ -27,23 +27,28 @@ func TestMCPTipsAdaptAndEscapeNames(t *testing.T) {
 	mcpNoLogin(t)
 	a := newTestApp(t)
 	a.input = tview.NewInputField()
-	for _, tc := range []struct{ input, want string }{
-		{"/mcp", "No MCP servers or tunnel"},
-		{"/mcp add", "<name> <url|command> [args...]"},
-		{"/mcp remove", "no servers configured"},
-		{"/mcp list", "short descriptions"},
-		{"/mcp status", "last errors"},
-		{"/mcp tunnel", "Run /login first"},
-		{"/mcp tunnel stop", "no tunnel is running"},
+	// "/mcp" alone is the command palette; once a space is typed the /add-style
+	// argument palette takes over. Free-form arguments keep the usage tip.
+	for _, tc := range []struct{ input, mode, want string }{
+		{"/mcp", "command", "/mcp"},
+		{"/mcp add", "wsargs", "add <name> <url|command>"},
+		{"/mcp remove", "wsargs", "remove <name>"},
+		{"/mcp list", "wsargs", "configured servers"},
+		{"/mcp status", "wsargs", "last errors"},
+		{"/mcp tunnel", "wsargs", "tunnel stop"},
+		{"/mcp tunnel stop", "wsargs", "none running"},
+		{"/mcp add x ", "mcp", "<name> <url|command> [args...]"},
+		{"/mcp tunnel stop now", "mcp", "no tunnel is running"},
 	} {
 		a.input.SetText(tc.input)
 		a.updateInputHint(tc.input)
-		if a.hintMode != "mcp" || !strings.Contains(a.refreshContextBar(), tview.Escape(tc.want)) {
-			t.Errorf("%s: %s", tc.input, a.refreshContextBar())
+		if a.hintMode != tc.mode || !strings.Contains(a.refreshContextBar(), tview.Escape(tc.want)) {
+			t.Errorf("%s: %s %s", tc.input, a.hintMode, a.refreshContextBar())
 		}
 	}
 	a.config.MCPServers = map[string]MCPServerConfig{"[red]demo": {Enabled: true}}
-	a.input.SetText("/mcp remove")
+	a.input.SetText("/mcp remove ")
+	a.updateInputHint("/mcp remove ")
 	if got := a.refreshContextBar(); !strings.Contains(got, "[red[]demo") {
 		t.Errorf("unescaped name: %q", got)
 	}

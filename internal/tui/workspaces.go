@@ -414,6 +414,9 @@ func (a *App) sshConfigPath() string {
 // workspaceArgHints computes the argument hint for /add, /use and /dirs
 // once the command word is complete. ok is false for any other input.
 func (a *App) workspaceArgHints(text string) (cmd, title string, items []wsArg, ok bool) {
+	if title, items, ok := a.mcpArgHints(text); ok {
+		return "mcp", title, items, true
+	}
 	if a.workspaces == nil || !strings.HasPrefix(text, "/") || strings.Contains(text, "\n") {
 		return "", "", nil, false
 	}
@@ -658,6 +661,8 @@ func (a *App) renderWorkspaceArgPalette() string {
 		switch {
 		case strings.HasSuffix(a.wsArgTitle, ":") && a.wsArgCmd == "add" && a.wsArgTitle != "folder:" && a.wsArgTitle != "ssh host:":
 			msg = "type a path (completes once connected)"
+		case a.wsArgCmd == "mcp" && a.wsArgTitle == "remove server:":
+			msg = "no configured MCP server matches (see /mcp list)"
 		case a.wsArgTitle == "ssh host:":
 			msg = "type a host or user@host (no matching ~/.ssh/config host)"
 		}

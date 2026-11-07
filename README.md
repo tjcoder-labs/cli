@@ -382,7 +382,9 @@ padding, separated from the chat input by a thin gutter.
 F7 shows/hides the token; after revealing it, F8 copies the exact full URL via
 the terminal clipboard (where supported), or select the URL-only row directly.
 Use Fn+F7/F8 on media-key keyboards. No modal overlays the chat and the link is
-never saved in history. `/mcp tunnel stop` or TUI exit removes the bar and revokes
+never saved in history. The banner shows unique connections, the tool call in
+flight and `reconnecting…`; tunnels redial after dropouts and keep the same link
+(10-minute grace, one-hour maximum). `/mcp tunnel stop` or TUI exit removes the bar and revokes
 it. Interactive sudo remains gated by the owner's existing approval/password
 cards; consumers never receive passwords or approval choices. Treat the link
 as a password, not permission for unattended root. `/mcp` tips adapt to login,

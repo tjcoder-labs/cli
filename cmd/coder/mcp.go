@@ -72,7 +72,16 @@ func mcpCommand(args []string) error {
 	server.OnToolCall = printer.started
 	// Foreground invocation is explicit delegation of this toolset, not a sandbox.
 	fmt.Fprintf(os.Stderr, "Tunneling %d local tools in %s. Anyone holding the secret URL can use them until exit/expiry. Sudo remains denied. Ctrl-C revokes.\n", len(server.Registry.Names()), abs)
-	relay := &mcpserver.Relay{BaseURL: client.ErgoDefaultBaseURL, Key: key, Server: server}
+	relay := &mcpserver.Relay{BaseURL: client.ErgoDefaultBaseURL, Key: key, Server: server, Events: func(ev mcpserver.RelayEvent) {
+		switch ev.Kind {
+		case mcpserver.RelayReconnecting:
+			if ev.Attempt == 1 {
+				fmt.Fprintln(os.Stderr, "MCP tunnel connection dropped; reconnecting (same URL)…")
+			}
+		case mcpserver.RelayReconnected:
+			fmt.Fprintln(os.Stderr, "MCP tunnel reconnected; the same URL is live again.")
+		}
+	}}
 	// Own lifecycle here: the TUI browser wrapper re-raises signals, while MCP
 	// needs graceful cancellation and best-effort revocation on those signals.
 	exe, browserErr := os.Executable()
