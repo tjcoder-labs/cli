@@ -3,6 +3,19 @@
   "schema_version": 1,
   "releases": [
     {
+      "version": "0.9.260",
+      "date": "2026-11-07",
+      "title": "Ledger count skips expired entries",
+      "summary": "manage_ledger count now totals every live ledger entry and ignores expired ones, instead of asking ListRecent for zero rows.",
+      "changes": {
+        "fixed": [
+          {
+            "text": "Ledger count walks the full recent list, skips entries whose TTL has elapsed, and no longer calls ListRecent(0), which returned an empty set."
+          }
+        ]
+      }
+    },
+    {
       "version": "0.9.259",
       "date": "2026-11-07",
       "title": "One secret link for remote MCP access",

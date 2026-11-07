@@ -157,7 +157,10 @@ func (manageLedgerTool) Execute(ctx context.Context, raw json.RawMessage, env Ex
 	case "count":
 		type kc struct{ ns, kind string }
 		counts := map[kc]int{}
-		for _, e := range l.ListRecent(0, "", "") {
+		for _, e := range l.Recent {
+			if e.Expired(time.Now()) {
+				continue
+			}
 			if ns != "" && !strings.EqualFold(e.Namespace, ns) {
 				continue
 			}

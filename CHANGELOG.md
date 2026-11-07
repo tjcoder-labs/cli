@@ -4,6 +4,14 @@
 
 All notable changes to Coder CLI. The source of truth is [release-notes/releases.json](release-notes/releases.json).
 
+## 0.9.260 — 2026-11-07
+
+**Ledger count skips expired entries.** manage_ledger count now totals every live ledger entry and ignores expired ones, instead of asking ListRecent for zero rows.
+
+### Fixed
+
+- Ledger count walks the full recent list, skips entries whose TTL has elapsed, and no longer calls ListRecent(0), which returned an empty set.
+
 ## 0.9.259 — 2026-11-07
 
 **One secret link for remote MCP access.** The ephemeral MCP URL itself now grants access; consuming agents no longer need a separate Authorization header.
