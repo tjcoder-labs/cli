@@ -377,6 +377,8 @@ Standalone tunnels deny sudo.
 Inside the TUI, `/mcp tunnel` exposes that live session's tool registry and
 workspace through the same relay. A full-width bar above the chat input shows
 the URL with its secret token masked by default, plus expiry and key hints.
+It has its own input-style surface with matching background, accent beam and
+padding, separated from the chat input by a thin gutter.
 F7 shows/hides the token; after revealing it, F8 copies the exact full URL via
 the terminal clipboard (where supported), or select the URL-only row directly.
 Use Fn+F7/F8 on media-key keyboards. No modal overlays the chat and the link is

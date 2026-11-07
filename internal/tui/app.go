@@ -157,6 +157,9 @@ const panelGutter = 1
 // NOTE: kept as 3 to match the conversation panel's left padding.
 const marginX = 3
 
+// promptTextInset is shared by input text/hints and sibling prompt surfaces.
+const promptTextInset = 2
+
 // mainLeftProportion / mainRightProportion are the flex proportions of
 // the two main columns (left: conversation or /about splash, right: the
 // stacked Cognition/Activity column or the /about intro). Every main
@@ -843,7 +846,7 @@ func (a *App) build() {
 		SetWrap(false)
 	a.contextBar.SetBackgroundColor(a.palette.BgInput)
 	a.contextBar.SetTextColor(a.palette.TextDim)
-	a.contextBar.SetBorderPadding(0, 1, 2, 2)
+	a.contextBar.SetBorderPadding(0, 1, promptTextInset, promptTextInset)
 
 	// The prompt bar gets generous padding in its own background color so
 	// it "feels larger" and unmistakably reads as the text-entry surface,
@@ -882,7 +885,7 @@ func (a *App) build() {
 		a.refreshContextBar()
 	})
 	a.input.SetBackgroundColor(a.palette.BgInput)
-	a.input.SetBorderPadding(1, 0, 2, 2)
+	a.input.SetBorderPadding(1, 0, promptTextInset, promptTextInset)
 	a.input.SetDoneFunc(func(key tcell.Key) {
 		if key == tcell.KeyEnter {
 			a.submit()
@@ -1372,11 +1375,14 @@ func spacerBox(bg tcell.Color) *tview.Box {
 // mirrors the left one (marginX-1 BgRoot columns) so both ends of every
 // surface row carry the same number of edge columns.
 func (a *App) newInputRow() *tview.Flex {
-	// Treat the entire prompt shell as a single bgInput-backed component so
-	// the input field and its status line read as one cohesive surface.
+	return a.insetPromptSurface(a.newInputSurface(), true)
+}
+
+// insetPromptSurface gives sibling surfaces the exact same root gutters.
+func (a *App) insetPromptSurface(surface tview.Primitive, focus bool) *tview.Flex {
 	row := tview.NewFlex().
 		AddItem(spacerBox(a.palette.BgRoot), marginX-1, 0, false).
-		AddItem(a.newInputSurface(), 0, 1, true).
+		AddItem(surface, 0, 1, focus).
 		AddItem(spacerBox(a.palette.BgRoot), marginX-1, 0, false)
 	row.SetBackgroundColor(a.palette.BgRoot)
 	return row
@@ -1390,7 +1396,12 @@ func (a *App) newInputSurface() *tview.Flex {
 		AddItem(a.input, 3, 0, true).
 		AddItem(a.contextBar, 2, 0, false)
 	inner.SetBackgroundColor(a.palette.BgInput)
+	return a.newPromptSurface(inner, true)
+}
 
+// newPromptSurface is the shared chrome for the chat input and tunnel banner:
+// BgInput fill, symmetric inner padding, and the focus-sensitive accent beam.
+func (a *App) newPromptSurface(inner tview.Primitive, focusable bool) *tview.Flex {
 	leftBeam := tview.NewBox()
 	leftBeam.SetBackgroundColor(a.palette.BgInput)
 	leftBeam.SetDrawFunc(func(screen tcell.Screen, x, y, width, height int) (int, int, int, int) {
@@ -1411,7 +1422,7 @@ func (a *App) newInputSurface() *tview.Flex {
 	surface := tview.NewFlex().
 		AddItem(leftBeam, 1, 0, false).
 		AddItem(spacerBox(a.palette.BgInput), marginX-1, 0, false).
-		AddItem(inner, 0, 1, true).
+		AddItem(inner, 0, 1, focusable).
 		AddItem(spacerBox(a.palette.BgInput), marginX, 0, false)
 	surface.SetBackgroundColor(a.palette.BgInput)
 	return surface

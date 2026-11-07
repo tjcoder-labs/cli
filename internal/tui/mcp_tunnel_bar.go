@@ -51,6 +51,8 @@ func (a *App) refreshMCPTunnelBar() {
 	if a.mcpURLView == nil {
 		a.mcpURLView = tview.NewTextView().SetWrap(true).SetWordWrap(false).SetDynamicColors(false)
 		a.mcpURLHint = tview.NewTextView().SetWrap(false).SetDynamicColors(false)
+		a.mcpURLHint.SetBorderPadding(1, 0, promptTextInset, promptTextInset)
+		a.mcpURLView.SetBorderPadding(0, 1, promptTextInset, promptTextInset)
 	}
 	a.mcpURLView.SetTextColor(a.palette.Lavender).SetBackgroundColor(a.palette.BgInput)
 	a.mcpURLHint.SetTextColor(a.palette.TextDim).SetBackgroundColor(a.palette.BgInput)
@@ -68,8 +70,9 @@ func (a *App) refreshMCPTunnelBar() {
 	a.mcpURLView.SetText(a.mcpDisplayedURL()).ScrollToBeginning()
 }
 
-// The dock spans the full terminal width, with the same horizontal insets as
-// the input. URL-only rows have no side-by-side chat/panel text to contaminate
+// The dock spans the full terminal width. Banner and input are sibling surfaces
+// sharing the same chrome and content insets, separated by a root-colored gap.
+// URL rows have no side-by-side chat/panel text to contaminate
 // terminal selection. F8 copies the entire URL even when it wraps or is clipped.
 func (a *App) newInputDock() *tview.Flex {
 	dock := tview.NewFlex().SetDirection(tview.FlexRow)
@@ -77,13 +80,15 @@ func (a *App) newInputDock() *tview.Flex {
 	if a.hasMCPTunnelBar() {
 		a.refreshMCPTunnelBar()
 		content := tview.NewFlex().SetDirection(tview.FlexRow).
-			AddItem(a.mcpURLHint, 1, 0, false).
+			AddItem(a.mcpURLHint, 2, 0, false).
 			AddItem(a.mcpURLView, 0, 1, false)
 		content.SetBackgroundColor(a.palette.BgInput)
-		a.mcpURLBar = tview.NewFlex().
-			AddItem(spacerBox(a.palette.BgRoot), marginX-1, 0, false).
-			AddItem(content, 0, 1, false).
-			AddItem(spacerBox(a.palette.BgRoot), marginX-1, 0, false)
+		// A separate sibling surface, not loose text or a continuation of the
+		// input box. The root-colored gutter separates the two accent beams.
+		surface := a.insetPromptSurface(a.newPromptSurface(content, false), false)
+		a.mcpURLBar = tview.NewFlex().SetDirection(tview.FlexRow).
+			AddItem(surface, 0, 1, false).
+			AddItem(spacerBox(a.palette.BgRoot), panelGutter, 0, false)
 		a.mcpURLBar.SetBackgroundColor(a.palette.BgRoot)
 		dock.AddItem(a.mcpURLBar, a.mcpTunnelBarHeight(), 0, false)
 	}
@@ -100,7 +105,8 @@ func (a *App) mcpTunnelBarHeight() int {
 	if a.terminalScreen != nil {
 		width, _ = a.terminalScreen.Size()
 	}
-	width -= 2 * (marginX - 1)
+	// Outer gutters + shared beam/padding + each TextView's content inset.
+	width -= 2*(marginX-1) + 2*marginX + 2*promptTextInset
 	if width < 1 {
 		width = 1
 	}
@@ -110,7 +116,7 @@ func (a *App) mcpTunnelBarHeight() int {
 	if rows > 4 {
 		rows = 4
 	}
-	return 1 + rows
+	return 3 + rows + panelGutter
 }
 
 func (a *App) inputDockHeight() int { return inputRowHeight + a.mcpTunnelBarHeight() }

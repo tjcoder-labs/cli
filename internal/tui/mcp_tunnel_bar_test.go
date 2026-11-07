@@ -115,9 +115,9 @@ func TestMCPTunnelBarReservesFullWidthRowsAboveInput(t *testing.T) {
 			a.beforeDraw(sim)
 			a.rootFlex.SetRect(0, 0, width, 40)
 			a.rootFlex.Draw(sim)
-			x, y, w, h := a.mcpURLView.GetRect()
+			x, y, w, h := a.mcpURLView.GetInnerRect()
 			_, inputY, _, _ := a.inputRow.GetRect()
-			if y+h > inputY || h < 1 || w != width-2*(marginX-1) {
+			if y+h > inputY || h < 1 || w != width-2*(marginX-1)-2*marginX-2*promptTextInset {
 				t.Fatalf("overlap/non-fullwidth: url=(%d,%d,%d,%d) inputY=%d", x, y, w, h, inputY)
 			}
 			var visible strings.Builder
@@ -131,7 +131,12 @@ func TestMCPTunnelBarReservesFullWidthRowsAboveInput(t *testing.T) {
 				if strings.Contains(text, "CHAT-UNDERLAY") || strings.Contains(text, "PANEL-UNDERLAY") || strings.Contains(text, "MCP TUNNEL") {
 					t.Fatal("URL row contaminated with underlying widgets")
 				}
-				visible.WriteString(strings.TrimSpace(text))
+				var urlLine strings.Builder
+				for col := x; col < x+w; col++ {
+					r, _, _, _ := sim.GetContent(col, row)
+					urlLine.WriteRune(r)
+				}
+				visible.WriteString(strings.TrimSpace(urlLine.String()))
 			}
 			if visible.String() != testBarURL {
 				t.Fatalf("width %d: URL missing/wrapped incorrectly: %q", width, visible.String())

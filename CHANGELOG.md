@@ -4,6 +4,19 @@
 
 All notable changes to Coder CLI. The source of truth is [release-notes/releases.json](release-notes/releases.json).
 
+## 0.9.264 — 2026-11-07
+
+**An input-style surface for the MCP tunnel banner.** The pinned interactive tunnel banner now has its own surface modeled after the chat input, instead of appearing as loose text above it.
+
+### Changed
+
+- The tunnel banner and input share the same themed background, focus-sensitive accent beam, symmetric edge padding and text insets. A root-colored gutter separates them into two sibling surfaces.
+  The banner adds matching top/bottom breathing room and recalculates URL wrapping for the padded content width. It remains above the input without overlaying the conversation.
+
+### Known limits
+
+- Token masking by default, F7 show/hide, F8 exact-link copying, non-persistence and stop/exit scrubbing are unchanged. Restart the TUI after updating to see the surface.
+
 ## 0.9.263 — 2026-11-07
 
 **Pinned, copyable interactive MCP tunnel links.** Interactive /mcp tunnel now pins its link above the chat input instead of overlaying a dialog, so copying does not collect chat text behind it.

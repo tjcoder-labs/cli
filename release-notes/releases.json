@@ -3,6 +3,23 @@
   "schema_version": 1,
   "releases": [
     {
+      "version": "0.9.264",
+      "date": "2026-11-07",
+      "title": "An input-style surface for the MCP tunnel banner",
+      "summary": "The pinned interactive tunnel banner now has its own surface modeled after the chat input, instead of appearing as loose text above it.",
+      "changes": {
+        "changed": [
+          {
+            "text": "The tunnel banner and input share the same themed background, focus-sensitive accent beam, symmetric edge padding and text insets. A root-colored gutter separates them into two sibling surfaces.",
+            "details": "The banner adds matching top/bottom breathing room and recalculates URL wrapping for the padded content width. It remains above the input without overlaying the conversation."
+          }
+        ]
+      },
+      "notes": [
+        "Token masking by default, F7 show/hide, F8 exact-link copying, non-persistence and stop/exit scrubbing are unchanged. Restart the TUI after updating to see the surface."
+      ]
+    },
+    {
       "version": "0.9.263",
       "date": "2026-11-07",
       "title": "Pinned, copyable interactive MCP tunnel links",

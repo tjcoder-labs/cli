@@ -130,6 +130,11 @@ falls back to relay lease expiry; cancellation is not command rollback.
 Since 0.9.263 the secret capability URL stays in a dedicated, themed bar pinned
 immediately above the chat input, **not** an overlay/modal. Its URL-only rows
 span the terminal width, without conversation or side-panel text behind them.
+Since 0.9.264 the banner is housed in its own input-style surface: it shares the
+chat input's themed background, focus-sensitive left accent beam, symmetric edge
+padding and text insets, with top/bottom breathing room. A root-colored gutter
+separates the sibling surfaces. URL wrapping accounts for the padded content
+width; F8 still copies the full link independently of wrapping.
 The stable prefix is visible and the secret path token is masked by default.
 The bar also shows expiry and keyboard hints:
 
