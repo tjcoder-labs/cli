@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/tjcoder-labs/cli/internal/client"
 	"github.com/tjcoder-labs/cli/internal/session"
@@ -58,6 +59,7 @@ type Tool interface {
 
 type Registry struct {
 	provider client.Provider
+	mu       sync.RWMutex
 	tools    map[string]Tool
 }
 
@@ -118,11 +120,15 @@ func (r *Registry) RegisterTool(t Tool) {
 		return
 	}
 	name := t.Definition().Function.Name
+	r.mu.Lock()
 	r.tools[name] = t
+	r.mu.Unlock()
 }
 
 // UnregisterTool removes a single tool by name. No-op if not present.
 func (r *Registry) UnregisterTool(name string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	delete(r.tools, name)
 }
 
@@ -133,6 +139,8 @@ func (r *Registry) UnregisterPrefix(prefix string) {
 	if prefix == "" {
 		return
 	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	for name := range r.tools {
 		if strings.HasPrefix(name, prefix) {
 			delete(r.tools, name)
@@ -141,6 +149,8 @@ func (r *Registry) UnregisterPrefix(prefix string) {
 }
 
 func (r *Registry) Definitions(names []string) []client.ToolDefinition {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	defs := make([]client.ToolDefinition, 0, len(names))
 	for _, name := range names {
 		tool, ok := r.tools[name]
@@ -152,7 +162,9 @@ func (r *Registry) Definitions(names []string) []client.ToolDefinition {
 }
 
 func (r *Registry) Execute(ctx context.Context, name string, args json.RawMessage, env ExecEnv) (Result, error) {
+	r.mu.RLock()
 	tool, ok := r.tools[name]
+	r.mu.RUnlock()
 	if !ok {
 		return Result{}, fmt.Errorf("unknown tool %q", name)
 	}
@@ -160,6 +172,8 @@ func (r *Registry) Execute(ctx context.Context, name string, args json.RawMessag
 }
 
 func (r *Registry) Names() []string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	names := make([]string, 0, len(r.tools))
 	for name := range r.tools {
 		names = append(names, name)
@@ -169,6 +183,8 @@ func (r *Registry) Names() []string {
 }
 
 func (r *Registry) Has(name string) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	_, ok := r.tools[name]
 	return ok
 }

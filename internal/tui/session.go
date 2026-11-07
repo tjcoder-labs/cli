@@ -56,10 +56,12 @@ func (a *App) loadSession() {
 	}
 	a.resetEnabledTools(a.currentAgent.ToolNames)
 	if len(state.EnabledTools) > 0 {
+		a.enabledMu.Lock()
 		a.enabledTools = map[string]bool{}
 		for _, name := range state.EnabledTools {
 			a.enabledTools[name] = true
 		}
+		a.enabledMu.Unlock()
 	}
 
 	a.history = append([]client.Message(nil), state.History...)

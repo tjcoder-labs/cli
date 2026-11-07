@@ -4,6 +4,15 @@
 
 All notable changes to Coder CLI. The source of truth is [release-notes/releases.json](release-notes/releases.json).
 
+## 0.9.268 — 2026-11-07
+
+**Agent picks up MCP servers added in the TUI.** The in-TUI agent now receives tools from servers added with /mcp add, including later in the same turn.
+
+### Fixed
+
+- Tools from servers added with /mcp add (or restored from config) are now offered to the agent, including on the next model call of the same turn.
+  MCP tools default to enabled, can be toggled in /tools, and stop being offered after /mcp remove.
+
 ## 0.9.267 — 2026-11-07
 
 **Workspace-aware standalone MCP tunnel activity.** The themed standalone tunnel log now includes the last tool call, timestamp, tool name, and cwd without exposing secrets or changing JSON-RPC output.

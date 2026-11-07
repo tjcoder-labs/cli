@@ -3,6 +3,20 @@
   "schema_version": 1,
   "releases": [
     {
+      "version": "0.9.268",
+      "date": "2026-11-07",
+      "title": "Agent picks up MCP servers added in the TUI",
+      "summary": "The in-TUI agent now receives tools from servers added with /mcp add, including later in the same turn.",
+      "changes": {
+        "fixed": [
+          {
+            "text": "Tools from servers added with /mcp add (or restored from config) are now offered to the agent, including on the next model call of the same turn.",
+            "details": "MCP tools default to enabled, can be toggled in /tools, and stop being offered after /mcp remove."
+          }
+        ]
+      }
+    },
+    {
       "version": "0.9.267",
       "date": "2026-11-07",
       "title": "Workspace-aware standalone MCP tunnel activity",

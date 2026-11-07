@@ -311,6 +311,7 @@ type App struct {
 	previousAgentDefaultModel string   // tracks the last agent's default model so switching agents can swap models
 	models                    []client.ModelInfo
 	enabledTools              map[string]bool
+	enabledMu                 sync.RWMutex  // guards enabledTools; the runner reads it via LiveEnabledTools
 	livePrompt                *livePrompt   // mounted prompt card, UI goroutine only
 	liveCards                 []*livePrompt // every mounted card, oldest first (livePrompt is the last); UI goroutine only
 	burstTail                 keyBurst      // tail of a keystroke paste that finished a card
@@ -606,6 +607,7 @@ func New(provider client.Provider, registry *tools.Registry, workspaceRoot, mode
 	}
 	// Set up sinks for tool integration (highlight_code, invoke_cli_command, etc.)
 	app.runner.CLICommandSink = app
+	app.runner.LiveEnabledTools = app.enabledToolList
 	app.runner.Prompter = app
 	app.runner.Sudo = &tools.SudoPolicy{}
 	app.initWorkspaces(workspaceRoot)
@@ -663,6 +665,7 @@ func (a *App) loadMCPServers() {
 			continue
 		}
 		tools.RegisterMCPClient(a.registry, a.mcpClient)
+		a.enableMCPTools()
 		a.appendActivity(fmt.Sprintf("MCP server [%s]%s[-] restored from config", a.palette.HexLavender, name))
 	}
 }
@@ -4993,20 +4996,61 @@ func (a *App) loadAsciiArt() string {
 }
 
 func (a *App) resetEnabledTools(names []string) {
+	a.enabledMu.Lock()
+	defer a.enabledMu.Unlock()
 	a.enabledTools = map[string]bool{}
 	for _, name := range names {
 		a.enabledTools[name] = true
 	}
 }
 
+// enabledToolList returns the agent's enabled tools followed by every
+// registered MCP tool (mcp_*, sorted). MCP tools default to enabled;
+// one the user toggled off (enabledTools[name] == false) is omitted.
 func (a *App) enabledToolList() []string {
+	a.enabledMu.RLock()
+	defer a.enabledMu.RUnlock()
 	names := make([]string, 0, len(a.enabledTools))
 	for _, name := range a.currentAgent.ToolNames {
 		if a.enabledTools[name] {
 			names = append(names, name)
 		}
 	}
+	for _, name := range a.mcpToolNames() {
+		if on, set := a.enabledTools[name]; set && !on {
+			continue
+		}
+		names = append(names, name)
+	}
 	return names
+}
+
+// mcpToolNames lists registered mcp_* tools in sorted order.
+func (a *App) mcpToolNames() []string {
+	if a.registry == nil {
+		return nil
+	}
+	var out []string
+	for _, name := range a.registry.Names() {
+		if strings.HasPrefix(name, "mcp_") {
+			out = append(out, name)
+		}
+	}
+	return out
+}
+
+// enableMCPTools marks every registered MCP tool not yet seen as on.
+func (a *App) enableMCPTools() {
+	a.enabledMu.Lock()
+	defer a.enabledMu.Unlock()
+	if a.enabledTools == nil {
+		a.enabledTools = map[string]bool{}
+	}
+	for _, name := range a.mcpToolNames() {
+		if _, set := a.enabledTools[name]; !set {
+			a.enabledTools[name] = true
+		}
+	}
 }
 
 // switchProvider swaps the live provider to cfg, rebuilds the runner's
@@ -5238,14 +5282,24 @@ func (a *App) openToolModal() {
 	var rebuild func()
 	rebuild = func() {
 		list.Clear()
-		for _, name := range a.currentAgent.ToolNames {
+		all := append(append([]string(nil), a.currentAgent.ToolNames...), a.mcpToolNames()...)
+		for _, name := range all {
 			toolName := name
+			isMCP := strings.HasPrefix(toolName, "mcp_")
+			a.enabledMu.RLock()
+			on, set := a.enabledTools[toolName]
+			a.enabledMu.RUnlock()
+			if isMCP && !set {
+				on = true
+			}
 			prefix := "[ ]"
-			if a.enabledTools[toolName] {
+			if on {
 				prefix = "[x]"
 			}
 			list.AddItem(prefix+" "+toolName, "", 0, func() {
-				a.enabledTools[toolName] = !a.enabledTools[toolName]
+				a.enabledMu.Lock()
+				a.enabledTools[toolName] = !on
+				a.enabledMu.Unlock()
 				rebuild()
 				a.appendActivity("Enabled tools: " + strings.Join(a.enabledToolList(), ", "))
 				a.saveSession()
@@ -5509,6 +5563,7 @@ func (a *App) handleMCPCommand(parts []string) {
 		}
 		// Register the tools in the global registry
 		tools.RegisterMCPClient(a.registry, a.mcpClient)
+		a.enableMCPTools()
 		// Persist to config so the integration survives restarts and
 		// shows up in /config's JSON editor.
 		if a.config.MCPServers == nil {

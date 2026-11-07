@@ -90,7 +90,12 @@ type Runner struct {
 	// Sudo carries the sudo authorization policy. Both nil headless
 	// unless --allow-sudo sets Sudo.
 	Prompter tools.Prompter
-	Sudo     *tools.SudoPolicy
+	// LiveEnabledTools, when non-nil, is re-read before every model
+	// call so tools registered mid-turn (e.g. `/mcp add` run through
+	// invoke_cli_command) are offered on the next round. nil keeps the
+	// enabledTools slice passed to Run for the whole turn.
+	LiveEnabledTools func() []string
+	Sudo             *tools.SudoPolicy
 	// Workspaces is the session's workspace set (primary cwd plus
 	// /add'ed local and SSH folders). nil = WorkspaceRoot only.
 	Workspaces *workspace.Set
@@ -445,6 +450,13 @@ budget:
 		}
 
 		// 1. The model generates its response for the current turn
+		if r.LiveEnabledTools != nil {
+			defs = r.Registry.Definitions(r.LiveEnabledTools())
+			offered = make(map[string]bool, len(defs))
+			for _, d := range defs {
+				offered[d.Function.Name] = true
+			}
+		}
 		msg, err := r.runChatTurn(ctx, model, systemPrompt, history, defs, onEvent)
 		if err != nil {
 			// The per-turn context was cancelled because a steering

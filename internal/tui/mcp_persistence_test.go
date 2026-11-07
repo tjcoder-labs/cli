@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -340,5 +341,17 @@ func TestMCPHTTPAddPersistsAndLists(t *testing.T) {
 	app.handleMCPCommand([]string{"mcp", "list"})
 	if !strings.Contains(app.capturedActivity(), "remote_ping: Ping remote") {
 		t.Fatal("remote tool not listed")
+	}
+	if !slices.Contains(app.enabledToolList(), "mcp_remote_remote_ping") {
+		t.Fatalf("added MCP tool not offered to the agent: %v", app.enabledToolList())
+	}
+	app.enabledTools["mcp_remote_remote_ping"] = false
+	if slices.Contains(app.enabledToolList(), "mcp_remote_remote_ping") {
+		t.Fatal("toggled-off MCP tool still offered")
+	}
+	app.enabledTools["mcp_remote_remote_ping"] = true
+	app.handleMCPCommand([]string{"mcp", "remove", "remote"})
+	if slices.Contains(app.enabledToolList(), "mcp_remote_remote_ping") {
+		t.Fatal("removed MCP tool still offered")
 	}
 }
