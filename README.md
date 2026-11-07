@@ -375,8 +375,12 @@ shows usage on a terminal; `coder mcp --stdio` (or piped stdin/stdout) stays loc
 Standalone tunnels deny sudo.
 
 Inside the TUI, `/mcp tunnel` exposes that live session's tool registry and
-workspace through the same relay. The temporary dialog shows the secret link
-and expiry without saving them in history. `/mcp tunnel stop` or TUI exit revokes
+workspace through the same relay. A full-width bar above the chat input shows
+the URL with its secret token masked by default, plus expiry and key hints.
+F7 shows/hides the token; after revealing it, F8 copies the exact full URL via
+the terminal clipboard (where supported), or select the URL-only row directly.
+Use Fn+F7/F8 on media-key keyboards. No modal overlays the chat and the link is
+never saved in history. `/mcp tunnel stop` or TUI exit removes the bar and revokes
 it. Interactive sudo remains gated by the owner's existing approval/password
 cards; consumers never receive passwords or approval choices. Treat the link
 as a password, not permission for unattended root. `/mcp` tips adapt to login,

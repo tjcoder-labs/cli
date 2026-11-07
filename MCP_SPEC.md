@@ -127,10 +127,28 @@ while a tool is waiting for approval, cancels outstanding calls and best-effort
 revokes the session. Exiting the TUI also cancels and revokes it. A failed DELETE
 falls back to relay lease expiry; cancellation is not command rollback.
 
-The secret capability URL and local-time expiry are displayed in a temporary
-dialog, **not** activity history, conversation, or saved configuration. Copy it
-before closing the dialog. Closing the dialog does not stop the tunnel. A second
-`/mcp tunnel` reports that one is already running; use `stop` before restarting.
+Since 0.9.263 the secret capability URL stays in a dedicated, themed bar pinned
+immediately above the chat input, **not** an overlay/modal. Its URL-only rows
+span the terminal width, without conversation or side-panel text behind them.
+The stable prefix is visible and the secret path token is masked by default.
+The bar also shows expiry and keyboard hints:
+
+- **F7** toggles show/hide of the token without changing chat input or focus.
+- **F8**, after revealing the token, requests copying the exact full URL through
+  the terminal clipboard facility (tcell / OSC 52 where supported). No label,
+  wrapping newline, expiry, or chat text is included. Copying while masked is
+  refused with a hint to reveal first. Use Fn+F7/F8 on media-key keyboards.
+- If the terminal blocks clipboard requests, reveal the token and select the
+  URL-only row(s) with normal terminal selection instead. No overlay can
+  contaminate that selection; expand a narrow terminal to keep it on one row.
+
+The link is held only in tunnel-owned memory/the dedicated view, **not** activity
+history, conversation, input history, or saved configuration. Toggling and copying
+do not log it. Stop immediately hides/scrubs the bar and requests revocation;
+TUI exit also scrubs it. The bar remains pinned through resize/fullscreen while
+the tunnel is live. Clipboard managers, recordings and screenshots may retain a
+revealed/copied URL, so treat it as a password. A second `/mcp tunnel` reports
+that one is already running; use `stop` before restarting.
 
 Interactive tools use exactly the runner's `ExecEnv`, including its Prompter
 and SudoPolicy. A consuming service calling `run_command` with sudo must pass

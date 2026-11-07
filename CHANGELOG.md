@@ -4,6 +4,28 @@
 
 All notable changes to Coder CLI. The source of truth is [release-notes/releases.json](release-notes/releases.json).
 
+## 0.9.263 — 2026-11-07
+
+**Pinned, copyable interactive MCP tunnel links.** Interactive /mcp tunnel now pins its link above the chat input instead of overlaying a dialog, so copying does not collect chat text behind it.
+
+### Added
+
+- F7 reveals or hides the secret token (hidden by default). After revealing it, F8 requests an exact full-link clipboard copy through the terminal, even when the URL wraps.
+  The bar documents both keys. If terminal clipboard support is unavailable, select the revealed URL-only rows instead. On keyboards using media function keys, use Fn+F7/F8.
+
+### Changed
+
+- The tunnel link stays in its own full-width, themed bar above the input. The URL has separate rows without transcript or side-panel text behind them; resizing and fullscreen keep it pinned.
+
+### Security
+
+- The secret remains in memory only, never activity/history. Stop immediately removes and scrubs the bar; TUI exit scrubs it and revokes as before. Copying requires explicitly revealing the token first.
+
+### Known limits
+
+- The link is the credential. Clipboard managers, terminal recording and screenshots can retain a revealed/copied link; keep it private and stop the tunnel to revoke it.
+- Standalone tunnel pretty-printing, local stdio and sudo policy are unchanged. Restart the TUI after updating to use the new bar.
+
 ## 0.9.262 — 2026-11-07
 
 **Themed activity for standalone MCP tunnels.** The terminal hosting coder mcp tunnel now shows consumer tool starts and success/error outcomes using the same theme and glyphs as the TUI.

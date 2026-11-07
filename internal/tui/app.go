@@ -287,6 +287,11 @@ type App struct {
 	mcpClient      *mcp.Client
 	mcpTunnel      *interactiveMCPTunnel
 	mcpExecuting   bool
+	mcpURLView     *tview.TextView
+	mcpURLHint     *tview.TextView
+	mcpURLBar      *tview.Flex
+	inputDock      *tview.Flex
+	terminalScreen tcell.Screen
 	sessionState   session.State
 	palette        Palette
 
@@ -616,6 +621,7 @@ func New(provider client.Provider, registry *tools.Registry, workspaceRoot, mode
 	app.scheduler = newScheduleWorker(app)
 	app.build()
 	app.tv.SetAfterDrawFunc(app.afterDraw)
+	app.tv.SetBeforeDrawFunc(app.beforeDraw)
 	app.loadSession()
 	app.loadModelsAsync()
 	app.loadMCPServers()
@@ -1038,7 +1044,7 @@ func (a *App) build() {
 		AddItem(spacerBox(a.palette.BgRoot), panelGutter, 0, false).
 		AddItem(main, 0, 1, false).
 		AddItem(spacerBox(a.palette.BgRoot), panelGutter, 0, false).
-		AddItem(inputRow, inputRowHeight, 0, true).
+		AddItem(a.newInputDock(), a.inputDockHeight(), 0, true).
 		AddItem(footerRow, 3, 0, false)
 	layout.SetBackgroundColor(a.palette.BgRoot)
 
@@ -2071,6 +2077,9 @@ func (a *App) globalKeys(event *tcell.EventKey) *tcell.EventKey {
 	if a.swallowBurstTail(event) {
 		return nil
 	}
+	if a.handleMCPTunnelBarKey(event) {
+		return nil
+	}
 	// Alt-letter shortcuts for panel display (informational only, focus stays on input).
 	if panel := altPanel(event); panel != "" {
 		switch panel {
@@ -2398,7 +2407,8 @@ func (a *App) showHelp() {
 		"Session\n" +
 		"  /config               edit config           /environment  edit the env template\n" +
 		"  /mcp                  Servers + tunnel      /telemetry    on, off, or status\n" +
-		"  /mcp tunnel           secret link; sudo is gated by your TUI approval\n" +
+		"  /mcp tunnel           pinned secret link; F7 show/hide token, F8 copy\n" +
+		"                        sudo is gated by your TUI approval\n" +
 		"  /mcp tunnel stop      revoke the link and cancel its tool calls\n" +
 		"  /update               check for an update   /about        about screen\n" +
 		"  /activity             activity panel\n" +
@@ -4817,7 +4827,7 @@ func (a *App) rebuildLayout() {
 		AddItem(spacerBox(a.palette.BgRoot), panelGutter, 0, false).
 		AddItem(mainFlex, 0, 1, false).
 		AddItem(spacerBox(a.palette.BgRoot), panelGutter, 0, false).
-		AddItem(a.inputRow, inputRowHeight, 0, true).
+		AddItem(a.newInputDock(), a.inputDockHeight(), 0, true).
 		AddItem(footerRow, 3, 0, false)
 	layout.SetBackgroundColor(a.palette.BgRoot)
 

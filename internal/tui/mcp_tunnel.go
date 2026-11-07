@@ -21,6 +21,10 @@ type interactiveMCPTunnel struct {
 	done     chan struct{}
 	ready    bool
 	stopping bool
+	url      string
+	expires  string
+	revealed bool
+	notice   string
 }
 
 func (a *App) handleMCPTunnel(args []string) {
@@ -35,6 +39,7 @@ func (a *App) handleMCPTunnel(args []string) {
 		}
 		a.mcpTunnel.stopping = true
 		a.mcpTunnel.cancel()
+		a.clearMCPTunnelBar()
 		a.appendActivity("Stopping MCP tunnel and revoking its link.")
 		a.refreshContextBar()
 		return
@@ -73,8 +78,8 @@ func (a *App) runMCPTunnel(ctx context.Context, tunnel *interactiveMCPTunnel, ru
 					return
 				}
 				tunnel.ready = true
-				a.appendActivity("MCP tunnel ready. Its secret link and expiry are shown in a non-persisted dialog. /mcp tunnel stop revokes it.")
-				a.showMCPTunnelLink(p)
+				a.appendActivity("MCP tunnel ready. Its masked link is pinned above the input; F7 shows/hides the token, F8 copies the revealed link. /mcp tunnel stop revokes it.")
+				a.setMCPTunnelLink(p)
 				a.refreshContextBar()
 			})
 		})
@@ -84,10 +89,8 @@ func (a *App) runMCPTunnel(ctx context.Context, tunnel *interactiveMCPTunnel, ru
 			if a.mcpTunnel != tunnel {
 				return
 			}
+			a.clearMCPTunnelBar()
 			a.mcpTunnel = nil
-			if a.pages != nil {
-				a.pages.RemovePage("mcp-tunnel-link")
-			}
 			if err != nil && !wasCanceled {
 				a.appendActivity("MCP tunnel failed: " + tview.Escape(err.Error()))
 			} else {
@@ -98,20 +101,6 @@ func (a *App) runMCPTunnel(ctx context.Context, tunnel *interactiveMCPTunnel, ru
 	}()
 }
 
-func (a *App) showMCPTunnelLink(p mcpserver.Publication) {
-	if a.pages == nil {
-		return
-	}
-	expiry := p.ExpiresAt
-	if t, err := time.Parse(time.RFC3339, expiry); err == nil {
-		expiry = t.Local().Format("2006-01-02 15:04:05 MST")
-	}
-	modal := tview.NewModal().SetText(tview.Escape(fmt.Sprintf("Secret MCP tunnel URL:\n%s\n\nExpires: %s\nThe link is the credential. Keep it private.\nSudo remains user-gated in this TUI.\n/mcp tunnel stop revokes access.", p.URL, expiry))).AddButtons([]string{"Close"})
-	modal.SetDoneFunc(func(_ int, _ string) { a.pages.RemovePage("mcp-tunnel-link"); a.restoreDefaultFocus() })
-	a.pages.AddPage("mcp-tunnel-link", modal, true, true)
-	a.focusOrQueue(modal)
-}
-
 // Shutdown must not wait for UI callbacks: the event loop may already be gone.
 // Relay.Run cancels outstanding tools/prompts and attempts DELETE before done.
 func (a *App) shutdownMCPTunnel() {
@@ -119,6 +108,8 @@ func (a *App) shutdownMCPTunnel() {
 		return
 	}
 	a.mcpTunnel.cancel()
+	// The event loop has exited, so scrub UI buffers without rebuilding it.
+	a.scrubMCPTunnelLink()
 	// Bound exit if a third-party tool fails to honor cancellation. The relay
 	// stops heartbeats on cancellation; its lease still expires if DELETE fails.
 	select {

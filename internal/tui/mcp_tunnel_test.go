@@ -97,11 +97,12 @@ func TestMCPTunnelLinkNotPersisted(t *testing.T) {
 	a, _ := startSimApp(t)
 	const secret = "https://api.tjcoder.com/mcp/hosts/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	onLoop(t, a, func() {
-		a.showMCPTunnelLink(mcpserver.Publication{URL: secret, ExpiresAt: "2026-11-07T09:00:00Z"})
+		a.mcpTunnel = &interactiveMCPTunnel{}
+		a.setMCPTunnelLink(mcpserver.Publication{URL: secret, ExpiresAt: "2026-11-07T09:00:00Z"})
 		if strings.Contains(a.activityLogText(), secret) {
 			t.Error("secret persisted in activity")
 		}
-		a.pages.RemovePage("mcp-tunnel-link")
+		a.clearMCPTunnelBar()
 	})
 }
 
@@ -226,7 +227,6 @@ func TestMCPTunnelLifecycleWithoutPublicSession(t *testing.T) {
 	})
 	waitFor(t, a, "tunnel ready", func() bool { return a.mcpTunnel != nil && a.mcpTunnel.ready })
 	onLoop(t, a, func() {
-		a.pages.RemovePage("mcp-tunnel-link")
 		a.handleMCPTunnel([]string{"stop"})
 	})
 	select {

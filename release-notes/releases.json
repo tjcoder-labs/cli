@@ -3,6 +3,34 @@
   "schema_version": 1,
   "releases": [
     {
+      "version": "0.9.263",
+      "date": "2026-11-07",
+      "title": "Pinned, copyable interactive MCP tunnel links",
+      "summary": "Interactive /mcp tunnel now pins its link above the chat input instead of overlaying a dialog, so copying does not collect chat text behind it.",
+      "changes": {
+        "changed": [
+          {
+            "text": "The tunnel link stays in its own full-width, themed bar above the input. The URL has separate rows without transcript or side-panel text behind them; resizing and fullscreen keep it pinned."
+          }
+        ],
+        "added": [
+          {
+            "text": "F7 reveals or hides the secret token (hidden by default). After revealing it, F8 requests an exact full-link clipboard copy through the terminal, even when the URL wraps.",
+            "details": "The bar documents both keys. If terminal clipboard support is unavailable, select the revealed URL-only rows instead. On keyboards using media function keys, use Fn+F7/F8."
+          }
+        ],
+        "security": [
+          {
+            "text": "The secret remains in memory only, never activity/history. Stop immediately removes and scrubs the bar; TUI exit scrubs it and revokes as before. Copying requires explicitly revealing the token first."
+          }
+        ]
+      },
+      "notes": [
+        "The link is the credential. Clipboard managers, terminal recording and screenshots can retain a revealed/copied link; keep it private and stop the tunnel to revoke it.",
+        "Standalone tunnel pretty-printing, local stdio and sudo policy are unchanged. Restart the TUI after updating to use the new bar."
+      ]
+    },
+    {
       "version": "0.9.262",
       "date": "2026-11-07",
       "title": "Themed activity for standalone MCP tunnels",

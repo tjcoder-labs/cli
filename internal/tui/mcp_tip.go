@@ -38,7 +38,7 @@ func (a *App) mcpTip(text string) string {
 			if !a.mcpTunnel.ready {
 				return "MCP tunnel is connecting; /mcp tunnel stop cancels it. The link will be the credential."
 			}
-			return "/mcp tunnel stop — revoke access. The link is the credential; sudo remains user-gated in this TUI."
+			return "/mcp tunnel stop — revoke access. F7 show/hide; F8 copy revealed link. The link is the credential; sudo remains user-gated."
 		}
 		if len(parts) > 2 && parts[2] == "stop" {
 			return "/mcp tunnel stop — no tunnel is running."
