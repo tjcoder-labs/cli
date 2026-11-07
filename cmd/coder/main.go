@@ -94,6 +94,14 @@ var (
 )
 
 func main() {
+	// MCP stdout is a protocol; bypass telemetry, banners and provider startup.
+	if len(os.Args) > 1 && os.Args[1] == "mcp" {
+		if err := mcpCommand(os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
 	// Native Messaging must run before flags, provider setup and telemetry: stdout
 	// is a framed protocol, never a CLI banner. Validate even foreign origins.
 	if len(os.Args) > 1 && strings.HasPrefix(os.Args[1], "chrome-extension://") {

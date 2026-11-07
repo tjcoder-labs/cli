@@ -4,6 +4,24 @@
 
 All notable changes to Coder CLI. The source of truth is [release-notes/releases.json](release-notes/releases.json).
 
+## 0.9.258 — 2026-11-07
+
+**Ephemeral public MCP host sessions.** Publish Coder’s local interactive toolset to a remote MCP consumer with a short-lived, authenticated outbound relay.
+
+### Added
+
+- coder mcp publishes the default interactive tool registry, including files, shell, browser, tasks and memories. coder mcp --stdio serves local newline-delimited JSON-RPC without a relay.
+- Public sessions use an outbound HTTPS stream, distinct host and invocation capabilities, 10-second heartbeats, 30-second leases and a one-hour hard expiry.
+
+### Security
+
+- Session-bound Bearer credentials, no public local listener or credential persistence, bounded messages/concurrency and disconnect revocation. Existing workspace rules and sudo denial remain.
+
+### Known limits
+
+- No Slack integration or re-export of Ergo server tools. Publishing deliberately delegates local tool use to the capability holder; this is not an OS sandbox.
+- Requires the new api.tjcoder.com host-session routes. Resources, prompts, sampling, TUI attachment, imported MCP tool re-export, OAuth discovery and newer MCP revisions are not included.
+
 ## 0.9.257 — 2026-11-07
 
 **Local MCP servers and connection visibility.** Complete the MCP client with stdio support, persistent argv configuration, tool listings and connection status.
