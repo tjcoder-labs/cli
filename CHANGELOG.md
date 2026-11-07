@@ -4,6 +4,23 @@
 
 All notable changes to Coder CLI. The source of truth is [release-notes/releases.json](release-notes/releases.json).
 
+## 0.9.256 — 2026-11-06
+
+**Interactive browser relay built into Coder.** Interactive Coder registers its own executable and keeps the local browser relay running until the TUI exits.
+
+### Added
+
+- Interactive native browser relay and coder browser-host register/unregister; no separate host binary required.
+
+### Security
+
+- Exact extension origin validation, separate owner-only Unix command and extension sockets, and session-bound cleanup; CDP remains unchanged.
+
+### Known limits
+
+- Load the Coder Browser Bridge extension and reconnect after starting interactive coder. No automatic browser launch, public listener, or stealth-to-CDP fallback.
+- One interactive browser relay per OS user. Same-user processes remain trusted; Windows native registration is unsupported.
+
 ## 0.9.255 — 2026-11-06
 
 **Fail closed for private browser tabs.** Private-window requests must explicitly use the stealth extension transport.

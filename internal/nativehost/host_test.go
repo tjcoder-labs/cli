@@ -39,7 +39,7 @@ func TestFraming(t *testing.T) {
 	}
 }
 func TestRejectOrigin(t *testing.T) {
-	if Serve("chrome-extension://evil/", bytes.NewReader(nil), io.Discard, filepath.Join(t.TempDir(), "sock")) == nil {
+	if serveExtension("chrome-extension://evil/", bytes.NewReader(nil), io.Discard, filepath.Join(t.TempDir(), "sock")) == nil {
 		t.Fatal("accepted bad origin")
 	}
 }
@@ -48,7 +48,7 @@ func startFake(t *testing.T, path string, incognito bool) (func(), <-chan error)
 	hostIn, extOut := io.Pipe()
 	extIn, hostOut := io.Pipe()
 	done := make(chan error, 1)
-	go func() { done <- Serve("chrome-extension://"+ExtensionID+"/", hostIn, hostOut, path) }()
+	go func() { done <- serveExtension("chrome-extension://"+ExtensionID+"/", hostIn, hostOut, path) }()
 	hello, _ := json.Marshal(map[string]any{"method": "Bridge.hello", "params": map[string]bool{"incognito": incognito}})
 	if e := WriteFrame(extOut, hello); e != nil {
 		t.Fatal(e)
@@ -139,7 +139,7 @@ func TestCorrelationAndPrivateRouting(t *testing.T) {
 	// A second same-profile host must not replace the existing socket.
 	var hello bytes.Buffer
 	WriteFrame(&hello, []byte(`{"method":"Bridge.hello"}`))
-	if e := Serve("chrome-extension://"+ExtensionID+"/", bufio.NewReader(&hello), io.Discard, path); e == nil {
+	if e := serveExtension("chrome-extension://"+ExtensionID+"/", bufio.NewReader(&hello), io.Discard, path); e == nil {
 		t.Fatal("replaced live host")
 	}
 }

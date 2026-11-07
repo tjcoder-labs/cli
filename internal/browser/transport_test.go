@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"github.com/gorilla/websocket"
 	"github.com/tjcoder-labs/cli/internal/nativehost"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -14,9 +15,11 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestRawCDPWireCompatibility(t *testing.T) {
+	t.Setenv("HOME", t.TempDir()) // no native relay/extension exists for CDP
 	var server *httptest.Server
 	upgrader := websocket.Upgrader{}
 	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -107,5 +110,60 @@ func TestNativeClientDispatch(t *testing.T) {
 	b, e := c.Call(context.Background(), "Bridge.ping", nil)
 	if e != nil || !strings.Contains(string(b), "true") {
 		t.Fatal(string(b), e)
+	}
+}
+
+func TestStealthUsesInteractiveSession(t *testing.T) {
+	home, e := os.MkdirTemp("", "coder-browser-")
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer os.RemoveAll(home)
+	t.Setenv("HOME", home)
+	s, e := nativehost.StartSession(nativehost.SocketPath())
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer s.Close()
+	c, e := ConnectNative(context.Background(), "stealth")
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer c.Close()
+	if _, e = c.Call(context.Background(), "Bridge.ping", nil); e == nil || !strings.Contains(e.Error(), "extension not connected") {
+		t.Fatalf("expected extension unavailable, got %v", e)
+	}
+	hostIn, extOut := io.Pipe()
+	extIn, hostOut := io.Pipe()
+	defer hostIn.Close()
+	defer extOut.Close()
+	defer extIn.Close()
+	defer hostOut.Close()
+	go nativehost.Serve(nativehost.Origin, hostIn, hostOut, "")
+	nativehost.WriteFrame(extOut, []byte(`{"method":"Bridge.hello"}`))
+	go func() {
+		for {
+			b, e := nativehost.ReadFrame(extIn)
+			if e != nil {
+				return
+			}
+			var req map[string]any
+			json.Unmarshal(b, &req)
+			b, _ = json.Marshal(map[string]any{"id": req["id"], "result": map[string]bool{"connected": true}})
+			if nativehost.WriteFrame(extOut, b) != nil {
+				return
+			}
+		}
+	}()
+	deadline := time.Now().Add(time.Second)
+	for {
+		b, e := c.Call(context.Background(), "Bridge.ping", nil)
+		if e == nil && strings.Contains(string(b), "true") {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal(string(b), e)
+		}
+		time.Sleep(time.Millisecond)
 	}
 }

@@ -3,6 +3,28 @@
   "schema_version": 1,
   "releases": [
     {
+      "version": "0.9.256",
+      "date": "2026-11-06",
+      "title": "Interactive browser relay built into Coder",
+      "summary": "Interactive Coder registers its own executable and keeps the local browser relay running until the TUI exits.",
+      "changes": {
+        "added": [
+          {
+            "text": "Interactive native browser relay and coder browser-host register/unregister; no separate host binary required."
+          }
+        ],
+        "security": [
+          {
+            "text": "Exact extension origin validation, separate owner-only Unix command and extension sockets, and session-bound cleanup; CDP remains unchanged."
+          }
+        ]
+      },
+      "notes": [
+        "Load the Coder Browser Bridge extension and reconnect after starting interactive coder. No automatic browser launch, public listener, or stealth-to-CDP fallback.",
+        "One interactive browser relay per OS user. Same-user processes remain trusted; Windows native registration is unsupported."
+      ]
+    },
+    {
       "version": "0.9.255",
       "date": "2026-11-06",
       "title": "Fail closed for private browser tabs",

@@ -35,11 +35,13 @@ run-coder: build-coder
 install: build-coder
 	@PREFIX="$${PREFIX:-$$HOME/.local/bin}"; \
 	mkdir -p "$$PREFIX" || { echo "cannot create $$PREFIX (try PREFIX=$$HOME/.local/bin or run with sudo)"; exit 1; }; \
-	install -m 0755 $(CODER_BIN) "$$PREFIX/coder"; \
+	install -m 0755 $(CODER_BIN) "$$PREFIX/coder" || exit 1; \
+	"$$PREFIX/coder" browser-host register || exit 1; \
 	echo "installed $$PREFIX/coder (v$(VERSION))"
 
 uninstall:
 	@PREFIX="$${PREFIX:-$$HOME/.local/bin}"; \
+	if [ -x "$$PREFIX/coder" ]; then "$$PREFIX/coder" browser-host unregister || exit 1; fi; \
 	rm -f "$$PREFIX/coder" && echo "removed $$PREFIX/coder"
 
 fmt:

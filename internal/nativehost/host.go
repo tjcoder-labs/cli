@@ -21,7 +21,7 @@ const MaxFrame = 1024 * 1024
 
 func SocketPath() string {
 	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".local", "share", "coder", "browser.sock")
+	return filepath.Join(home, ".local", "share", "coder", "browser-relay", "browser.sock")
 }
 
 func ReadFrame(r io.Reader) ([]byte, error) {
@@ -67,9 +67,9 @@ type request struct {
 	Transport string          `json:"transport,omitempty"`
 }
 
-// Serve validates Chrome's origin argument before opening any listener. The socket's
+// serveExtension validates the forwarded origin before opening backend sockets. The socket's
 // parent directory and socket are owner-only. A live host is never replaced.
-func Serve(origin string, input io.Reader, output io.Writer, path string) error {
+func serveExtension(origin string, input io.Reader, output io.Writer, path string) error {
 	if origin != "chrome-extension://"+ExtensionID+"/" {
 		return fmt.Errorf("untrusted native messaging origin")
 	}
@@ -125,7 +125,19 @@ func Serve(origin string, input io.Reader, output io.Writer, path string) error 
 	var seq atomic.Int64
 	done := make(chan struct{})
 	var once sync.Once
-	stop := func() { once.Do(func() { close(done); listener.Close() }) }
+	var clientsMu sync.Mutex
+	clients := map[net.Conn]bool{}
+	stop := func() {
+		once.Do(func() {
+			close(done)
+			listener.Close()
+			clientsMu.Lock()
+			defer clientsMu.Unlock()
+			for c := range clients {
+				c.Close()
+			}
+		})
+	}
 	defer stop()
 	go func() {
 		defer stop()
@@ -159,8 +171,18 @@ func Serve(origin string, input io.Reader, output io.Writer, path string) error 
 				return e
 			}
 		}
+		clientsMu.Lock()
+		select {
+		case <-done:
+			conn.Close()
+			clientsMu.Unlock()
+			return nil
+		default:
+		}
+		clients[conn] = true
+		clientsMu.Unlock()
 		go func(c net.Conn) {
-			defer c.Close()
+			defer func() { c.Close(); clientsMu.Lock(); delete(clients, c); clientsMu.Unlock() }()
 			scan := bufio.NewScanner(c)
 			scan.Buffer(make([]byte, 4096), MaxFrame)
 			for scan.Scan() {
@@ -263,8 +285,24 @@ func Register(binaryPath string) ([]string, error) {
 			return nil, err
 		}
 		p := filepath.Join(dir, HostID+".json")
-		if err = os.WriteFile(p, append(b, '\n'), 0600); err != nil {
-			return nil, err
+		// Atomic replacement avoids following an existing manifest symlink and
+		// never exposes a partially written registration to Chrome.
+		f, e := os.CreateTemp(dir, ".coder-host-*")
+		if e != nil {
+			return nil, e
+		}
+		tmp := f.Name()
+		_, e = f.Write(append(b, '\n'))
+		closeErr := f.Close()
+		if e == nil {
+			e = closeErr
+		}
+		if e == nil {
+			e = os.Rename(tmp, p)
+		}
+		os.Remove(tmp)
+		if e != nil {
+			return nil, e
 		}
 		paths = append(paths, p)
 	}
@@ -301,4 +339,40 @@ func forwardPrivateReady(path string, b []byte) (json.RawMessage, error) {
 		}
 		time.Sleep(25 * time.Millisecond)
 	}
+}
+
+// Unregister only removes manifests pointing at this installation.
+func Unregister(binaryPath string) error {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+	binaryPath, err = filepath.Abs(binaryPath)
+	if err != nil {
+		return err
+	}
+	dirs := []string{filepath.Join(home, ".config/google-chrome/NativeMessagingHosts"), filepath.Join(home, ".config/chromium/NativeMessagingHosts")}
+	if runtime.GOOS == "darwin" {
+		dirs = []string{filepath.Join(home, "Library/Application Support/Google/Chrome/NativeMessagingHosts"), filepath.Join(home, "Library/Application Support/Chromium/NativeMessagingHosts")}
+	}
+	for _, dir := range dirs {
+		p := filepath.Join(dir, HostID+".json")
+		b, e := os.ReadFile(p)
+		if os.IsNotExist(e) {
+			continue
+		}
+		if e != nil {
+			return e
+		}
+		var m struct {
+			Path string `json:"path"`
+		}
+		if json.Unmarshal(b, &m) != nil || m.Path != binaryPath {
+			continue
+		}
+		if e = os.Remove(p); e != nil {
+			return e
+		}
+	}
+	return nil
 }

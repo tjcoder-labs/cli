@@ -22,6 +22,7 @@ import (
 	"github.com/tjcoder-labs/cli/internal/browser"
 	"github.com/tjcoder-labs/cli/internal/client"
 	ctxpkg "github.com/tjcoder-labs/cli/internal/context"
+	"github.com/tjcoder-labs/cli/internal/nativehost"
 	"github.com/tjcoder-labs/cli/internal/reminders"
 	"github.com/tjcoder-labs/cli/internal/session"
 	"github.com/tjcoder-labs/cli/internal/telemetry"
@@ -93,6 +94,23 @@ var (
 )
 
 func main() {
+	// Native Messaging must run before flags, provider setup and telemetry: stdout
+	// is a framed protocol, never a CLI banner. Validate even foreign origins.
+	if len(os.Args) > 1 && strings.HasPrefix(os.Args[1], "chrome-extension://") {
+		if err := nativehost.Serve(os.Args[1], os.Stdin, os.Stdout, ""); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
+	if len(os.Args) > 1 && os.Args[1] == "browser-host" {
+		if err := browserHostCommand(os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	// Hidden SSH_ASKPASS helper: relays an ssh prompt to the running TUI
 	// over its private socket. Must run before flag parsing and
 	// telemetry; it prints only the answer, for ssh.
@@ -127,6 +145,11 @@ func main() {
 	flag.StringVar(askFormat, "output-format", "", "alias for --format (overrides --format when set)")
 	askAllowSudo := flag.Bool("allow-sudo", false, "headless ask mode: let run_command use sudo non-interactively (sudo -n; never prompts for a password)")
 
+	flag.Usage = func() {
+		fmt.Fprintln(flag.CommandLine.Output(), "Usage: coder [flags] | coder ask [text] | coder browser-host register|unregister")
+		fmt.Fprintln(flag.CommandLine.Output(), "Interactive coder automatically registers its executable and runs a private local browser relay; Chrome still needs the Coder Browser Bridge extension. CDP remains the default.")
+		flag.PrintDefaults()
+	}
 	flag.Parse()
 
 	var explicitAgent, explicitModel, explicitNoTools, explicitAllTools, explicitProvider bool
@@ -300,7 +323,7 @@ func main() {
 	app := tui.New(provider, registry, filepath.Clean(*workspaceRoot), modelOverride, productName, author, version)
 	app.SetObserver(telemetry.RunnerObserver{})
 	telemetry.Track("session_started", map[string]any{"provider_type": tui.ProviderType(provider), "mode": "tui"})
-	if err := app.Run(); err != nil {
+	if err := runInteractiveBrowser(app.Run); err != nil {
 		fatal("%v", err)
 	}
 }
