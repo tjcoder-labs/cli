@@ -572,7 +572,7 @@ func New(provider client.Provider, registry *tools.Registry, workspaceRoot, mode
 		registry:      registry,
 		runner:        &tooling.Runner{Provider: provider, Registry: registry, WorkspaceRoot: workspaceRoot, MaxSteps: cfg.ToolMax},
 		steeringCh:    make(chan string, 16),
-		mcpClient:     mcp.NewClient(),
+		mcpClient:     mcp.NewClient(appVersion),
 		sessionState:  state,
 		workspaceRoot: workspaceRoot,
 		productName:   productName,
@@ -647,16 +647,7 @@ func (a *App) loadMCPServers() {
 		if !sc.Enabled {
 			continue
 		}
-		if sc.Type != "" && sc.Type != "sse" {
-			a.appendActivity(fmt.Sprintf("[%s::b]✗ MCP %s skipped[-::B]: transport %q not yet supported (only \"sse\")",
-				a.palette.HexAlert, name, sc.Type))
-			continue
-		}
-		if sc.URL == "" {
-			a.appendActivity(fmt.Sprintf("[%s::b]✗ MCP %s skipped[-::B]: missing url", a.palette.HexAlert, name))
-			continue
-		}
-		if err := a.mcpClient.AddServer(name, sc.URL); err != nil {
+		if err := a.mcpClient.AddServerConfig(name, sc); err != nil {
 			a.appendActivity(fmt.Sprintf("[%s::b]✗ MCP %s failed[-::B]: %v", a.palette.HexAlert, name, err))
 			continue
 		}
@@ -666,6 +657,9 @@ func (a *App) loadMCPServers() {
 }
 
 func (a *App) Run() error {
+	if a.mcpClient != nil {
+		defer a.mcpClient.Close()
+	}
 	defer a.closeWorkspaces()
 	defer a.stopRemindersWatch()
 	defer a.saveSession()
@@ -2231,6 +2225,15 @@ func (a *App) handleProvidersCommand(parts []string) {
 
 func (a *App) handleSlashCommand(cmd string) {
 	parts := strings.Fields(strings.TrimPrefix(cmd, "/"))
+	if len(parts) > 0 && strings.EqualFold(parts[0], "mcp") {
+		var err error
+		parts, err = splitMCPArgs(strings.TrimPrefix(cmd, "/"))
+		if err != nil {
+			a.appendActivity(err.Error())
+			return
+		}
+	}
+
 	if len(parts) == 0 {
 		return
 	}
@@ -5434,7 +5437,7 @@ func (a *App) referenceSummary() string {
 
 func (a *App) handleMCPCommand(parts []string) {
 	if len(parts) < 2 {
-		a.appendActivity("Usage: /mcp [add|list|remove] [args...]")
+		a.appendActivity("Usage: /mcp [add|list|status|remove] [args...]")
 		return
 	}
 
@@ -5442,12 +5445,20 @@ func (a *App) handleMCPCommand(parts []string) {
 	switch action {
 	case "add":
 		if len(parts) < 4 {
-			a.appendActivity("Usage: /mcp add <name> <url>")
+			a.appendActivity("Usage: /mcp add <name> <url|command> [args...]")
 			return
 		}
 		name := parts[2]
-		url := parts[3]
-		err := a.mcpClient.AddServer(name, url)
+		target := parts[3]
+		sc := MCPServerConfig{Type: "stdio", Command: target, Args: append([]string(nil), parts[4:]...), Enabled: true}
+		if strings.HasPrefix(strings.ToLower(target), "http://") || strings.HasPrefix(strings.ToLower(target), "https://") {
+			if len(parts) != 4 {
+				a.appendActivity("HTTP MCP URLs do not accept command arguments.")
+				return
+			}
+			sc = MCPServerConfig{Type: "sse", URL: target, Enabled: true}
+		}
+		err := a.mcpClient.AddServerConfig(name, sc)
 		if err != nil {
 			a.appendActivity(fmt.Sprintf("[%s::b]✗ MCP add failed[-::B]: %v", a.palette.HexAlert, err))
 			return
@@ -5459,11 +5470,7 @@ func (a *App) handleMCPCommand(parts []string) {
 		if a.config.MCPServers == nil {
 			a.config.MCPServers = make(map[string]MCPServerConfig)
 		}
-		a.config.MCPServers[name] = MCPServerConfig{
-			Type:    "sse",
-			URL:     url,
-			Enabled: true,
-		}
+		a.config.MCPServers[name] = sc
 		if saveErr := a.saveConfig(a.config); saveErr != nil {
 			a.appendActivity(fmt.Sprintf("[%s::b]✗ MCP %s added in-memory but config save failed[-::B]: %v",
 				a.palette.HexAlert, name, saveErr))
@@ -5471,22 +5478,62 @@ func (a *App) handleMCPCommand(parts []string) {
 		}
 		a.appendActivity(fmt.Sprintf("Successfully added MCP server [%s]%s[-] and registered tools", a.palette.HexLavender, name))
 
-	case "list":
-		servers := a.mcpClient.GetServers()
-		if len(servers) == 0 {
+	case "list", "status":
+		statuses := a.mcpClient.Statuses()
+		for name, sc := range a.config.MCPServers {
+			if _, exists := statuses[name]; !exists {
+				typ := sc.Type
+				if typ == "" {
+					typ = "sse"
+				}
+				statuses[name] = mcp.ServerStatus{Name: name, Type: typ, Target: sc.Target()}
+			}
+		}
+		if len(statuses) == 0 {
 			a.appendActivity("No MCP servers configured.")
 			return
 		}
-		var b strings.Builder
-		b.WriteString("Active MCP Servers:\n")
-		for name, s := range servers {
-			status := "enabled"
-			if !s.IsEnabled {
-				status = "disabled"
-			}
-			b.WriteString(fmt.Sprintf("- %s (%s) [%s]\n", name, status, s.URL))
+		names := make([]string, 0, len(statuses))
+		for name := range statuses {
+			names = append(names, name)
 		}
-		a.appendActivity(b.String())
+		sort.Strings(names)
+		var b strings.Builder
+		b.WriteString("MCP Servers (last observed status):\n")
+		for _, name := range names {
+			status := statuses[name]
+			state := "disconnected"
+			if status.Connected {
+				state = "connected"
+			}
+			if sc, ok := a.config.MCPServers[name]; ok && !sc.Enabled {
+				state = "disconnected (disabled)"
+			}
+			fmt.Fprintf(&b, "- %s | %s | %s | %s | %d tools\n", name, status.Type, status.Target, state, status.ToolCount)
+			if status.LastError != "" {
+				fmt.Fprintf(&b, "  Last error: %s\n", status.LastError)
+			}
+			if action == "list" {
+				defs := a.mcpClient.GetToolsForServer(name)
+				toolNames := make([]string, 0, len(defs))
+				for toolName := range defs {
+					toolNames = append(toolNames, toolName)
+				}
+				sort.Strings(toolNames)
+				for _, toolName := range toolNames {
+					description := strings.Join(strings.Fields(defs[toolName].Description), " ")
+					if runes := []rune(description); len(runes) > 120 {
+						description = string(runes[:117]) + "..."
+					}
+					fmt.Fprintf(&b, "  - %s", toolName)
+					if description != "" {
+						fmt.Fprintf(&b, ": %s", description)
+					}
+					b.WriteByte('\n')
+				}
+			}
+		}
+		a.appendActivity(tview.Escape(b.String()))
 
 	case "remove":
 		if len(parts) < 3 {
@@ -5495,8 +5542,10 @@ func (a *App) handleMCPCommand(parts []string) {
 		}
 		name := parts[2]
 		if err := a.mcpClient.RemoveServer(name); err != nil {
-			a.appendActivity(fmt.Sprintf("[%s::b]✗ MCP remove failed[-::B]: %v", a.palette.HexAlert, err))
-			return
+			if _, configured := a.config.MCPServers[name]; !configured {
+				a.appendActivity(fmt.Sprintf("[%s::b]✗ MCP remove failed[-::B]: %v", a.palette.HexAlert, err))
+				return
+			}
 		}
 		// Drop the mcp_{name}_* tools from the agent's tool set so
 		// they stop being offered as available functions.
@@ -5513,6 +5562,6 @@ func (a *App) handleMCPCommand(parts []string) {
 		a.appendActivity(fmt.Sprintf("Removed MCP server [%s]%s[-]", a.palette.HexLavender, name))
 
 	default:
-		a.appendActivity("Unknown MCP action. Use add, list, or remove.")
+		a.appendActivity("Unknown MCP action. Use add, list, status, or remove.")
 	}
 }

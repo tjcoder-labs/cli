@@ -4,6 +4,27 @@
 
 All notable changes to Coder CLI. The source of truth is [release-notes/releases.json](release-notes/releases.json).
 
+## 0.9.257 — 2026-11-07
+
+**Local MCP servers and connection visibility.** Complete the MCP client with stdio support, persistent argv configuration, tool listings and connection status.
+
+### Added
+
+- Connect local MCP servers with /mcp add &lt;name&gt; &lt;command&gt; [args...], restore them from config and stop their processes on removal or shutdown. (`/mcp`)
+- /mcp list includes discovered tools and descriptions; /mcp status reports transport, target, last-observed connection state, tool count and errors.
+
+### Fixed
+
+- MCP initialization reports the running CLI version and initialized notifications omit the JSON-RPC id.
+
+### Security
+
+- Stdio uses newline-delimited JSON-RPC and direct argv execution with a restricted inherited environment; no shell or implicit credential forwarding.
+
+### Known limits
+
+- MCP_SPEC.md documents a proposed authenticated, ephemeral coder mcp gateway through api.tjcoder.com, based on ergo-ai-server tunnel/auth code. The tunnel, new routes and coder mcp subcommand are not implemented.
+
 ## 0.9.256 — 2026-11-06
 
 **Interactive browser relay built into Coder.** Interactive Coder registers its own executable and keeps the local browser relay running until the TUI exits.

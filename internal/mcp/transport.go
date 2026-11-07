@@ -19,14 +19,22 @@ import (
 // initialize.result.protocolVersion.
 const protocolVersion = "2024-11-05"
 
-// userAgent identifies us to the upstream server. Servers can use
-// it for logs and for routing compatibility decisions.
-const userAgent = "tjcoder-cli/0.9 (+https://tjcoder.com)"
+// clientVersion uses the running CLI version supplied by its entry point.
+func clientVersion(versions []string) string {
+	if len(versions) > 0 && versions[0] != "" {
+		return versions[0]
+	}
+	return "dev"
+}
+
+func initializeParams(version string) map[string]any {
+	return map[string]any{"protocolVersion": protocolVersion, "capabilities": map[string]any{}, "clientInfo": map[string]any{"name": "tjcoder-cli", "version": version}}
+}
 
 // JSONRPCRequest represents a standard MCP JSON-RPC request.
 type JSONRPCRequest struct {
 	JSONRPC string          `json:"jsonrpc"`
-	ID      interface{}     `json:"id"`
+	ID      interface{}     `json:"id,omitempty"`
 	Method  string          `json:"method"`
 	Params  json.RawMessage `json:"params,omitempty"`
 }
@@ -34,7 +42,7 @@ type JSONRPCRequest struct {
 // JSONRPCResponse represents a standard MCP JSON-RPC response.
 type JSONRPCResponse struct {
 	JSONRPC string          `json:"jsonrpc"`
-	ID      interface{}     `json:"id"`
+	ID      interface{}     `json:"id,omitempty"`
 	Result  json.RawMessage `json:"result,omitempty"`
 	Error   *JSONRPCError   `json:"error,omitempty"`
 }
@@ -44,6 +52,8 @@ type JSONRPCError struct {
 	Message string `json:"message"`
 }
 
+func (e *JSONRPCError) Error() string { return fmt.Sprintf("MCP error (%d): %s", e.Code, e.Message) }
+
 // Transport wraps a single HTTP endpoint speaking the MCP
 // Streamable HTTP transport (a.k.a. MCP-over-SSE). Responses are
 // framed as `event: message\r\ndata: <json>\r\n\r\n` even for
@@ -51,57 +61,43 @@ type JSONRPCError struct {
 type Transport struct {
 	httpClient *http.Client
 	endpoint   string
+	version    string
 
 	// initOnce guards the initialize/initialized handshake so it
 	// only runs once per transport lifetime. Servers may reject
 	// subsequent calls without a successful handshake.
 	initOnce sync.Once
 	initErr  error
-	// initInProgress is true while the handshake itself is being
-	// sent. It lets SendRequest skip the handshake when the call
-	// in flight is the handshake's own "initialize" request, which
-	// would otherwise recurse and deadlock on sync.Once.
-	initInProgress bool
 }
 
 // NewTransport builds a Transport pointed at endpoint. The handshake
 // is deferred until the first SendRequest call so callers don't pay
 // for a round-trip they may not need (e.g. on construction-only
 // scenarios).
-func NewTransport(endpoint string) *Transport {
+func NewTransport(endpoint string, versions ...string) *Transport {
 	return &Transport{
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
 		endpoint: endpoint,
+		version:  clientVersion(versions),
 	}
 }
 
 // initialize performs the MCP handshake:
-//   1. POST {"method": "initialize", ...} → server returns capabilities
-//   2. POST {"method": "notifications/initialized"} → ack
+//  1. POST {"method": "initialize", ...} → server returns capabilities
+//  2. POST {"method": "notifications/initialized"} → ack
+//
 // We do (2) without expecting a body in the response. Per the spec,
 // notifications have no id and receive either 202 Accepted or 200 OK
 // with an empty body.
 //
-// The handshake is guarded by initOnce AND by an explicit in-progress
-// flag so that the recursive SendRequest call for "initialize" itself
-// doesn't re-enter the handshake. sync.Once.Do is not re-entrant.
+// The handshake uses sendRaw directly so sync.Once is never re-entered.
 func (t *Transport) initialize(ctx context.Context) error {
 	t.initOnce.Do(func() {
-		t.initInProgress = true
-		defer func() { t.initInProgress = false }()
-
-		initParams := map[string]any{
-			"protocolVersion": protocolVersion,
-			"capabilities":    map[string]any{},
-			"clientInfo": map[string]any{
-				"name":    "tjcoder-cli",
-				"version": "0.9",
-			},
-		}
+		initParams := initializeParams(t.version)
 		var initResult json.RawMessage
-		if err := t.sendRaw(ctx, "initialize", initParams, false, &initResult); err != nil {
+		if err := t.sendRaw(ctx, "initialize", initParams, true, &initResult); err != nil {
 			t.initErr = fmt.Errorf("initialize handshake failed: %w", err)
 			return
 		}
@@ -113,8 +109,8 @@ func (t *Transport) initialize(ctx context.Context) error {
 	return t.initErr
 }
 
-// sendNotification posts a JSON-RPC request with id=0 (notifications
-// carry no id per the spec). We don't decode a response — the server
+// sendNotification posts a JSON-RPC notification without an id.
+// We don't decode a response — the server
 // replies with 202 Accepted and an empty body, which the SSE parser
 // would otherwise fail on.
 func (t *Transport) sendNotification(ctx context.Context, method string, params interface{}) error {
@@ -154,7 +150,7 @@ func (t *Transport) setCommonHeaders(req *http.Request) {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json, text/event-stream")
 	req.Header.Set("MCP-Protocol-Version", protocolVersion)
-	req.Header.Set("User-Agent", userAgent)
+	req.Header.Set("User-Agent", "tjcoder-cli/"+t.version+" (+https://tjcoder.com)")
 }
 
 // SendRequest performs a synchronous JSON-RPC call. If this is the
@@ -163,12 +159,8 @@ func (t *Transport) setCommonHeaders(req *http.Request) {
 // the server returns plain JSON instead, the body is unmarshaled
 // directly as a fallback.
 func (t *Transport) SendRequest(ctx context.Context, method string, params interface{}, responseTarget interface{}) error {
-	// Skip the handshake for the initialize call itself, and for
-	// any in-flight handshake (sync.Once is not re-entrant).
-	if !t.initInProgress {
-		if err := t.initialize(ctx); err != nil {
-			return err
-		}
+	if err := t.initialize(ctx); err != nil {
+		return err
 	}
 	return t.sendRaw(ctx, method, params, true, responseTarget)
 }
@@ -227,7 +219,7 @@ func (t *Transport) sendRaw(ctx context.Context, method string, params interface
 	}
 
 	if jsonResp.Error != nil {
-		return fmt.Errorf("MCP error (%d): %s", jsonResp.Error.Code, jsonResp.Error.Message)
+		return jsonResp.Error
 	}
 
 	if err := json.Unmarshal(jsonResp.Result, responseTarget); err != nil {
@@ -308,3 +300,9 @@ func encodeParams(params interface{}) json.RawMessage {
 	}
 	return b
 }
+
+// Close releases pooled HTTP connections.
+func (t *Transport) Close() error { t.httpClient.CloseIdleConnections(); return nil }
+
+// Err reports terminal transport errors (HTTP errors are tracked per call).
+func (t *Transport) Err() error { return nil }

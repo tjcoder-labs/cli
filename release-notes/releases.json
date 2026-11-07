@@ -3,6 +3,38 @@
   "schema_version": 1,
   "releases": [
     {
+      "version": "0.9.257",
+      "date": "2026-11-07",
+      "title": "Local MCP servers and connection visibility",
+      "summary": "Complete the MCP client with stdio support, persistent argv configuration, tool listings and connection status.",
+      "changes": {
+        "added": [
+          {
+            "text": "Connect local MCP servers with /mcp add <name> <command> [args...], restore them from config and stop their processes on removal or shutdown.",
+            "commands": [
+              "/mcp"
+            ]
+          },
+          {
+            "text": "/mcp list includes discovered tools and descriptions; /mcp status reports transport, target, last-observed connection state, tool count and errors."
+          }
+        ],
+        "fixed": [
+          {
+            "text": "MCP initialization reports the running CLI version and initialized notifications omit the JSON-RPC id."
+          }
+        ],
+        "security": [
+          {
+            "text": "Stdio uses newline-delimited JSON-RPC and direct argv execution with a restricted inherited environment; no shell or implicit credential forwarding."
+          }
+        ]
+      },
+      "notes": [
+        "MCP_SPEC.md documents a proposed authenticated, ephemeral coder mcp gateway through api.tjcoder.com, based on ergo-ai-server tunnel/auth code. The tunnel, new routes and coder mcp subcommand are not implemented."
+      ]
+    },
+    {
       "version": "0.9.256",
       "date": "2026-11-06",
       "title": "Interactive browser relay built into Coder",

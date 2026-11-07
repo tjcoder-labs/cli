@@ -18,6 +18,7 @@ import (
 //   - delegates every other method to `dispatch`, which the test
 //     supplies so it can assert on the request body and shape a
 //     response.
+//
 // All SSE responses are flushed so the client doesn't block waiting
 // for buffered bytes.
 func stubHandler(dispatch func(body string) (contentType string, payload string)) http.Handler {
@@ -175,5 +176,46 @@ func TestTransportNotFound(t *testing.T) {
 	err := tr.SendRequest(context.Background(), "tools/list", nil, &resp)
 	if err == nil || !strings.Contains(err.Error(), "404") {
 		t.Fatalf("expected 404 error, got %v", err)
+	}
+}
+
+func TestTransportRealVersionAndNotificationShape(t *testing.T) {
+	var version string
+	var notificationHasID bool
+	inner := stubHandler(func(_ string) (string, string) {
+		return "application/json", `{"jsonrpc":"2.0","id":1,"result":{"tools":[]}}`
+	})
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var req map[string]json.RawMessage
+		_ = json.Unmarshal(body, &req)
+		var method string
+		_ = json.Unmarshal(req["method"], &method)
+		if method == "initialize" {
+			var params struct {
+				ClientInfo struct {
+					Version string `json:"version"`
+				} `json:"clientInfo"`
+			}
+			_ = json.Unmarshal(req["params"], &params)
+			version = params.ClientInfo.Version
+		}
+		if method == "notifications/initialized" {
+			_, notificationHasID = req["id"]
+		}
+		r.Body = io.NopCloser(strings.NewReader(string(body)))
+		inner.ServeHTTP(w, r)
+	}))
+	defer ts.Close()
+	c := NewClient("0.9.257")
+	defer c.Close()
+	if err := c.AddServer("http", ts.URL); err != nil {
+		t.Fatal(err)
+	}
+	if version != "0.9.257" || notificationHasID {
+		t.Fatalf("version=%s notificationHasID=%v", version, notificationHasID)
+	}
+	if !c.Statuses()["http"].Connected {
+		t.Fatal("HTTP not connected")
 	}
 }

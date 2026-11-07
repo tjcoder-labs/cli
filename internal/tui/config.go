@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/tjcoder-labs/cli/internal/mcp"
 )
 
 // AppConfig is the persisted user-tunable configuration for the
@@ -50,7 +52,7 @@ type AppConfig struct {
 	Timezone string `json:"timezone,omitempty"`
 	// MCPServers is the persisted set of Model Context Protocol
 	// integrations. Each entry maps a stable name (used by /mcp
-	// add|list|remove and by the mcp_{server}_{tool} tool
+	// add|list|status|remove and by the mcp_{server}_{tool} tool
 	// namespace) onto the connection details. The /mcp slash
 	// command mutates this map; the /config JSON editor round-trips
 	// it verbatim.
@@ -60,18 +62,9 @@ type AppConfig struct {
 	CaptureDir string `json:"captureDir,omitempty"`
 }
 
-// MCPServerConfig is the on-disk shape of a single MCP integration.
-// `Type` is "sse" (HTTP) or "stdio" (local process). For SSE, URL is
-// required; for stdio, Command + Args describe how to launch the
-// process. The current transport in internal/mcp only implements
-// HTTP/SSE — stdio is parsed but not yet wired up; see MCP_SPEC.md.
-type MCPServerConfig struct {
-	Type    string   `json:"type"`              // "sse" or "stdio"
-	URL     string   `json:"url,omitempty"`     // for SSE
-	Command string   `json:"command,omitempty"` // for stdio
-	Args    []string `json:"args,omitempty"`    // for stdio
-	Enabled bool     `json:"enabled"`
-}
+// MCPServerConfig persists either an HTTP endpoint or a local argv and optional
+// explicitly supplied environment. Enabled entries reconnect at startup.
+type MCPServerConfig = mcp.ServerConfig
 
 // DefaultConfig returns a sane, zero-value config used when no
 // config file exists yet.
