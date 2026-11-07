@@ -3,6 +3,30 @@
   "schema_version": 1,
   "releases": [
     {
+      "version": "0.9.266",
+      "date": "2026-11-07",
+      "title": "Canvas-sized code excerpts and in-TUI settings from the software engineer",
+      "summary": "The software-engineer agent now sizes code and config excerpts to the live canvas, switches panes contextually with ui_control, and opens pickers and settings for you with invoke_cli_command.",
+      "changes": {
+        "added": [
+          {
+            "text": "tui_context now reports canvas_width_cols and canvas_visible_lines.",
+            "details": "Measured from the canvas viewport; when another panel is showing, the height is projected to the full right column the canvas will fill. Omitted before the layout is drawn."
+          }
+        ],
+        "changed": [
+          {
+            "text": "The software-engineer prompt sizes canvas excerpts to the viewport, accounting for wrapped long lines, and prefers the relevant function or config section over the whole file.",
+            "details": "It re-evaluates ui_control every turn: canvas for code, config and docs, tasks or memories after changes, activity otherwise."
+          },
+          {
+            "text": "The software engineer opens features, option pickers and settings (config, model, agent, providers, mcp) with invoke_cli_command instead of only telling you what to type.",
+            "details": "Destructive commands such as quit, clear, compact and logout still run only when you ask. ui_control and invoke_cli_command tool descriptions were updated to match."
+          }
+        ]
+      }
+    },
+    {
       "version": "0.9.265",
       "date": "2026-11-07",
       "title": "Persistent MCP tunnels, live banner status and /mcp completions",

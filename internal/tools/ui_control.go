@@ -30,16 +30,17 @@ func (uiControlTool) Definition() client.ToolDefinition {
 		Type: "function",
 		Function: client.FunctionDefinition{
 			Name: "ui_control",
-			Description: "Control the TUI right-hand panel to keep the display in sync with what you are doing. " +
-				"Panels: 'tasks' (task tracker), 'activity' (tool/activity log), 'articles', and 'canvas' " +
-				"(render a file, optionally a line range, for the user to read while you discuss or draft it). " +
-				"Show 'canvas' with path/start_line/end_line when presenting code; show 'tasks' when planning; " +
-				"otherwise show 'activity'. Re-evaluate every turn which panel best serves the user.",
+			Description: "Switch the TUI right-hand presentation pane to match what you are doing; re-evaluate every turn. " +
+				"Panels: 'canvas' (render a file, optionally a highlighted line range, while you discuss, edit, or draft code/config/docs), " +
+				"'tasks' (after task changes or while planning), 'memories' (after memory changes), 'articles', and 'activity' (default). " +
+				"For canvas, size start_line/end_line to canvas_width_cols × canvas_visible_lines from tui_context, counting wrapped long lines, " +
+				"and prefer the relevant function/block/config section over the whole file. " +
+				"To open a feature, picker, or setting (model, agent, config), use invoke_cli_command instead.",
 			Parameters: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
 					"action":     map[string]any{"type": "string", "description": "show|hide|toggle"},
-					"panel":      map[string]any{"type": "string", "description": "panel name: tasks, activity, articles, canvas"},
+					"panel":      map[string]any{"type": "string", "description": "panel name: canvas, tasks, memories, articles, activity"},
 					"path":       map[string]any{"type": "string", "description": "canvas only: file to render (relative to workspace or absolute)"},
 					"start_line": map[string]any{"type": "integer", "description": "canvas only: first line to highlight (1-based, optional)"},
 					"end_line":   map[string]any{"type": "integer", "description": "canvas only: last line to highlight (1-based, optional)"},

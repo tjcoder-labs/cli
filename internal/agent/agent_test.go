@@ -3,6 +3,7 @@ package agent
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -44,5 +45,19 @@ func TestWorkspaceAgentsPath(t *testing.T) {
 	expected := filepath.Join("/tmp/workspace", ".ergo-cli-go", "agents.json")
 	if path != expected {
 		t.Fatalf("expected path %q, got %q", expected, path)
+	}
+}
+
+func TestSoftwareEngineerPromptPresentationGuidance(t *testing.T) {
+	prompt := MustFind("software-engineer").Prompt
+	for _, want := range []string{
+		"canvas_width_cols", "canvas_visible_lines", "wrap",
+		"YAML, JSON, TOML", "ui_control contextually", "re-evaluate every turn",
+		"invoke_cli_command", "there is no invoke_ui_command", `"config"`, `"model"`,
+		"Never invoke destructive",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("software-engineer prompt missing %q", want)
+		}
 	}
 }

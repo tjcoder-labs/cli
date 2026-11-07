@@ -92,6 +92,8 @@ type turnContextInfo struct {
 	Layout          string // split | fullscreen | about | modal
 	RightPanel      string // activity | tasks | memories | articles | canvas | test
 	CanvasFile      string // "path" or "path:L10-40" when RightPanel == canvas
+	CanvasCols      int    // canvas viewport width (columns) the canvas wraps to
+	CanvasLines     int    // canvas viewport height (lines) when the canvas is shown
 	FocusedPane     string
 	Cwd             string
 	Cols            int // transcript inner width (columns)
@@ -126,6 +128,12 @@ func formatTurnContext(info turnContextInfo) string {
 	line("layout", info.Layout)
 	line("right_panel", info.RightPanel)
 	line("canvas_file", info.CanvasFile)
+	if info.CanvasCols > 0 {
+		line("canvas_width_cols", fmt.Sprint(info.CanvasCols))
+	}
+	if info.CanvasLines > 0 {
+		line("canvas_visible_lines", fmt.Sprint(info.CanvasLines))
+	}
 	line("focused_pane", info.FocusedPane)
 	line("cwd", info.Cwd)
 	cols, lines := info.Cols, info.Lines
@@ -206,6 +214,39 @@ func (a *App) transcriptMetrics() (cols, lines, count int) {
 		lines = 0
 	}
 	return cols, lines, count
+}
+
+// canvasMetrics measures the viewport the canvas renders into. The canvas
+// reuses the activity TextView and, when shown, fills the whole right
+// column. When another panel is shown (activity may be split with
+// cognition), the height is projected to the full right column so the
+// model sizes excerpts for the canvas it will actually get. Returns zeros
+// when the layout has not been drawn or the right column is hidden.
+func (a *App) canvasMetrics() (cols, lines int) {
+	if a.activity == nil || a.right == nil || a.activityPanel == nil {
+		return 0, 0
+	}
+	_, _, cols, inner := a.activity.GetInnerRect()
+	if cols <= 0 {
+		return 0, 0
+	}
+	if a.activePanel == "canvas" {
+		return cols, max(inner, 0)
+	}
+	_, _, _, panelH := a.activityPanel.GetRect()
+	_, _, _, rightH := a.right.GetRect()
+	chrome := panelH - inner // label row + padding around the body
+	if chrome < 0 {
+		chrome = 0
+	}
+	lines = rightH - chrome
+	if lines < inner {
+		lines = inner
+	}
+	if lines < 0 {
+		lines = 0
+	}
+	return cols, lines
 }
 
 // uiLayoutState names the current left-column/right-column arrangement
@@ -304,6 +345,7 @@ func (a *App) buildTurnContext(atts []fileAttachment) string {
 	info.OpenTasks = openTaskTitles(a.workspaceRoot)
 	info.Layout, info.RightPanel, info.CanvasFile = a.uiLayoutState()
 	info.FocusedPane = a.focusedPaneName()
+	info.CanvasCols, info.CanvasLines = a.canvasMetrics()
 	info.Cols, info.Lines, info.TranscriptLines = a.transcriptMetrics()
 	return formatTurnContext(info)
 }

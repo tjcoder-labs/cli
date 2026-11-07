@@ -48,6 +48,7 @@ func TestFormatTurnContext(t *testing.T) {
 		OpenTasks: "doing: wire tjcoder ids",
 		Layout:    "split (transcript + right column)", RightPanel: "canvas", CanvasFile: "main.go:L10-40",
 		FocusedPane: "input", Cwd: "/work/cli",
+		CanvasCols: 60, CanvasLines: 38,
 		Cols: 100, Lines: 30, TranscriptLines: 212,
 		Attachments: []fileAttachment{
 			{Path: "main.go", Size: 2048, Lines: 80, Mime: "text/x-go", Lang: "go"},
@@ -66,6 +67,8 @@ func TestFormatTurnContext(t *testing.T) {
 		"open_tasks: doing: wire tjcoder ids\n",
 		"right_panel: canvas\n",
 		"canvas_file: main.go:L10-40\n",
+		"canvas_width_cols: 60\n",
+		"canvas_visible_lines: 38\n",
 		"focused_pane: input\n",
 		"cwd: /work/cli\n",
 		"transcript_width_cols: 100\n",
@@ -85,7 +88,7 @@ func TestFormatTurnContext(t *testing.T) {
 	}
 	// Email (and any empty field) is simply omitted.
 	noEmail := formatTurnContext(turnContextInfo{User: "tj", Cols: 100, Lines: 30})
-	if strings.Contains(noEmail, "email:") || strings.Contains(noEmail, "canvas_file:") {
+	if strings.Contains(noEmail, "email:") || strings.Contains(noEmail, "canvas_file:") || strings.Contains(noEmail, "canvas_width_cols:") {
 		t.Errorf("empty fields should be omitted:\n%s", noEmail)
 	}
 }

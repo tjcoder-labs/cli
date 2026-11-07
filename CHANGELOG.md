@@ -4,6 +4,22 @@
 
 All notable changes to Coder CLI. The source of truth is [release-notes/releases.json](release-notes/releases.json).
 
+## 0.9.266 — 2026-11-07
+
+**Canvas-sized code excerpts and in-TUI settings from the software engineer.** The software-engineer agent now sizes code and config excerpts to the live canvas, switches panes contextually with ui_control, and opens pickers and settings for you with invoke_cli_command.
+
+### Added
+
+- tui_context now reports canvas_width_cols and canvas_visible_lines.
+  Measured from the canvas viewport; when another panel is showing, the height is projected to the full right column the canvas will fill. Omitted before the layout is drawn.
+
+### Changed
+
+- The software-engineer prompt sizes canvas excerpts to the viewport, accounting for wrapped long lines, and prefers the relevant function or config section over the whole file.
+  It re-evaluates ui_control every turn: canvas for code, config and docs, tasks or memories after changes, activity otherwise.
+- The software engineer opens features, option pickers and settings (config, model, agent, providers, mcp) with invoke_cli_command instead of only telling you what to type.
+  Destructive commands such as quit, clear, compact and logout still run only when you ask. ui_control and invoke_cli_command tool descriptions were updated to match.
+
 ## 0.9.265 — 2026-11-07
 
 **Persistent MCP tunnels, live banner status and /mcp completions.** MCP tunnels now keep the same link across network changes and dropouts, the tunnel banner shows connections and in-flight tool calls, and /mcp completes as you type like /add.
