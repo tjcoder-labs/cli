@@ -29,7 +29,11 @@ type Server struct {
 	Registry Registry
 	Env      tools.ExecEnv
 	Version  string
-	mu       sync.Mutex // session state and tools have the same sequential semantics as TUI
+	// OnToolCall observes accepted tool calls without changing their response.
+	// It is opt-in: stdio and interactive hosts leave it nil. The returned
+	// callback sees the final result (including persistence errors).
+	OnToolCall func(string, json.RawMessage) func(tools.Result, error)
+	mu         sync.Mutex // session state and tools have the same sequential semantics as TUI
 }
 type request struct {
 	JSONRPC string          `json:"jsonrpc"`
@@ -122,12 +126,19 @@ func (s *Server) Handle(ctx context.Context, data []byte) []byte {
 		if !found {
 			return reply(r.ID, nil, -32602, "unknown tool")
 		}
+		var finished func(tools.Result, error)
+		if s.OnToolCall != nil {
+			finished = s.OnToolCall(p.Name, p.Arguments)
+		}
 		result, err := s.Registry.Execute(ctx, p.Name, p.Arguments, s.Env)
 		// The model runner persists after a turn; an MCP call is one tool turn.
 		if s.Env.PersistSession != nil {
 			if saveErr := s.Env.PersistSession(); saveErr != nil && err == nil {
 				err = fmt.Errorf("persist session: %w", saveErr)
 			}
+		}
+		if finished != nil {
+			finished(result, err)
 		}
 		text := result.Content
 		if err != nil {

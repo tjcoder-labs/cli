@@ -4,6 +4,23 @@
 
 All notable changes to Coder CLI. The source of truth is [release-notes/releases.json](release-notes/releases.json).
 
+## 0.9.262 — 2026-11-07
+
+**Themed activity for standalone MCP tunnels.** The terminal hosting coder mcp tunnel now shows consumer tool starts and success/error outcomes using the same theme and glyphs as the TUI.
+
+### Added
+
+- Public tunnel hosts print timestamped tool activity to stderr: the TUI’s Deep arrow, Bright bold success/error marks, and Text/Dim body/timestamp roles. NO_COLOR and TERM=dumb disable ANSI styling.
+
+### Security
+
+- Invocation summaries show safe paths, numeric controls and known executable names; credentials, full commands, tool contents, URLs and raw errors are withheld from activity output.
+  Activity reports completion size/duration or a fixed-vocabulary failure reason. It is operator-terminal output only, not persisted history. The initial secret link display and protocol results remain unchanged.
+
+### Known limits
+
+- Local --stdio and piped modes remain clean JSON-RPC without activity output. Standalone sudo stays denied; interactive approval gates are unchanged.
+
 ## 0.9.261 — 2026-11-07
 
 **Explicit MCP tunnels and contextual command tips.** Use coder mcp tunnel or /mcp tunnel to open a short-lived secret link; interactive calls reuse the live session and its user-controlled sudo gate.

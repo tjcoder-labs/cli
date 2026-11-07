@@ -67,6 +67,9 @@ func mcpCommand(args []string) error {
 	if key == "" {
 		return fmt.Errorf("sign in with /login in interactive coder before starting an MCP tunnel")
 	}
+	// Operator-only activity goes to terminal stderr, never the MCP stream.
+	printer := &mcpToolPrinter{env: cliEnv{stderr: os.Stderr, color: colorEnabled(os.Stderr)}}
+	server.OnToolCall = printer.started
 	// Foreground invocation is explicit delegation of this toolset, not a sandbox.
 	fmt.Fprintf(os.Stderr, "Tunneling %d local tools in %s. Anyone holding the secret URL can use them until exit/expiry. Sudo remains denied. Ctrl-C revokes.\n", len(server.Registry.Names()), abs)
 	relay := &mcpserver.Relay{BaseURL: client.ErgoDefaultBaseURL, Key: key, Server: server}
@@ -92,7 +95,7 @@ func mcpCommand(args []string) error {
 	})
 }
 
-const mcpUsage = "Usage: coder mcp tunnel [--workspace-root DIR] (public secret URL; /login required; sudo denied)\n       coder mcp --stdio [--workspace-root DIR] (local MCP server)\nPiped stdin or stdout always selects local stdio; bare coder mcp on a terminal shows this help."
+const mcpUsage = "Usage: coder mcp tunnel [--workspace-root DIR] (public secret URL; /login required; sudo denied)\n       coder mcp --stdio [--workspace-root DIR] (local MCP server)\nPiped stdin or stdout always selects local stdio; bare coder mcp on a terminal shows this help.\nPublic tunnels print themed, secret-safe tool activity to stderr; NO_COLOR disables ANSI."
 
 func mcpLocalMode(tunnel, stdio, stdinTTY, stdoutTTY bool) (bool, error) {
 	if tunnel && stdio {

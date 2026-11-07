@@ -102,3 +102,57 @@ func TestCallPersistsState(t *testing.T) {
 		t.Fatal("session state not persisted")
 	}
 }
+
+func TestToolObserverReceivesLifecycleAndFinalPersistenceError(t *testing.T) {
+	for _, tc := range []struct {
+		args         string
+		persistError bool
+		wantError    bool
+	}{
+		{`{}`, false, false}, {`{"fail":true}`, false, true}, {`{}`, true, true},
+	} {
+		registry := &stub{}
+		events := []string{}
+		s := &Server{Registry: registry, Env: tools.ExecEnv{WorkspaceRoot: "fixture", PersistSession: func() error {
+			events = append(events, "persist")
+			if tc.persistError {
+				return fmt.Errorf("save failed")
+			}
+			return nil
+		}}}
+		s.OnToolCall = func(name string, args json.RawMessage) func(tools.Result, error) {
+			if name != "echo" || string(args) != tc.args {
+				t.Fatalf("unexpected call %s %s", name, args)
+			}
+			if registry.calls != 0 {
+				t.Fatal("start observed after execution")
+			}
+			events = append(events, "start")
+			return func(result tools.Result, err error) {
+				if registry.calls != 1 || (err != nil) != tc.wantError {
+					t.Fatalf("result=%+v err=%v", result, err)
+				}
+				events = append(events, "finish")
+			}
+		}
+		body := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"echo","arguments":` + tc.args + `}}`
+		response := s.Handle(context.Background(), []byte(body))
+		if strings.Join(events, ",") != "start,persist,finish" || !json.Valid(response) {
+			t.Fatalf("events=%v response=%s", events, response)
+		}
+	}
+}
+
+func TestToolObserverNotCalledForDiscoveryOrRejectedCalls(t *testing.T) {
+	s := &Server{Registry: &stub{}, OnToolCall: func(string, json.RawMessage) func(tools.Result, error) {
+		t.Fatal("observed non-executing call")
+		return nil
+	}}
+	for _, body := range []string{
+		`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`,
+		`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"unknown"}}`,
+		`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"echo","arguments":[]}}`,
+	} {
+		s.Handle(context.Background(), []byte(body))
+	}
+}

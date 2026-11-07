@@ -163,6 +163,31 @@ other system tools retain their existing power as the current OS user: **this
 is not a sandbox**. Running the command explicitly delegates published tool use
 to anyone holding the secret capability URL. Only publish to trusted consumers.
 
+Since 0.9.262 the standalone public host also prints consumer tool activity to
+terminal **stderr**, using the same `theme.Current()` roles as the TUI:
+Deep `→ tool` for starts, Bright bold `✓ tool` / `✗ tool` for outcomes, Text
+for summaries and Dim for timestamps. For example (shown here without color):
+
+```text
+1:49 AM  → read_file path="README.md" · start_line=1
+1:49 AM  ✓ read_file completed · 820 bytes · 12ms
+1:49 AM  → run_command command=git (arguments hidden)
+1:49 AM  ✗ run_command failed · command exit code 1 · 8ms
+```
+
+This is not a JSON-RPC dump. The bounded argument summary only shows paths,
+a few numeric/boolean controls, and known executable names. Credential-like
+fields are redacted; arbitrary values, full command arguments, URLs, editing
+bodies and tool result contents/previews are withheld. Outcomes show byte count
+and elapsed time or a fixed-vocabulary error category, never raw error text
+that could echo secrets. Terminal control characters are not accepted in shown
+metadata. These activity lines are not saved to history or any log file by the
+CLI; terminal recording remains the operator's responsibility. `NO_COLOR` or
+`TERM=dumb` disables ANSI, not the readable start/outcome lines. The initial
+secret link display below is unchanged; invocation activity never repeats it.
+Local `--stdio` and piped modes do not attach the activity printer, so their
+stdout remains exclusively MCP protocol messages. Standalone sudo stays denied.
+
 The foreground process prints **one secret URL plus local-time expiry** to its
 terminal; it does not persist the URL secret. The link alone is sufficient for
 MCP initialize, tools/list and tools/call; no Authorization header is needed.
