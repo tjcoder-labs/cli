@@ -89,7 +89,7 @@ HTTP session-header negotiation, full long-lived SSE/cancellation support,
 auth-header/credential-store integration and newer MCP revisions remain future
 work; this change does not claim modern Streamable HTTP completeness.
 
-## Implemented `coder mcp` host sessions (0.9.258)
+## Implemented `coder mcp` host sessions (0.9.259)
 
 The product goal is to let a remote consuming agent or service call the same
 tools an interactive `coder` session already has. **No Slack integration**, no
@@ -112,18 +112,19 @@ is no TUI prompter attached. Sudo remains denied (no `--allow-sudo`).
 Existing per-tool workspace checks and result/error handling apply. Shell and
 other system tools retain their existing power as the current OS user: **this
 is not a sandbox**. Running the command explicitly delegates published tool use
-to anyone holding the invocation credential. Only publish to trusted consumers.
+to anyone holding the secret capability URL. Only publish to trusted consumers.
 
-The foreground process prints a URL, local-time expiry and the invocation
-credential to its terminal; it does not persist these secrets. A consumer uses:
+The foreground process prints **one secret URL plus local-time expiry** to its
+terminal; it does not persist the URL secret. The link alone is sufficient for
+MCP initialize, tools/list and tools/call; no Authorization header is needed.
+This is capability-URL / connector-style access. A consumer uses:
 
 ```json
 {
   "mcpServers": {
     "my-local-system": {
       "transport": "http",
-      "url": "https://api.tjcoder.com/mcp/hosts/SESSION_ID",
-      "headers": {"Authorization": "Bearer INVOCATION_TOKEN"}
+      "url": "https://api.tjcoder.com/mcp/hosts/SECRET_CAPABILITY"
     }
   }
 }
@@ -137,7 +138,8 @@ a separate connector setup step; merely running the command does not attach it.
 stdin or stdout is not a terminal, this mode is selected automatically and no
 relay is opened. Thus piping stdout cannot accidentally leak a public token.
 Public mode also requires stderr to be a terminal, so redirecting logs cannot
-silently write an invocation secret to a file. For example configure a local MCP client with command `coder`, args
+silently write the secret URL to a file. Configure a local MCP client with
+command `coder`, args
 `["mcp", "--stdio", "--workspace-root", "/path/to/project"]`. Stdout contains
 only protocol messages; login is not required for local stdio (provider-backed
 tools may still need it). No local HTTP port is opened in either mode. An
@@ -150,8 +152,9 @@ One in-memory session store and two isolated Express routers on api.tjcoder.com:
 
 - `POST /cli/mcp/sessions`: validates an active `ergo-cli` device-login key via
   existing `cliKeyAuth`; owner is derived from validated tenant/key records.
-  Returns session ID, expiry, separate 256-bit relay/invocation capabilities,
-  and the public MCP URL. No caller-provided identity or upstream URL is trusted.
+  Returns an internal session ID, expiry, a separate 256-bit relay credential,
+  and the public MCP URL containing an independent random 256-bit capability.
+  No caller-provided identity or upstream URL is trusted.
 - `GET /cli/mcp/sessions/:id/connect`: outbound authenticated HTTPS SSE from
   the CLI, using only the relay credential. Server-to-host frames carry a
   random correlation ID and JSON-RPC body; no HTTP caller headers are forwarded.
@@ -160,21 +163,25 @@ One in-memory session store and two isolated Express routers on api.tjcoder.com:
 - `POST /cli/mcp/sessions/:id/heartbeat`: host heartbeat every 10 seconds;
   renews a 30-second lease while connected, never beyond the one-hour hard age.
 - `DELETE /cli/mcp/sessions/:id`: relay credential revokes this session only.
-- `POST /mcp/hosts/:id`: public MCP JSON responses and 202 for notifications;
-  requires that session's invocation Bearer on **every** request.
+- `POST /mcp/hosts/:capability`: public MCP JSON responses and 202 for notifications;
+  the 43-character unpadded base64url path secret authenticates **every** request.
+  An internal session ID or broad connector key is never a substitute.
 
 These routes mount before legacy `/mcp`, global large body parsers and payload
 logging. Existing legacy MCP authentication/tools and CLI login are unchanged.
-Capabilities are distinct and SHA-256 hashed in memory. A broad Ergo connector
-key, CLI login key, another session's capability, query token or cookie cannot
-invoke the host. Browser-origin requests are rejected; no CORS permission is
+Relay and URL capabilities are distinct and SHA-256 hashed in memory. The raw
+URL capability is never used as a store key: a digest indexes the internal
+session, then expiry/revocation are checked. A broad Ergo connector key, CLI
+login key, query token or cookie cannot substitute for the secret URL path.
+Browser-origin requests are rejected; no CORS permission is
 granted. Only JSON-RPC bodies cross to the host, not spoofed owner headers.
 No arbitrary target URLs, SSH forwards, tunnel cookies, nginx changes or Slack
 middleware are involved. The CLI requires HTTPS and refuses redirects.
 
 Limits: 1 MiB request/response messages, eight outstanding calls per session,
-120 calls/minute per session, ten creates/minute per IP, three active sessions
-per validated owner key, 1,000 sessions globally. Execution is serialized to
+120 calls/minute per session, ten creates/minute per IP, 240 consumer requests/
+guesses per minute per IP, three active sessions per validated owner key,
+1,000 sessions globally. Execution is serialized to
 match the interactive session's mutable tool state. Calls have a 115-second
 host context and a 120-second relay deadline; tools must honor cancellation.
 
@@ -183,7 +190,16 @@ the CLI also best-effort DELETEs on exit. A crashed/partitioned host loses its
 lease within 30 seconds. New calls authenticate against revocation/expiry before
 dispatch; in-flight host contexts are cancelled on stream exit where possible.
 There is no automatic reconnection/republishing. Restart `coder mcp` for a fresh
-URL and credentials. A capability can intentionally be reused during its lease.
+secret URL. A capability can intentionally be reused during its lease.
+
+**The entire URL is a credential.** Anyone who has the link can call the toolset
+until the session ends; do not paste it publicly. Browser Referer headers,
+clipboard histories and reverse-proxy/access logs can leak capability URLs. The
+app sends `Referrer-Policy: no-referrer`, rejects browser Origin requests and
+bypasses payload/URL logging for these routes; it cannot control every upstream
+proxy or a consuming client's referrer/logging behavior. Share only with trusted
+consumers, and revoke by exiting the foreground command. Server 1.1.750+ is
+required for this link-only flow; 0.9.258 used a separate Bearer credential.
 
 ### Deliberate v1 limits / future work
 

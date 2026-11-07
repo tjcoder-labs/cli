@@ -9,17 +9,19 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
 )
 
+var publicCapabilityURL = regexp.MustCompile(`^https://api\.tjcoder\.com/mcp/hosts/[A-Za-z0-9_-]{43}$`)
+
 type Publication struct {
-	ID              string `json:"id"`
-	URL             string `json:"url"`
-	ExpiresAt       string `json:"expiresAt"`
-	RelayToken      string `json:"relayToken"`
-	InvocationToken string `json:"invocationToken"`
+	ID         string `json:"id"`
+	URL        string `json:"url"`
+	ExpiresAt  string `json:"expiresAt"`
+	RelayToken string `json:"relayToken"`
 }
 
 // Relay opens one outbound HTTPS SSE stream; results and heartbeats go back via
@@ -85,7 +87,7 @@ func (r *Relay) Run(ctx context.Context, announce func(Publication)) error {
 	e = json.NewDecoder(io.LimitReader(resp.Body, 16384)).Decode(&p)
 	resp.Body.Close()
 	stop()
-	if e != nil || p.ID == "" || p.RelayToken == "" || p.InvocationToken == "" {
+	if e != nil || p.ID == "" || p.RelayToken == "" || p.URL == "" {
 		return fmt.Errorf("invalid publication response")
 	}
 	// IDs returned by the relay cannot introduce paths, queries or alternate hosts.
@@ -100,6 +102,9 @@ func (r *Relay) Run(ctx context.Context, announce func(Publication)) error {
 			v.Body.Close()
 		}
 	}()
+	if !publicCapabilityURL.MatchString(p.URL) {
+		return fmt.Errorf("relay requires secret-URL MCP access (server 1.1.750+)")
+	}
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	resp, e = r.request(runCtx, "GET", path+"/connect", p.RelayToken, nil)

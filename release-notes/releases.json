@@ -3,6 +3,28 @@
   "schema_version": 1,
   "releases": [
     {
+      "version": "0.9.259",
+      "date": "2026-11-07",
+      "title": "One secret link for remote MCP access",
+      "summary": "The ephemeral MCP URL itself now grants access; consuming agents no longer need a separate Authorization header.",
+      "changes": {
+        "changed": [
+          {
+            "text": "coder mcp prints one secret capability URL plus expiry. A consuming agent can initialize, list and call the local tools using that link alone."
+          }
+        ],
+        "security": [
+          {
+            "text": "The URL contains a random 256-bit capability, hashed server-side and bound to session expiry/revocation. Relay credentials remain separate; capability guesses are rate-limited."
+          }
+        ]
+      },
+      "notes": [
+        "Treat the entire URL as a secret. Do not post it publicly; proxy access logs and browser referrers can expose it. Anyone holding it can use the published tools until exit or expiry.",
+        "Requires api.tjcoder.com host-session server 1.1.750 or newer. No Slack integration."
+      ]
+    },
+    {
       "version": "0.9.258",
       "date": "2026-11-07",
       "title": "Ephemeral public MCP host sessions",

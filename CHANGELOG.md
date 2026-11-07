@@ -4,6 +4,23 @@
 
 All notable changes to Coder CLI. The source of truth is [release-notes/releases.json](release-notes/releases.json).
 
+## 0.9.259 — 2026-11-07
+
+**One secret link for remote MCP access.** The ephemeral MCP URL itself now grants access; consuming agents no longer need a separate Authorization header.
+
+### Changed
+
+- coder mcp prints one secret capability URL plus expiry. A consuming agent can initialize, list and call the local tools using that link alone.
+
+### Security
+
+- The URL contains a random 256-bit capability, hashed server-side and bound to session expiry/revocation. Relay credentials remain separate; capability guesses are rate-limited.
+
+### Known limits
+
+- Treat the entire URL as a secret. Do not post it publicly; proxy access logs and browser referrers can expose it. Anyone holding it can use the published tools until exit or expiry.
+- Requires api.tjcoder.com host-session server 1.1.750 or newer. No Slack integration.
+
 ## 0.9.258 — 2026-11-07
 
 **Ephemeral public MCP host sessions.** Publish Coder’s local interactive toolset to a remote MCP consumer with a short-lived, authenticated outbound relay.

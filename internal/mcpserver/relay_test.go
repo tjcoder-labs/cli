@@ -21,7 +21,7 @@ func TestRelayRoundtripAndRevoke(t *testing.T) {
 		if r.Header.Get("Authorization") != "Bearer login-key" || r.Method != "POST" {
 			t.Error("wrong creation auth")
 		}
-		fmt.Fprint(w, `{"id":"session-id","url":"https://api.tjcoder.com/mcp/hosts/session-id","expiresAt":"2026-11-07T08:00:00Z","relayToken":"relay","invocationToken":"consumer"}`)
+		fmt.Fprint(w, `{"id":"session-id","url":"https://api.tjcoder.com/mcp/hosts/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","expiresAt":"2026-11-07T08:00:00Z","relayToken":"relay"}`)
 	})
 	mux.HandleFunc("/cli/mcp/sessions/session-id/connect", func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer relay" {
@@ -56,7 +56,7 @@ func TestRelayRoundtripAndRevoke(t *testing.T) {
 	done := make(chan error, 1)
 	go func() {
 		done <- relay.Run(ctx, func(p Publication) {
-			if p.InvocationToken != "consumer" {
+			if !strings.HasSuffix(p.URL, strings.Repeat("A", 43)) {
 				t.Error("bad publication")
 			}
 		})

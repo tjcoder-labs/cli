@@ -69,7 +69,7 @@ func mcpCommand(args []string) error {
 		return fmt.Errorf("sign in with /login in interactive coder before publishing MCP tools")
 	}
 	// Foreground invocation is explicit delegation of this toolset, not a sandbox.
-	fmt.Fprintf(os.Stderr, "Publishing %d local tools in %s. Anyone holding the Bearer credential can use them until exit/expiry. Sudo remains denied. Ctrl-C revokes.\n", len(registry.Names()), abs)
+	fmt.Fprintf(os.Stderr, "Publishing %d local tools in %s. Anyone holding the secret URL can use them until exit/expiry. Sudo remains denied. Ctrl-C revokes.\n", len(registry.Names()), abs)
 	relay := &mcpserver.Relay{BaseURL: client.ErgoDefaultBaseURL, Key: key, Server: server}
 	// Own lifecycle here: the TUI browser wrapper re-raises signals, while MCP
 	// needs graceful cancellation and best-effort revocation on those signals.
@@ -89,6 +89,6 @@ func mcpCommand(args []string) error {
 		if t, e := time.Parse(time.RFC3339, p.ExpiresAt); e == nil {
 			expiry = t.Local().Format("2006-01-02 15:04:05 MST")
 		}
-		fmt.Fprintf(os.Stderr, "MCP URL: %s\nExpires: %s\nAuthorization: Bearer %s\nKeep this credential private. No token is saved to disk.\n", p.URL, expiry, p.InvocationToken)
+		fmt.Fprintf(os.Stderr, "MCP URL: %s\nExpires: %s\nKeep this URL private; it alone grants tool access. No credential is saved to disk.\n", p.URL, expiry)
 	})
 }
