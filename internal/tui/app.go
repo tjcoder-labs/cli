@@ -1068,8 +1068,9 @@ func (a *App) build() {
 	a.setActivePanel("activity")
 	a.appendActivity("Developed by TJ Coder / AI Labs")
 	a.appendActivity("Loaded provider " + a.provider.BaseURL())
-	if msg := ergoLoginPrompt(a.provider); msg != "" {
-		a.appendActivity(msg)
+	if e, ok := a.provider.(*client.Ergo); ok && !e.Authenticated() {
+		a.appendActivity("Starting ergo sign-in…")
+		a.handleLoginCommand()
 	}
 	a.refreshErgoBalanceAsync()
 	a.appendActivity("Enabled tools: " + strings.Join(a.enabledToolList(), ", "))
@@ -3733,6 +3734,14 @@ func (a *App) submit() {
 		return
 	}
 
+	// Unauthenticated ergo: onboard into login instead of failing the turn.
+	if e, ok := a.provider.(*client.Ergo); ok && !e.Authenticated() {
+		a.mu.Unlock()
+		a.appendActivity("Sign in to continue — opening the login flow.")
+		a.handleLoginCommand()
+		return
+	}
+
 	a.busy = true
 	a.spinIdx = 0
 	a.assistantState = "thinking"
@@ -5082,6 +5091,10 @@ func (a *App) switchProvider(cfg providers.Config) {
 	a.refreshContextForModel(a.currentModel)
 	a.appendActivity(fmt.Sprintf("Switched to provider %s (%s)", cfg.Name, cfg.BaseURL))
 	a.loadModelsAsync()
+	if e, ok := p.(*client.Ergo); ok && !e.Authenticated() {
+		a.appendActivity("Starting ergo sign-in…")
+		a.handleLoginCommand()
+	}
 }
 
 // listModels dispatches to the provider's model enumeration. For the ergo
