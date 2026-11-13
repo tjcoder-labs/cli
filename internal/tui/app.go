@@ -222,6 +222,7 @@ type slashCommand struct {
 // palette. Keep in sync with handleSlashCommand's switch.
 var slashCommands = []slashCommand{
 	{"help", "Show this command reference"},
+	{"voice", "Toggle voice mode (requires say/espeak on PATH)"},
 	{"agent", "Open the agent selector"},
 	{"agentinfo", "View the current agent prompt"},
 	{"tools", "Toggle tools on or off"},
@@ -297,6 +298,7 @@ type App struct {
 	terminalScreen tcell.Screen
 	sessionState   session.State
 	palette        Palette
+	voice          VoiceState
 
 	workspaceRoot             string
 	productName               string
@@ -2090,6 +2092,11 @@ func (a *App) globalKeys(event *tcell.EventKey) *tcell.EventKey {
 		a.tv.Stop()
 		return nil
 	}
+	// Voice barge-in: Esc while speaking aborts TTS and yields the floor.
+	if event.Key() == tcell.KeyEscape && a.voice.Enabled && a.voice.Speaking {
+		a.onBargeIn()
+		return nil
+	}
 	if a.swallowBurstTail(event) {
 		return nil
 	}
@@ -2340,6 +2347,8 @@ func (a *App) handleSlashCommand(cmd string) {
 		a.openAgentInfoModal()
 	case "trigger", "event":
 		a.openTriggerModal()
+	case "voice":
+		a.toggleVoice()
 	case "reminder":
 		a.openReminderModal()
 	case "task":
@@ -3919,6 +3928,7 @@ func (a *App) launchTurnWithContext(prompt, agentNameOverride, turnContext strin
 		nextHistory, err := a.runner.Run(ctx, history, prompt, agentCfg, model, enabled, a.handleEvent)
 		a.postUI(func() {
 			a.flushMarkdownStreams()
+			a.flushVoiceSpeech()
 			if err != nil {
 				errText := fmt.Sprintf("error: %v", err)
 				if isReasoningRelated(errText) {
@@ -4045,6 +4055,7 @@ func (a *App) handleEvent(event tooling.Event) {
 			a.reasoning.ScrollToEnd()
 			a.addReferencesFromText(event.Text)
 		case tooling.EventCommentary:
+			a.onCommentary(event.Text)
 			// Only set timestamp and update label on the first reply transition;
 			// subsequent commentary chunks just append text to avoid repeat timestamps.
 			if a.assistantState != "replied" {
