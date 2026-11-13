@@ -8,30 +8,30 @@
 # from GitHub and installs the `coder` binary. The sha256 values below are
 # for v0.9.272; regenerate them when bumping VERSION_TAG.
 class Coder < Formula
-  desc "Terminal-first AI coding assistant (TJ Coder / AI Labs)"
+  desc "Open-source terminal AI coding assistant and LLM agent CLI. A keyboard-driven Go TUI with 7 specialized agents, 30+ tools, and a live reasoning pane."
   homepage "https://github.com/tjcoder-labs/cli"
-  version "0.9.272"
+  version "0.9.273"
   license "MIT"
 
-  VERSION_TAG = "v0.9.272"
+  VERSION_TAG = "v0.9.273"
 
   on_macos do
     if Hardware::CPU.arm?
       url "https://github.com/tjcoder-labs/cli/releases/download/#{VERSION_TAG}/coder_#{VERSION_TAG}_darwin_arm64.tar.gz"
-      sha256 "27c9dd2c2c31f90b37350e7bf876e3620960f0e6142675aeafccaf3d08d24fcc"
+      sha256 "707a587f4b895eba57c175b74035f377eb396ddae7704808de9e2dbcfa15177c"
     else
       url "https://github.com/tjcoder-labs/cli/releases/download/#{VERSION_TAG}/coder_#{VERSION_TAG}_darwin_amd64.tar.gz"
-      sha256 "9d801737d9a65cf166508699b2f918b296df842e0bcf5c6402ef91f66ae38ff1"
+      sha256 "bf145d950832d1ec45600f613f318b6bf0f57266a50333e76a21ddf7bc40f09e"
     end
   end
 
   on_linux do
     if Hardware::CPU.arm?
       url "https://github.com/tjcoder-labs/cli/releases/download/#{VERSION_TAG}/coder_#{VERSION_TAG}_linux_arm64.tar.gz"
-      sha256 "86955809eef0ebf832b8c8082ffc15948df9b5f07a20be74e09424404cbade84"
+      sha256 "277062bf9ddc1d4944bfdda3981718b9e52613f7d0704319a69fea0f48e22ff9"
     else
       url "https://github.com/tjcoder-labs/cli/releases/download/#{VERSION_TAG}/coder_#{VERSION_TAG}_linux_amd64.tar.gz"
-      sha256 "bde81b399f129703b92e35718e2387479267a962711cab2ca8dc9b695c4361ce"
+      sha256 "8f9a6ff547eb1616ce6f5189cc2f845185467d0f035edc0030bfbb4ec6fe0fa5"
     end
   end
 

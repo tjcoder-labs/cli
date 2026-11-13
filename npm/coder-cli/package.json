@@ -1,7 +1,7 @@
 {
   "name": "@tjcoder/cli",
-  "version": "0.9.272",
-  "description": "Terminal-first AI coding assistant by TJ Coder / AI Labs. A keyboard-driven TUI with a live cognition pane, 7 specialized agents, and 31 tools, using the TJCoder ergo gateway by default, with local Ollama, Ollama Cloud and Gemini as options.",
+  "version": "0.9.273",
+  "description": "Open-source terminal AI coding assistant. A keyboard-driven Go TUI with 7 specialized agents, 30+ tools, and a live reasoning pane. Works with local Ollama (private), Google Gemini, and the TJ Coder gateway.",
   "license": "MIT",
   "private": false,
   "bin": {
@@ -48,6 +48,13 @@
     "ollama",
     "gemini",
     "agent",
-    "assistant"
+    "assistant",
+    "golang",
+    "developer-tools",
+    "code-generation",
+    "llm",
+    "open-source",
+    "pair-programming",
+    "terminal-ai"
   ]
 }

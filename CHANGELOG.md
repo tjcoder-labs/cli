@@ -4,6 +4,15 @@
 
 All notable changes to Coder CLI. The source of truth is [release-notes/releases.json](release-notes/releases.json).
 
+## 0.9.273 — 2026-11-13
+
+**Better package discovery.** Sharper npm and Homebrew metadata so the CLI is easier to find: keyword-rich descriptions and search terms that reflect its 7 agents and 30+ tools.
+
+### Changed
+
+- Updated the npm package description and keywords, and the Homebrew formula description, for better search discoverability.
+  Now leads with open-source, terminal, AI coding assistant, Go, 7 agents, 30+ tools, and local/private Ollama.
+
 ## 0.9.272 — 2026-11-13
 
 **Release hardening and docs.** Fixes a stale transcript assertion and documents reusable stored agent skills.

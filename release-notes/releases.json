@@ -3,6 +3,20 @@
   "schema_version": 1,
   "releases": [
     {
+      "version": "0.9.273",
+      "date": "2026-11-13",
+      "title": "Better package discovery",
+      "summary": "Sharper npm and Homebrew metadata so the CLI is easier to find: keyword-rich descriptions and search terms that reflect its 7 agents and 30+ tools.",
+      "changes": {
+        "changed": [
+          {
+            "text": "Updated the npm package description and keywords, and the Homebrew formula description, for better search discoverability.",
+            "details": "Now leads with open-source, terminal, AI coding assistant, Go, 7 agents, 30+ tools, and local/private Ollama."
+          }
+        ]
+      }
+    },
+    {
       "version": "0.9.272",
       "date": "2026-11-13",
       "title": "Release hardening and docs",
