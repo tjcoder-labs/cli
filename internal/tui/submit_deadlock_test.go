@@ -17,8 +17,12 @@ func TestSubmitPlainMessageDoesNotDeadlock(t *testing.T) {
 	typeLine(sim, "hello there")
 	waitForText(t, a, "hello there", func() string { return a.transcript.GetText(true) })
 	// The turn fails fast (provider at 127.0.0.1:1); the loop must stay
-	// responsive and render the error.
-	waitForText(t, a, "error", func() string { return a.transcript.GetText(true) })
+	// responsive. The error surfaces in the activity log (and a retry
+	// card is offered), not the transcript.
+	waitForText(t, a, "error", func() string { return a.activity.GetText(true) })
+	// The retry card has focus; dismiss it (Esc) so typing reaches the
+	// input again.
+	injectKey(sim, tcell.KeyEscape, 0)
 	for _, r := range "next" {
 		injectKey(sim, tcell.KeyRune, r)
 	}
