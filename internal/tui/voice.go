@@ -26,8 +26,8 @@ type VoiceState struct {
 }
 
 func (a *App) isVoiceEligible() bool {
-	model := a.currentModel
-	return strings.HasPrefix(model, "tjcoder/") || strings.Contains(model, "ergo-")
+	// Voice works for any provider; only a TTS binary is required.
+	return ttsBinary() != ""
 }
 
 // ttsBinary returns the system TTS binary name ("say" on Darwin,
@@ -50,10 +50,6 @@ func ttsBinary() string {
 
 func (a *App) toggleVoice() {
 	if !a.isVoiceEligible() {
-		a.appendActivity("Voice mode only available for tjcoder models")
-		return
-	}
-	if ttsBinary() == "" {
 		a.appendActivity("Voice unavailable: no TTS binary (say/espeak) found on PATH")
 		return
 	}

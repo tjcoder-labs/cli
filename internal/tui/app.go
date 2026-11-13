@@ -219,7 +219,7 @@ var slashCommands = []slashCommand{
 	{"compact", "Summarize transcript to free context"},
 	{"quit", "Quit application"},
 	{"trigger", "Trigger an event"},
-	{"voice", "Toggle voice mode (tjcoder models only)"},
+	{"voice", "Toggle voice mode (requires say/espeak on PATH)"},
 	{"reminder", "Create a reminder"},
 	{"task", "Create a task"},
 	{"tasks", "Toggle the tasks panel"},

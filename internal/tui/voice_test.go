@@ -29,16 +29,14 @@ func TestOptimizeForVoice(t *testing.T) {
 
 func TestIsVoiceEligible(t *testing.T) {
 	a := &App{currentModel: "tjcoder/ergo-pro:cloud"}
-	if !a.isVoiceEligible() {
-		t.Error("expected eligible for tjcoder model")
+	if ttsBinary() == "" {
+		if a.isVoiceEligible() {
+			t.Error("expected ineligible without TTS binary")
+		}
+		return
 	}
-	a.currentModel = "ollama/llama3"
-	if a.isVoiceEligible() {
-		t.Error("expected ineligible for non-tjcoder model")
-	}
-	a.currentModel = "ergo-flash"
 	if !a.isVoiceEligible() {
-		t.Error("expected eligible for ergo- model")
+		t.Error("expected eligible with TTS binary present")
 	}
 }
 
@@ -64,6 +62,9 @@ func TestVoiceToggle(t *testing.T) {
 }
 
 func TestCommentaryBuffer(t *testing.T) {
+	if ttsBinary() == "" {
+		t.Skip("no TTS binary on PATH")
+	}
 	a := &App{currentModel: "tjcoder/ergo-pro:cloud", voice: VoiceState{Enabled: true}, activity: tview.NewTextView()}
 	defer func() { a.stopTTS() }()
 	a.onCommentary("Hello. ")
