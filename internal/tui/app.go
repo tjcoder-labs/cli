@@ -477,6 +477,8 @@ type App struct {
 	// firstDrawTranscript is pendingTranscript handed to afterDraw by
 	// Run; it is rendered (once) on the first draw pass.
 	firstDrawTranscript []session.TranscriptEntry
+	// introShown gates the one-shot first-launch INTRO.md render.
+	introShown bool
 	// fullscreen hides the right column so the transcript can use the
 	// full terminal width (useful for copying long output).
 	fullscreen bool
@@ -3314,6 +3316,10 @@ func (a *App) afterDraw(tcell.Screen) {
 		p := a.firstDrawTranscript
 		a.firstDrawTranscript = nil
 		a.renderTranscriptFromEntries(p)
+	}
+	if !a.introShown {
+		a.introShown = true
+		a.showIntroIfFirstLaunch()
 	}
 	// Re-wrap the canvas when its width changed (terminal resize,
 	// fullscreen toggle). The re-render is queued, never run inside

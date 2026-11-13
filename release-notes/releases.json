@@ -3,6 +3,20 @@
   "schema_version": 1,
   "releases": [
     {
+      "version": "0.9.271",
+      "date": "2026-11-13",
+      "title": "First-launch welcome and agent picker",
+      "summary": "On your very first launch the CLI shows a short welcome document and opens the agent picker so you can choose how to get started.",
+      "changes": {
+        "added": [
+          {
+            "text": "First launch renders a welcome (INTRO.md) describing each agent, then opens /agent so you can pick one.",
+            "details": "Shown once across all workspaces; the choice is stored in the cross-workspace prefs file."
+          }
+        ]
+      }
+    },
+    {
       "version": "0.9.270",
       "date": "2026-11-13",
       "title": "Voice mode for any provider",

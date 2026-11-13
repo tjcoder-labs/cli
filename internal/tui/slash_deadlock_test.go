@@ -7,6 +7,7 @@ import (
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/tjcoder-labs/cli/internal/client"
+	"github.com/tjcoder-labs/cli/internal/session"
 	"github.com/tjcoder-labs/cli/internal/tools"
 )
 
@@ -39,6 +40,12 @@ func startSimAppWith(t *testing.T, p client.Provider, wrap func(tcell.Simulation
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("CODER_TELEMETRY", "")
+	// Tests must not see the first-launch intro: it injects markdown
+	// into the transcript and opens the agent picker, which breaks
+	// transcript-content and focus assertions.
+	if err := session.MarkIntroSeen(); err != nil {
+		t.Fatal(err)
+	}
 	a := New(p, tools.NewRegistry(nil), t.TempDir(), "m", "coder", "TJ", "0.0.0")
 	sim := tcell.NewSimulationScreen("UTF-8")
 	if err := sim.Init(); err != nil {

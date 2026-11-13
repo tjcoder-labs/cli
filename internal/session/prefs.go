@@ -67,6 +67,10 @@ type Prefs struct {
 	// Not used yet; kept here so the on-disk schema does not
 	// shift the first time we add a non-model pref.
 	Theme string `json:"theme,omitempty"`
+	// IntroSeen records whether the first-launch INTRO.md welcome has
+	// been shown. Stored cross-workspace so it appears once, not on
+	// every new repo.
+	IntroSeen bool `json:"intro_seen,omitempty"`
 }
 
 // mergePrefs overlays overrides onto base, returning the merged
@@ -101,6 +105,9 @@ func mergePrefs(base, overrides Prefs) Prefs {
 	}
 	if overrides.Theme != "" {
 		out.Theme = overrides.Theme
+	}
+	if overrides.IntroSeen {
+		out.IntroSeen = true
 	}
 	return out
 }
@@ -356,6 +363,31 @@ func SetModelForProvider(provider, model string) error {
 	if provider != ergoProvider {
 		p.LastModel = model
 	}
+	return savePrefsLocked(p)
+}
+
+// IntroSeen reports whether the first-launch INTRO.md welcome has
+// already been shown to the user.
+func IntroSeen() bool {
+	prefsMu.Lock()
+	defer prefsMu.Unlock()
+	p, _, err := loadPrefsLocked()
+	if err != nil {
+		return false
+	}
+	return p.IntroSeen
+}
+
+// MarkIntroSeen persists the first-launch intro flag so it is shown
+// at most once across all workspaces.
+func MarkIntroSeen() error {
+	prefsMu.Lock()
+	defer prefsMu.Unlock()
+	p, _, err := loadPrefsLocked()
+	if err != nil {
+		p = Prefs{}
+	}
+	p.IntroSeen = true
 	return savePrefsLocked(p)
 }
 

@@ -30,6 +30,7 @@ func TestSlashModeForEveryCommand(t *testing.T) {
 		"workspaces": slashImmediate, "nosuchcommand": slashImmediate,
 		"capture": slashImmediate, "screenshot": slashImmediate,
 		"ask": slashImmediate, "btw": slashImmediate,
+		"voice": slashImmediate,
 
 		"clear": slashBlocked,
 

@@ -4,6 +4,15 @@
 
 All notable changes to Coder CLI. The source of truth is [release-notes/releases.json](release-notes/releases.json).
 
+## 0.9.271 — 2026-11-13
+
+**First-launch welcome and agent picker.** On your very first launch the CLI shows a short welcome document and opens the agent picker so you can choose how to get started.
+
+### Added
+
+- First launch renders a welcome (INTRO.md) describing each agent, then opens /agent so you can pick one.
+  Shown once across all workspaces; the choice is stored in the cross-workspace prefs file.
+
 ## 0.9.270 — 2026-11-13
 
 **Voice mode for any provider.** Telephone-style voice mode (/voice) speaks short summaries of assistant replies using the system TTS, with Esc barge-in to interrupt.
