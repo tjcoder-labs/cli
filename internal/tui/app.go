@@ -1953,6 +1953,11 @@ func (a *App) globalKeys(event *tcell.EventKey) *tcell.EventKey {
 		a.tv.Stop()
 		return nil
 	}
+	// Voice barge-in: Esc while speaking aborts TTS and yields the floor.
+	if event.Key() == tcell.KeyEscape && a.voice.Enabled && a.voice.Speaking {
+		a.onBargeIn()
+		return nil
+	}
 	if a.swallowBurstTail(event) {
 		return nil
 	}
@@ -2152,9 +2157,9 @@ func (a *App) handleSlashCommand(cmd string) {
 	case "agentinfo":
 		a.openAgentInfoModal()
 	case "trigger", "event":
+		a.openTriggerModal()
 	case "voice":
 		a.toggleVoice()
-		a.openTriggerModal()
 	case "reminder":
 		a.openReminderModal()
 	case "task":

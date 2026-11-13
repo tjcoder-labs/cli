@@ -3,6 +3,8 @@ package tui
 import (
 	"strings"
 	"testing"
+
+	"github.com/rivo/tview"
 )
 
 func TestOptimizeForVoice(t *testing.T) {
@@ -41,7 +43,13 @@ func TestIsVoiceEligible(t *testing.T) {
 }
 
 func TestVoiceToggle(t *testing.T) {
+	if ttsBinary() == "" {
+		t.Skip("no TTS binary on PATH")
+	}
 	a := &App{currentModel: "tjcoder/ergo-flash:cloud"}
+	// Stub activity so appendActivity doesn't nil-panic on a.TextView.
+	a.activity = tview.NewTextView()
+	defer func() { a.stopTTS() }()
 	if a.voice.Enabled {
 		t.Fatal("should start disabled")
 	}
@@ -56,7 +64,8 @@ func TestVoiceToggle(t *testing.T) {
 }
 
 func TestCommentaryBuffer(t *testing.T) {
-	a := &App{currentModel: "tjcoder/ergo-pro:cloud", voice: VoiceState{Enabled: true}}
+	a := &App{currentModel: "tjcoder/ergo-pro:cloud", voice: VoiceState{Enabled: true}, activity: tview.NewTextView()}
+	defer func() { a.stopTTS() }()
 	a.onCommentary("Hello. ")
 	a.onCommentary("This is a longer reply with three sentences. Extra.")
 	a.voice.mu.Lock()
@@ -65,7 +74,6 @@ func TestCommentaryBuffer(t *testing.T) {
 	if !strings.Contains(buf, "Hello.") || !strings.Contains(buf, "three") {
 		t.Errorf("buffer missing text: %q", buf)
 	}
-	// flush would call speak; we only check optimize path here
 	spoken := a.optimizeForVoice(buf)
 	if strings.Count(spoken, ".") > 2 {
 		t.Errorf("too many sentences after optimize: %q", spoken)
