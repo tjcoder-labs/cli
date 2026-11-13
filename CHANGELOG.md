@@ -4,6 +4,14 @@
 
 All notable changes to Coder CLI. The source of truth is [release-notes/releases.json](release-notes/releases.json).
 
+## 0.9.269 — 2026-11-13
+
+**Patch bump.** Routine patch release.
+
+### Changed
+
+- Routine patch release with no user-facing changes.
+
 ## 0.9.268 — 2026-11-07
 
 **Agent picks up MCP servers added in the TUI.** The in-TUI agent now receives tools from servers added with /mcp add, including later in the same turn.

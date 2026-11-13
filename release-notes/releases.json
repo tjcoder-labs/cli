@@ -3,6 +3,19 @@
   "schema_version": 1,
   "releases": [
     {
+      "version": "0.9.269",
+      "date": "2026-11-13",
+      "title": "Patch bump",
+      "summary": "Routine patch release.",
+      "changes": {
+        "changed": [
+          {
+            "text": "Routine patch release with no user-facing changes."
+          }
+        ]
+      }
+    },
+    {
       "version": "0.9.268",
       "date": "2026-11-07",
       "title": "Agent picks up MCP servers added in the TUI",
