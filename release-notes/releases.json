@@ -3,6 +3,25 @@
   "schema_version": 1,
   "releases": [
     {
+      "version": "0.9.272",
+      "date": "2026-11-13",
+      "title": "Release hardening and docs",
+      "summary": "Fixes a stale transcript assertion and documents reusable stored agent skills.",
+      "changes": {
+        "fixed": [
+          {
+            "text": "The submit deadlock regression test now asserts errors on the activity log and dismisses the retry card, matching current error handling.",
+            "details": "Errors no longer write to the transcript; they log to the activity pane and mount a retry card."
+          }
+        ],
+        "changed": [
+          {
+            "text": "Added a proposal document for reusable stored agent skills."
+          }
+        ]
+      }
+    },
+    {
       "version": "0.9.271",
       "date": "2026-11-13",
       "title": "First-launch welcome and agent picker",

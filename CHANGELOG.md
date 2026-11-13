@@ -4,6 +4,19 @@
 
 All notable changes to Coder CLI. The source of truth is [release-notes/releases.json](release-notes/releases.json).
 
+## 0.9.272 — 2026-11-13
+
+**Release hardening and docs.** Fixes a stale transcript assertion and documents reusable stored agent skills.
+
+### Changed
+
+- Added a proposal document for reusable stored agent skills.
+
+### Fixed
+
+- The submit deadlock regression test now asserts errors on the activity log and dismisses the retry card, matching current error handling.
+  Errors no longer write to the transcript; they log to the activity pane and mount a retry card.
+
 ## 0.9.271 — 2026-11-13
 
 **First-launch welcome and agent picker.** On your very first launch the CLI shows a short welcome document and opens the agent picker so you can choose how to get started.
