@@ -4,6 +4,16 @@
 
 All notable changes to Coder CLI. The source of truth is [release-notes/releases.json](release-notes/releases.json).
 
+## 0.9.270 — 2026-11-13
+
+**Voice mode for any provider.** Telephone-style voice mode (/voice) speaks short summaries of assistant replies using the system TTS, with Esc barge-in to interrupt.
+
+### Added
+
+- New /voice toggle reads the assistant's first 1-2 sentences aloud via macOS say or Linux espeak. (`/voice`)
+  Works with any provider and model; only a TTS binary on PATH is required.
+- Press Esc while voice is speaking to barge in; the assistant yields with "Go ahead".
+
 ## 0.9.269 — 2026-11-13
 
 **Patch bump.** Routine patch release.

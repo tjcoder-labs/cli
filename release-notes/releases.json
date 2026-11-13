@@ -3,6 +3,24 @@
   "schema_version": 1,
   "releases": [
     {
+      "version": "0.9.270",
+      "date": "2026-11-13",
+      "title": "Voice mode for any provider",
+      "summary": "Telephone-style voice mode (/voice) speaks short summaries of assistant replies using the system TTS, with Esc barge-in to interrupt.",
+      "changes": {
+        "added": [
+          {
+            "text": "New /voice toggle reads the assistant's first 1-2 sentences aloud via macOS say or Linux espeak.",
+            "details": "Works with any provider and model; only a TTS binary on PATH is required.",
+            "commands": ["/voice"]
+          },
+          {
+            "text": "Press Esc while voice is speaking to barge in; the assistant yields with \"Go ahead\"."
+          }
+        ]
+      }
+    },
+    {
       "version": "0.9.269",
       "date": "2026-11-13",
       "title": "Patch bump",
