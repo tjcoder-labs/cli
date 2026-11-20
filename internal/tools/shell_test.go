@@ -6,8 +6,11 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
+	"github.com/tjcoder-labs/cli/internal/client"
 	"github.com/tjcoder-labs/cli/internal/session"
 )
 
@@ -49,5 +52,57 @@ func TestBackgroundJobRejectsUnknownJob(t *testing.T) {
 	)
 	if err == nil || !strings.Contains(err.Error(), `background job "missing" not found`) {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestWatchBackgroundJobProgress(t *testing.T) {
+	state := &session.State{
+		BackgroundJobs: []session.BackgroundJob{{
+			ID:        "job-test",
+			Status:    "running",
+			StartedAt: "2026-11-13T00:00:00Z",
+		}},
+	}
+	notified := make(chan client.Message, 1)
+	env := ExecEnv{
+		SessionState:    state,
+		BackgroundJobMu: &sync.Mutex{},
+		PersistSession:  func() error { return nil },
+		NotifyBackgroundJob: func(msg client.Message) {
+			select {
+			case notified <- msg:
+			default:
+			}
+		},
+	}
+
+	// Run one tick inline by calling with a tiny interval; the watcher
+	// stops when the job is marked terminal.
+	done := make(chan struct{})
+	go func() {
+		watchBackgroundJobProgress(env, "job-test", 1*time.Millisecond)
+		close(done)
+	}()
+
+	deadline := time.After(2 * time.Second)
+	for {
+		select {
+		case msg := <-notified:
+			if msg.Role != "system" || msg.ToolName != "background_job" || !strings.Contains(msg.Content, "job-test still running") {
+				t.Fatalf("unexpected progress notice: %+v", msg)
+			}
+			// Mark terminal (under lock) and confirm the watcher exits.
+			env.BackgroundJobMu.Lock()
+			state.BackgroundJobs[0].Status = "completed"
+			env.BackgroundJobMu.Unlock()
+			select {
+			case <-done:
+				return
+			case <-deadline:
+				t.Fatal("watcher did not stop")
+			}
+		case <-deadline:
+			t.Fatal("watcher did not persist or stop in time")
+		}
 	}
 }

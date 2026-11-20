@@ -1,12 +1,14 @@
 package mcpserver
 
 import (
+	"sync"
+	"time"
+
 	"github.com/tjcoder-labs/cli/internal/client"
 	"github.com/tjcoder-labs/cli/internal/session"
 	"github.com/tjcoder-labs/cli/internal/tools"
 	"github.com/tjcoder-labs/cli/internal/tracking"
 	"github.com/tjcoder-labs/cli/internal/workspace"
-	"time"
 )
 
 // NewLocalServer builds the default interactive toolset with independent session
@@ -24,7 +26,7 @@ func NewLocalServer(abs, key, version string) (*Server, error) {
 	track.Register(tracking.NewMemoryTracker())
 	track.Register(tracking.NewReminderTracker(abs))
 	registry.RegisterTool(tools.ManageItemsBridge{Impl: tools.NewManageItems(track, &state)})
-	env := tools.ExecEnv{WorkspaceRoot: abs, Provider: provider, SessionState: &state, PersistSession: func() error { return session.Save(abs, state) }, Workspaces: workspace.NewSet(abs)}
+	env := tools.ExecEnv{WorkspaceRoot: abs, Provider: provider, SessionState: &state, PersistSession: func() error { return session.Save(abs, state) }, Workspaces: workspace.NewSet(abs), BackgroundJobMu: &sync.Mutex{}}
 	server := &Server{Registry: registry, Env: env, Version: version}
 	return server, nil
 }

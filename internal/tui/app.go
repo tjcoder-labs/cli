@@ -320,6 +320,7 @@ type App struct {
 	burstTailUntil            time.Time     // swallow burstTail keys until then; UI goroutine only
 	history                   []client.Message
 	busy                      bool
+	lastInteractionAt         string   // completed assistant turn; UI goroutine only
 	idleQueue                 []func() // slash work deferred until the turn settles (whenIdle)
 	ctxUsage                  client.ContextUsage
 	refSet                    map[string]struct{}
@@ -623,6 +624,8 @@ func New(provider client.Provider, registry *tools.Registry, workspaceRoot, mode
 	app.resetEnabledTools(current.ToolNames)
 	app.runner.SessionState = &app.sessionState
 	app.runner.PersistSession = app.saveSession
+	app.runner.NotifyBackgroundJob = app.recordBackgroundJobNotice
+	app.runner.SyncSession = func() { app.postUIWait(func() { _ = app.saveSession() }) }
 	// Wire the steering channel last: it must exist on the App
 	// before we hand a reference to the runner so a submit() that
 	// races with the very first turn still has somewhere to send.
@@ -3962,6 +3965,10 @@ func (a *App) launchTurnWithContext(prompt, agentNameOverride, turnContext strin
 			}
 			if len(nextHistory) > 0 {
 				a.history = nextHistory
+			}
+			a.history = a.runner.DrainBackgroundNotices(a.history)
+			if err == nil && len(a.history) > 0 && a.history[len(a.history)-1].Role == "assistant" {
+				a.lastInteractionAt = time.Now().UTC().Format(time.RFC3339)
 			}
 			a.busy = false
 			a.stopSpinner()

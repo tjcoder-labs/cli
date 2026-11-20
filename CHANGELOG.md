@@ -4,6 +4,26 @@
 
 All notable changes to Coder CLI. The source of truth is [release-notes/releases.json](release-notes/releases.json).
 
+## 0.9.274 — 2026-11-13
+
+**Reliable background updates and conversation resume.** Background commands can deliver periodic progress without blocking the conversation. Reply sizing fits short panes better, and resuming after a break retains the true conversation gap.
+
+### Added
+
+- Background run_command jobs accept check_after_seconds for recurring progress updates without a blocking status check.
+  Progress and completion updates are saved in the conversation and delivered to the next model request without interrupting an active response or starting a provider call while idle.
+
+### Changed
+
+- Reduced the transcript-aware reply word budget to better fit narrow, short panes.
+- The agent now knows how long it has been since the last completed turn when a conversation resumes after a meaningful pause.
+  The timestamp advances only after a completed assistant reply, so reopening the CLI preserves the original gap.
+
+### Fixed
+
+- Background job updates now persist through the live conversation without racing the TUI or disappearing after a turn.
+- Session reloads retain the last completed interaction timestamp for accurate resume guidance.
+
 ## 0.9.273 — 2026-11-13
 
 **Better package discovery.** Sharper npm and Homebrew metadata so the CLI is easier to find: keyword-rich descriptions and search terms that reflect its 7 agents and 30+ tools.

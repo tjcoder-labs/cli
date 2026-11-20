@@ -72,14 +72,15 @@ func (runCommandTool) Definition() client.ToolDefinition {
 		Type: "function",
 		Function: client.FunctionDefinition{
 			Name:        "run_command",
-			Description: "Run a shell command inside the workspace with timeout protection. Set background=true for long-running or parallel work that should continue after the current turn, then use background_job to read its status and output.",
+			Description: "Run a shell command inside the workspace with timeout protection. Set background=true for long-running or parallel work that should continue after the current turn, then use background_job to read its status and output. For background work, set check_after_seconds to be notified of progress after that many seconds instead of running a blocking status check.",
 			Parameters: objectSchema([]string{"command"}, map[string]any{
-				"command":         stringProp("Shell command to execute."),
-				"cwd":             stringProp("Optional working directory."),
-				"timeout_seconds": numberProp("Optional timeout in seconds. Default 20, max 1800."),
-				"background":      boolProp("If true, start the command in the background and return immediately with a job id. For interactive scans, prefer a command's native timeout and set timeout_seconds slightly higher."),
-				"use_pty":         boolProp("If true, run the command in a pseudo-terminal (PTY). This is required for tools that detect if they are running in a real terminal, like bluetoothctl."),
-				"workspace":       workspaceProp(),
+				"command":             stringProp("Shell command to execute."),
+				"cwd":                 stringProp("Optional working directory."),
+				"timeout_seconds":     numberProp("Optional timeout in seconds. Default 20, max 1800."),
+				"background":          boolProp("If true, start the command in the background and return immediately with a job id. For interactive scans, prefer a command's native timeout and set timeout_seconds slightly higher."),
+				"check_after_seconds": numberProp("Background jobs only: seconds to wait before a progress update is injected into the conversation so you can see status without a blocking check. Omit to only be notified when the job finishes."),
+				"use_pty":             boolProp("If true, run the command in a pseudo-terminal (PTY). This is required for tools that detect if they are running in a real terminal, like bluetoothctl."),
+				"workspace":           workspaceProp(),
 			}),
 		},
 	}
@@ -87,12 +88,13 @@ func (runCommandTool) Definition() client.ToolDefinition {
 
 func (runCommandTool) Execute(ctx context.Context, raw json.RawMessage, env ExecEnv) (Result, error) {
 	var args struct {
-		Command        string `json:"command"`
-		Cwd            string `json:"cwd"`
-		TimeoutSeconds int    `json:"timeout_seconds"`
-		Background     bool   `json:"background"`
-		UsePty         bool   `json:"use_pty"`
-		Workspace      string `json:"workspace"`
+		Command           string `json:"command"`
+		Cwd               string `json:"cwd"`
+		TimeoutSeconds    int    `json:"timeout_seconds"`
+		Background        bool   `json:"background"`
+		CheckAfterSeconds int    `json:"check_after_seconds"`
+		UsePty            bool   `json:"use_pty"`
+		Workspace         string `json:"workspace"`
 	}
 	if err := json.Unmarshal(raw, &args); err != nil {
 		return Result{}, err
@@ -117,7 +119,7 @@ func (runCommandTool) Execute(ctx context.Context, raw json.RawMessage, env Exec
 		return Result{}, err
 	}
 	if ws.Kind == workspace.KindSSH {
-		return runRemoteCommand(ctx, ws, dir, args.Command, args.TimeoutSeconds, args.Background, env)
+		return runRemoteCommand(ctx, ws, dir, args.Command, args.TimeoutSeconds, args.CheckAfterSeconds, args.Background, env)
 	}
 	shellCmd := args.Command
 	var sudoGrantEnv []string
@@ -140,7 +142,7 @@ func (runCommandTool) Execute(ctx context.Context, raw json.RawMessage, env Exec
 	// it cannot reuse the ticket.
 	detach := sudoGrantEnv == nil && env.Sudo.TicketMayBeLive()
 	if args.Background {
-		return startBackgroundJob(env, args.Command, args.Cwd, args.TimeoutSeconds, func(runCtx context.Context) (*exec.Cmd, error) {
+		return startBackgroundJob(env, args.Command, args.Cwd, args.TimeoutSeconds, args.CheckAfterSeconds, func(runCtx context.Context) (*exec.Cmd, error) {
 			cmd := exec.CommandContext(runCtx, "bash", "-lc", args.Command)
 			if detach {
 				detachFromTerminal(cmd, false)
@@ -218,11 +220,34 @@ func (runCommandTool) Execute(ctx context.Context, raw json.RawMessage, env Exec
 	return Result{Content: text, Preview: preview(text)}, nil
 }
 
+func persistBackgroundJobUpdate(env ExecEnv) error {
+	if env.NotifyBackgroundJob != nil {
+		// The callback has already handed the canonical snapshot to the UI.
+		return nil
+	}
+	return env.PersistSession()
+}
+
+func notifyBackgroundJob(env ExecEnv, msg string) {
+	if env.NotifyBackgroundJob != nil {
+		env.NotifyBackgroundJob(client.Message{Role: "system", ToolName: "background_job", Content: msg})
+		return
+	}
+	// Standalone MCP/headless callers have no live UI callback. Keep the
+	// notice in their shared session for a subsequent turn.
+	env.SessionState.History = append(env.SessionState.History, client.Message{
+		Role: "system", ToolName: "background_job", Content: msg,
+	})
+}
+
 // startBackgroundJob runs the command built by mk detached from the
 // turn, logging to the job dir, and records it in the session.
-func startBackgroundJob(env ExecEnv, command, cwd string, timeoutSeconds int, mk func(context.Context) (*exec.Cmd, error)) (Result, error) {
+func startBackgroundJob(env ExecEnv, command, cwd string, timeoutSeconds, checkAfterSeconds int, mk func(context.Context) (*exec.Cmd, error)) (Result, error) {
 	if env.SessionState == nil || env.PersistSession == nil {
 		return Result{Content: "Background execution unavailable: session persistence is not configured.", Preview: "background unavailable"}, nil
+	}
+	if env.BackgroundJobMu == nil {
+		return Result{}, fmt.Errorf("background execution unavailable: job synchronization is not configured")
 	}
 	jobID := fmt.Sprintf("job-%d", time.Now().UnixNano())
 	jobDir := filepath.Join(env.WorkspaceRoot, ".ergo-cli-go", "jobs", jobID)
@@ -239,8 +264,12 @@ func startBackgroundJob(env ExecEnv, command, cwd string, timeoutSeconds int, mk
 		OutputPath:  logPath,
 		SessionPath: filepath.Join(jobDir, "session.json"),
 	}
+	env.BackgroundJobMu.Lock()
 	env.SessionState.BackgroundJobs = append(env.SessionState.BackgroundJobs, job)
-	if err := env.PersistSession(); err != nil {
+	env.BackgroundJobMu.Unlock()
+	if env.SyncSession != nil {
+		env.SyncSession()
+	} else if err := env.PersistSession(); err != nil {
 		return Result{}, fmt.Errorf("persist background job: %w", err)
 	}
 
@@ -296,8 +325,57 @@ func startBackgroundJob(env ExecEnv, command, cwd string, timeoutSeconds int, mk
 		job.CompletedAt = time.Now().UTC().Format(time.RFC3339)
 		updateBackgroundJob(env, jobID, job)
 	}()
+	// Optional recurring, non-blocking progress: while the job runs, a
+	// ticker injects a short progress system message every check_after_seconds
+	// so the model sees status without a blocking status command. The user
+	// keeps the conversation free the whole time.
+	if checkAfterSeconds > 0 {
+		go watchBackgroundJobProgress(env, jobID, time.Duration(checkAfterSeconds)*time.Second)
+	}
 	msg := fmt.Sprintf("Started background job %s. Use background_job with job_id %s to read its status and output.", jobID, jobID)
 	return Result{Content: msg, Preview: msg}, nil
+}
+
+// watchBackgroundJobProgress periodically appends a progress system message
+// while the job is still running, then stops once it reaches a terminal
+// state (the completion notification is emitted by updateBackgroundJob).
+func watchBackgroundJobProgress(env ExecEnv, jobID string, interval time.Duration) {
+	t := time.NewTicker(interval)
+	defer t.Stop()
+	for range t.C {
+		if env.SessionState == nil || env.PersistSession == nil {
+			return
+		}
+		env.BackgroundJobMu.Lock()
+		var job *session.BackgroundJob
+		for i := range env.SessionState.BackgroundJobs {
+			if env.SessionState.BackgroundJobs[i].ID == jobID {
+				job = &env.SessionState.BackgroundJobs[i]
+				break
+			}
+		}
+		if job == nil {
+			env.BackgroundJobMu.Unlock()
+			return
+		}
+		if isTerminal(job.Status) {
+			env.BackgroundJobMu.Unlock()
+			return
+		}
+		msg := fmt.Sprintf("Background job %s still %s (%s).", jobID, job.Status, time.Since(jobStartedAt(job)).Round(time.Second))
+		env.BackgroundJobMu.Unlock()
+		notifyBackgroundJob(env, msg)
+		_ = persistBackgroundJobUpdate(env)
+	}
+}
+
+// jobStartedAt parses the job's started-at timestamp; falls back to zero.
+func jobStartedAt(job *session.BackgroundJob) time.Time {
+	t, err := time.Parse(time.RFC3339, job.StartedAt)
+	if err != nil {
+		return time.Time{}
+	}
+	return t
 }
 
 // withSudoNote prefixes command output with the recorded sudo decision
@@ -344,10 +422,15 @@ func (backgroundJobTool) Execute(_ context.Context, raw json.RawMessage, env Exe
 	if env.SessionState == nil {
 		return Result{}, fmt.Errorf("background job state is unavailable")
 	}
+	if env.BackgroundJobMu != nil {
+		env.BackgroundJobMu.Lock()
+		defer env.BackgroundJobMu.Unlock()
+	}
 	var job *session.BackgroundJob
 	for i := range env.SessionState.BackgroundJobs {
 		if env.SessionState.BackgroundJobs[i].ID == args.JobID {
-			job = &env.SessionState.BackgroundJobs[i]
+			j := env.SessionState.BackgroundJobs[i]
+			job = &j
 			break
 		}
 	}
@@ -377,26 +460,29 @@ func updateBackgroundJob(env ExecEnv, id string, job session.BackgroundJob) {
 	if env.SessionState == nil || env.PersistSession == nil {
 		return
 	}
+	var msg string
+	found := false
+	env.BackgroundJobMu.Lock()
 	for i := range env.SessionState.BackgroundJobs {
 		if env.SessionState.BackgroundJobs[i].ID == id {
+			found = true
 			prev := env.SessionState.BackgroundJobs[i]
 			env.SessionState.BackgroundJobs[i] = job
-			// On transition to a terminal state, append a system message
-			// so the next model call is informed without a tool round-trip.
 			if isTerminal(job.Status) && !isTerminal(prev.Status) {
-				msg := fmt.Sprintf("Background job %s %s.", id, job.Status)
+				msg = fmt.Sprintf("Background job %s %s.", id, job.Status)
 				if job.Error != "" {
 					msg += " Error: " + job.Error
 				}
-				env.SessionState.History = append(env.SessionState.History, client.Message{
-					Role:    "system",
-					Content: msg,
-				})
 			}
-			_ = env.PersistSession()
-			return
+			break
 		}
 	}
+	env.BackgroundJobMu.Unlock()
+	if !found {
+		return
+	}
+	notifyBackgroundJob(env, msg)
+	_ = persistBackgroundJobUpdate(env)
 }
 
 func isTerminal(status string) bool {

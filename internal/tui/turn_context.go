@@ -33,13 +33,10 @@ const (
 	// wordBudgetCharsPerWord is the average rendered width of one English
 	// word including its trailing space.
 	wordBudgetCharsPerWord = 6.0
-	// wordBudgetReservedLines covers the assistant label + timestamp rows
-	// rendered above every reply.
+	// wordBudgetReservedLines covers the assistant label and timestamp.
 	wordBudgetReservedLines = 2
-	// wordBudgetFill is the share of the remaining area prose is assumed
-	// to fill; the rest absorbs ragged word-wrap, blank lines between
-	// paragraphs, list markers, headings and code fences.
-	wordBudgetFill = 0.8
+	// wordBudgetFill leaves room for wrapping, paragraphs, and markdown.
+	wordBudgetFill = 0.65
 	wordBudgetMin  = 40
 	wordBudgetMax  = 1500
 	// Fallback pane size when the layout has not been drawn yet.
@@ -50,9 +47,9 @@ const (
 // WordBudget returns the maximum number of words a reply should use so it
 // fits the transcript pane's visible area of cols × lines cells:
 //
-//	floor( (cols / 6) × (lines − 2) × 0.8 ), clamped to [40, 1500]
+//	floor( (cols / 6) × (lines − 2) × 0.65 ), clamped to [40, 1500]
 //
-// e.g. 100 cols × 30 lines → 16.67 words/line × 28 lines × 0.8 = 373.
+// e.g. 100 cols × 30 lines → 16.67 words/line × 28 lines × 0.65 = 303.
 func WordBudget(cols, lines int) int {
 	if cols <= 0 {
 		cols = fallbackPaneCols
@@ -86,6 +83,7 @@ type turnContextInfo struct {
 	OS              string
 	Timezone        string
 	LocalTime       string
+	LastInteraction string
 	Git             string
 	Context         string
 	OpenTasks       string
@@ -122,6 +120,7 @@ func formatTurnContext(info turnContextInfo) string {
 	line("os", info.OS)
 	line("timezone", info.Timezone)
 	line("local_time", info.LocalTime)
+	line("conversation_resume", info.LastInteraction)
 	line("git", info.Git)
 	line("context_remaining", info.Context)
 	line("open_tasks", info.OpenTasks)
@@ -340,6 +339,7 @@ func (a *App) buildTurnContext(atts []fileAttachment) string {
 	now := time.Now()
 	info.Timezone = now.Location().String()
 	info.LocalTime = now.Format("2006-01-02 15:04")
+	info.LastInteraction = conversationResume(a.lastInteractionAt, now)
 	info.Git = gitSnapshot(info.Cwd)
 	info.Context = contextRemaining(a.ctxUsage.Used, a.ctxUsage.Window)
 	info.OpenTasks = openTaskTitles(a.workspaceRoot)
@@ -355,6 +355,31 @@ func clientOS() string {
 		return "termux"
 	}
 	return runtime.GOOS
+}
+
+// conversationResume returns guidance only after a meaningful pause.
+func conversationResume(last string, now time.Time) string {
+	t, err := time.Parse(time.RFC3339, last)
+	if err != nil {
+		return ""
+	}
+	gap := now.Sub(t)
+	if gap < 30*time.Minute {
+		return ""
+	}
+	return fmt.Sprintf("%s since the last completed turn; if useful, briefly recap recent context before answering", formatConversationGap(gap))
+}
+
+func formatConversationGap(d time.Duration) string {
+	d = d.Round(time.Minute)
+	switch {
+	case d < time.Hour:
+		return fmt.Sprintf("%d minutes", int(d.Minutes()))
+	case d < 48*time.Hour:
+		return fmt.Sprintf("%.1f hours", d.Hours())
+	default:
+		return fmt.Sprintf("%.1f days", d.Hours()/24)
+	}
 }
 
 func contextRemaining(used, window int) string {

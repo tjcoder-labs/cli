@@ -3,6 +3,37 @@
   "schema_version": 1,
   "releases": [
     {
+      "version": "0.9.274",
+      "date": "2026-11-13",
+      "title": "Reliable background updates and conversation resume",
+      "summary": "Background commands can deliver periodic progress without blocking the conversation. Reply sizing fits short panes better, and resuming after a break retains the true conversation gap.",
+      "changes": {
+        "added": [
+          {
+            "text": "Background run_command jobs accept check_after_seconds for recurring progress updates without a blocking status check.",
+            "details": "Progress and completion updates are saved in the conversation and delivered to the next model request without interrupting an active response or starting a provider call while idle."
+          }
+        ],
+        "changed": [
+          {
+            "text": "Reduced the transcript-aware reply word budget to better fit narrow, short panes."
+          },
+          {
+            "text": "The agent now knows how long it has been since the last completed turn when a conversation resumes after a meaningful pause.",
+            "details": "The timestamp advances only after a completed assistant reply, so reopening the CLI preserves the original gap."
+          }
+        ],
+        "fixed": [
+          {
+            "text": "Background job updates now persist through the live conversation without racing the TUI or disappearing after a turn."
+          },
+          {
+            "text": "Session reloads retain the last completed interaction timestamp for accurate resume guidance."
+          }
+        ]
+      }
+    },
+    {
       "version": "0.9.273",
       "date": "2026-11-13",
       "title": "Better package discovery",
