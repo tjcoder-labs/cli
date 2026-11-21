@@ -27,7 +27,7 @@ func TestSlashModeForEveryCommand(t *testing.T) {
 		"reference": slashImmediate, "about": slashImmediate, "telemetry": slashImmediate,
 		"test": slashImmediate, "articles": slashImmediate, "dirs": slashImmediate,
 		"add-dir": slashImmediate, "add": slashImmediate, "use": slashImmediate,
-		"workspaces": slashImmediate, "nosuchcommand": slashImmediate,
+		"workspaces": slashImmediate, "nosuchcommand": slashImmediate, "usage": slashImmediate,
 		"capture": slashImmediate, "screenshot": slashImmediate,
 		"ask": slashImmediate, "btw": slashImmediate,
 		"voice": slashImmediate,

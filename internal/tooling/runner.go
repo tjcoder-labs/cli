@@ -57,6 +57,10 @@ const (
 	// the ToolName field (always "steering") to style it
 	// differently from a regular /submit message.
 	EventSteering EventType = "steering"
+	// EventUsage is emitted after every successful model call with the
+	// call's token usage (and known cost) in Turn. UIs aggregate it into
+	// session.State.Usage; it is never emitted for cancelled calls.
+	EventUsage EventType = "usage"
 )
 
 type Event struct {
@@ -65,6 +69,8 @@ type Event struct {
 	Text     string
 	// Usage is set on EventContext events.
 	Usage *client.ContextUsage
+	// Turn is set on EventUsage events.
+	Turn *session.TurnUsage
 }
 
 // Observer receives anonymous timing/outcome signals (telemetry). It
@@ -769,6 +775,10 @@ func (r *Runner) runChatTurn(ctx context.Context, model, systemPrompt string, hi
 			return client.Message{}, errTurnCancelledBySteering
 		}
 		return client.Message{}, err
+	}
+	if onEvent != nil {
+		turn := session.NewTurnUsage(model, client.ProviderKey(r.Provider), client.UsageFromMessage(req.Messages, msg))
+		onEvent(Event{Type: EventUsage, Turn: &turn})
 	}
 	if onEvent != nil {
 		reasoning, commentary := parser.Flush()

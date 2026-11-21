@@ -99,6 +99,7 @@ func (a *App) loadSession() {
 	}
 	a.sessionState = state
 	a.sessionID = state.SessionID
+	a.setUsage(state.Usage)
 	a.lastInteractionAt = state.LastInteractionAt
 	// Header / footer / status pill are built once in build() with
 	// default values, so we need to re-render them now that we've
@@ -204,6 +205,7 @@ func (a *App) saveSession() error {
 		Articles:          append([]session.Article(nil), a.sessionState.Articles...),
 		Memories:          append([]session.Memory(nil), a.sessionState.Memories...),
 		BackgroundJobs:    append([]session.BackgroundJob(nil), a.sessionState.BackgroundJobs...),
+		Usage:             a.usageSnapshot(),
 	}
 	if a.workspaces != nil {
 		newState.Workspaces = a.workspaces.Specs()

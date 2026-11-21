@@ -33,6 +33,32 @@ func extractAndPrettyJSON(s string) (string, bool) {
 	return "", false
 }
 
+// extractAndPrettyJSONWithUsage is extractAndPrettyJSON that adds usage
+// under a top-level "usage" key. ok is false when no JSON value was
+// found, the value is not an object, or it already has a "usage" key.
+func extractAndPrettyJSONWithUsage(s string, usage any) (string, bool) {
+	pretty, ok := extractAndPrettyJSON(s)
+	if !ok {
+		return "", false
+	}
+	var obj map[string]any
+	if err := json.Unmarshal([]byte(pretty), &obj); err != nil || obj == nil {
+		return "", false
+	}
+	if _, taken := obj["usage"]; taken {
+		return "", false
+	}
+	obj["usage"] = usage
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetIndent("", "  ")
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(obj); err != nil {
+		return "", false
+	}
+	return strings.TrimRight(buf.String(), "\n"), true
+}
+
 // extractAndPrettyXML finds the first balanced XML element in s,
 // validates it via encoding/xml, and returns it pretty-printed with
 // two spaces of indentation. Returns ok=false when no well-formed

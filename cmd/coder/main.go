@@ -156,6 +156,7 @@ func main() {
 	askFormat := flag.String("format", "text", "headless ask mode: coerce model output — one of {text, json, xml}. For json/xml the response is extracted, validated, and pretty-printed; tool activity remains enabled unless --no-tools is also set.")
 	flag.StringVar(askFormat, "output-format", "", "alias for --format (overrides --format when set)")
 	askAllowSudo := flag.Bool("allow-sudo", false, "headless ask mode: let run_command use sudo non-interactively (sudo -n; never prompts for a password)")
+	askUsage := flag.Bool("usage", false, "headless ask mode: write a token usage summary line to stderr (stdout stays clean). --format json always includes a usage object.")
 
 	flag.Usage = func() {
 		fmt.Fprintln(flag.CommandLine.Output(), "Usage: coder [flags] | coder ask [text] | coder browser-host register|unregister")
@@ -264,6 +265,7 @@ func main() {
 				ToolMax:       askToolMax,
 				Format:        resolveFormatFlag(*askFormat),
 				AllowSudo:     *askAllowSudo,
+				Usage:         *askUsage,
 				ExplicitAgent: explicitAgent,
 				ExplicitModel: explicitModel,
 				ExplicitTools: explicitNoTools || explicitAllTools,
@@ -308,6 +310,7 @@ func main() {
 			ToolMax:       askToolMax,
 			Format:        resolveFormatFlag(*askFormat),
 			AllowSudo:     *askAllowSudo,
+			Usage:         *askUsage,
 			ExplicitAgent: explicitAgent,
 			ExplicitModel: explicitModel,
 			ExplicitTools: explicitNoTools || explicitAllTools,
@@ -736,6 +739,9 @@ type askOptions struct {
 	// AllowSudo lets run_command use sudo non-interactively (sudo -n).
 	// Without it, headless sudo commands are denied.
 	AllowSudo bool
+	// Usage writes a one-line token usage summary to stderr after the
+	// reply (text mode); --format json embeds a usage object instead.
+	Usage bool
 }
 
 // cmdAsk runs a single prompt end-to-end without launching the tview TUI.
@@ -841,9 +847,11 @@ func cmdAsk(opts askOptions) {
 
 	model := opts.Model
 	provKey := client.ProviderKey(provider)
-	_, isErgo := provider.(*client.Ergo)
+	ergoProv, isErgo := provider.(*client.Ergo)
 	var ergoAvail []string
 	if isErgo {
+		// Gateway-published rates for cost estimates in the usage report.
+		ergoProv.PrefetchPricing()
 		// Full unified gateway catalogue (/v1/providers or /v1/models) once
 		// signed in, else the hardcoded ergo/flash, ergo/pro, ergo/genius.
 		fctx, fcancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -977,6 +985,9 @@ func cmdAsk(opts askOptions) {
 	)
 	_ = stdoutWriter
 
+	// runUsage is this invocation's usage; sessionState.Usage keeps the
+	// cumulative session total that survives --session resumes.
+	runUsage := &session.UsageStats{}
 	onEvent := func(ev tooling.Event) {
 		switch ev.Type {
 		case tooling.EventReasoning:
@@ -1020,6 +1031,11 @@ func cmdAsk(opts askOptions) {
 		case tooling.EventContext:
 			if !opts.Quiet {
 				fmt.Fprintf(stderrWriter, "%s\n", ev.Text)
+			}
+		case tooling.EventUsage:
+			if ev.Turn != nil {
+				runUsage.Add(*ev.Turn)
+				sessionState.EnsureUsage().Add(*ev.Turn)
 			}
 		}
 	}
@@ -1080,11 +1096,28 @@ func cmdAsk(opts askOptions) {
 	// The last message in history is the final assistant reply (the runner
 	// only returns when msg.ToolCalls is empty).
 	final := lastAssistantMessage(newHistory)
-	if err := emitFinalReply(stdoutWriter, stderrWriter, opts.Format, final, opts.Quiet); err != nil {
+	report := headlessUsageReport(runUsage, sessionState.Usage, opts.Session)
+	if err := emitFinalReplyWithUsage(stdoutWriter, stderrWriter, opts.Format, final, opts.Quiet, &report); err != nil {
 		// Exit non-zero so scripts and CI can tell "no answer" from a
 		// real reply; fatal writes the reason to stderr even with --quiet.
 		fatal("ask: %v", err)
 	}
+	if opts.Usage && opts.Format != "json" {
+		fmt.Fprintln(stderrWriter, runUsage.SummaryLine())
+	}
+}
+
+// headlessUsageReport is the `usage` object for --format json: this
+// run's totals, plus the cumulative session total when persisted.
+func headlessUsageReport(run, sess *session.UsageStats, persisted bool) session.UsageReport {
+	r := run.Report()
+	if persisted && !sess.Empty() {
+		s := sess.Report()
+		s.ByModel = nil
+		r.Session = &s
+		r.WalletSpentCents, s.WalletSpentCents = s.WalletSpentCents, nil
+	}
+	return r
 }
 
 // errEmptyReply is returned by emitFinalReply when the model's final
@@ -1095,8 +1128,28 @@ var errEmptyReply = errors.New("the model returned an empty reply (nothing writt
 // format, or returns errEmptyReply (printing nothing) when the reply is
 // empty or whitespace only.
 func emitFinalReply(stdoutWriter, stderrWriter io.Writer, format, final string, quiet bool) error {
+	return emitFinalReplyWithUsage(stdoutWriter, stderrWriter, format, final, quiet, nil)
+}
+
+// emitFinalReplyWithUsage is emitFinalReply that, for --format json,
+// adds usage as a top-level "usage" key of the reply object. When the
+// reply is not a JSON object (or already has "usage"), stdout is left
+// exactly as the model produced it and the usage object is written to
+// stderr as `usage: {...}` instead, so scripts never get a reshaped value.
+func emitFinalReplyWithUsage(stdoutWriter, stderrWriter io.Writer, format, final string, quiet bool, usage *session.UsageReport) error {
 	if strings.TrimSpace(final) == "" {
 		return errEmptyReply
+	}
+	if usage != nil && strings.EqualFold(strings.TrimSpace(format), "json") {
+		if pretty, ok := extractAndPrettyJSONWithUsage(final, usage); ok {
+			fmt.Fprintln(stdoutWriter, pretty)
+			return nil
+		}
+		emitFormatted(stdoutWriter, stderrWriter, format, final, quiet)
+		if b, err := json.Marshal(usage); err == nil {
+			fmt.Fprintf(stderrWriter, "usage: %s\n", b)
+		}
+		return nil
 	}
 	emitFormatted(stdoutWriter, stderrWriter, format, final, quiet)
 	return nil

@@ -145,6 +145,10 @@ type State struct {
 	// primary excluded; ActiveWorkspace is the /use choice.
 	Workspaces      []workspace.Spec `json:"workspaces,omitempty"`
 	ActiveWorkspace string           `json:"active_workspace,omitempty"`
+
+	// Usage is the cumulative token usage (and known cost) of the
+	// session; nil in session files written before usage tracking.
+	Usage *UsageStats `json:"usage,omitempty"`
 }
 
 // NewSessionID returns a random, URL-safe session id ("cs_" + 24 hex).
@@ -195,6 +199,7 @@ func LoadFile(path string) (State, bool, error) {
 		Articles          []Article            `json:"articles,omitempty"`
 		Memories          []Memory             `json:"memories,omitempty"`
 		BackgroundJobs    []BackgroundJob      `json:"background_jobs,omitempty"`
+		Usage             *UsageStats          `json:"usage,omitempty"`
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return state, true, fmt.Errorf("session: decode %s: %w", path, err)
@@ -216,6 +221,7 @@ func LoadFile(path string) (State, bool, error) {
 	state.Articles = raw.Articles
 	state.Memories = raw.Memories
 	state.BackgroundJobs = raw.BackgroundJobs
+	state.Usage = raw.Usage
 	state.Transcript = parseTranscript(raw.Transcript)
 	return state, true, nil
 }

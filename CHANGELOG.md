@@ -4,6 +4,23 @@
 
 All notable changes to Coder CLI. The source of truth is [release-notes/releases.json](release-notes/releases.json).
 
+## 0.9.276 — 2026-11-21
+
+**See what every session costs in tokens.** Every model call's prompt and completion tokens are tracked per session, for every provider. The footer shows a running counter, /usage breaks totals down by model or gateway tier, and headless runs can report usage too.
+
+### Added
+
+- A compact token counter in the footer, such as ↑ 12.3k ↓ 4.5k tokens.
+  Counts come from each provider's own usage report (the TJ Coder gateway, Ollama, Ollama Cloud, Gemini and OpenAI-compatible providers). When a provider reports nothing, tokens are estimated and marked with ~.
+- /usage prints a table of requests, prompt, completion and total tokens by model or gateway tier, with a total row.
+  A cost column appears only when the TJ Coder gateway prices the calls. A cost the gateway reports, including research sub-calls, searches and tool steps, is shown as is. Otherwise the cost is estimated from the gateway's published rates and marked ~. Local Ollama shows tokens only. When you are signed in, /usage and /balance show the same session spend, measured from your wallet.
+- Headless runs: --format json adds a top-level usage object, and --usage writes a one-line summary to stderr.
+  The usage object has this run's tokens, cost and per-model breakdown, plus the session total. If the reply is not a JSON object, stdout is left unchanged and the usage object goes to stderr.
+
+### Changed
+
+- Usage totals are saved in the session file, so /usage stays correct after a --session resume. Older session files still load.
+
 ## 0.9.275 — 2026-11-21
 
 **Conversations follow your tjcoder.com account.** When you are signed in to the tjcoder.com gateway, each session's transcript is saved to your account's conversations in the background, whichever provider you chat with.

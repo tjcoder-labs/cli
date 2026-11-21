@@ -13,6 +13,11 @@ type Message struct {
 	ToolCalls       []ToolCall `json:"tool_calls,omitempty"`
 	PromptEvalCount int        `json:"prompt_eval_count,omitempty"`
 	EvalCount       int        `json:"eval_count,omitempty"`
+	// Usage is the provider's full usage/cost report for this response
+	// when it gives more than raw counts (the TJ Coder gateway). It is
+	// never sent back to a provider nor stored in history; session
+	// usage totals are persisted separately (session.UsageStats).
+	Usage *Usage `json:"-"`
 }
 
 type ToolCall struct {

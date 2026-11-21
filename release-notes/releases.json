@@ -3,6 +3,33 @@
   "schema_version": 1,
   "releases": [
     {
+      "version": "0.9.276",
+      "date": "2026-11-21",
+      "title": "See what every session costs in tokens",
+      "summary": "Every model call's prompt and completion tokens are tracked per session, for every provider. The footer shows a running counter, /usage breaks totals down by model or gateway tier, and headless runs can report usage too.",
+      "changes": {
+        "added": [
+          {
+            "text": "A compact token counter in the footer, such as ↑ 12.3k ↓ 4.5k tokens.",
+            "details": "Counts come from each provider's own usage report (the TJ Coder gateway, Ollama, Ollama Cloud, Gemini and OpenAI-compatible providers). When a provider reports nothing, tokens are estimated and marked with ~."
+          },
+          {
+            "text": "/usage prints a table of requests, prompt, completion and total tokens by model or gateway tier, with a total row.",
+            "details": "A cost column appears only when the TJ Coder gateway prices the calls. A cost the gateway reports, including research sub-calls, searches and tool steps, is shown as is. Otherwise the cost is estimated from the gateway's published rates and marked ~. Local Ollama shows tokens only. When you are signed in, /usage and /balance show the same session spend, measured from your wallet."
+          },
+          {
+            "text": "Headless runs: --format json adds a top-level usage object, and --usage writes a one-line summary to stderr.",
+            "details": "The usage object has this run's tokens, cost and per-model breakdown, plus the session total. If the reply is not a JSON object, stdout is left unchanged and the usage object goes to stderr."
+          }
+        ],
+        "changed": [
+          {
+            "text": "Usage totals are saved in the session file, so /usage stays correct after a --session resume. Older session files still load."
+          }
+        ]
+      }
+    },
+    {
       "version": "0.9.275",
       "date": "2026-11-21",
       "title": "Conversations follow your tjcoder.com account",

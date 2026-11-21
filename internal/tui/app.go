@@ -244,6 +244,7 @@ var slashCommands = []slashCommand{
 	{"login", "Sign in to the TJ Coder gateway"},
 	{"logout", "Sign out of the TJ Coder gateway"},
 	{"balance", "Wallet balance and top-up"},
+	{"usage", "Token usage (and cost) for this session"},
 	{"activity", "Open the activity panel"},
 	{"canvas", "Open a file or range in the canvas"},
 	{"add", "Add a workspace: path or ssh <host>[:<path>]"},
@@ -278,6 +279,11 @@ type App struct {
 	// ergoBalanceKnown. Touched only on the UI goroutine.
 	ergoBalanceCents int64
 	ergoBalanceKnown bool
+	// usage is the session's cumulative token usage (persisted as
+	// session.State.Usage); guarded by usageMu because saveSession can
+	// run off the UI goroutine.
+	usageMu sync.Mutex
+	usage   *session.UsageStats
 	registry         *tools.Registry
 	runner           *tooling.Runner
 	// steeringCh carries mid-turn user steering messages from the
@@ -1510,8 +1516,13 @@ func (a *App) refreshFooter() {
 		return fmt.Sprintf("[%s]%s[-] %s", a.palette.HexLavender, key, label)
 	}
 	a.footer.SetTextAlign(tview.AlignRight)
+	counter := a.usageCounterSegment()
+	if counter != "" {
+		counter += "   "
+	}
 	a.footer.SetText(fmt.Sprintf(
-		"  %s  %s  %s",
+		"  %s%s  %s  %s",
+		counter,
 		hint("[Alt+A]", "Activity"),
 		hint("[Alt+T]", "Tasks"),
 		hint("[Alt+C]", "Code"),
@@ -2405,6 +2416,8 @@ func (a *App) handleSlashCommand(cmd string) {
 		a.handleLogoutCommand()
 	case "balance":
 		a.handleBalanceCommand()
+	case "usage":
+		a.handleUsageCommand()
 	case "add", "add-dir":
 		a.handleAddCommand(commandArgs(cmd))
 	case "dirs", "workspaces":
@@ -2440,6 +2453,7 @@ func (a *App) showHelp() {
 		"Gateway\n" +
 		"  /login                sign in               /logout     sign out\n" +
 		"  /balance              wallet and top-up     /providers  manage providers\n" +
+		"  /usage                session token usage and cost by model\n" +
 		"\n" +
 		"Session\n" +
 		"  /config               edit config           /environment  edit the env template\n" +
@@ -3439,6 +3453,8 @@ func (a *App) clearSession() {
 	a.reasoning.Clear()
 	a.activity.Clear()
 	a.ctxUsage = client.ContextUsage{}
+	a.setUsage(nil)
+	a.refreshFooter()
 	a.refSet = map[string]struct{}{}
 	a.refOrder = nil
 	a.setTranscriptSplash()
@@ -4143,6 +4159,10 @@ func (a *App) handleEvent(event tooling.Event) {
 				a.recordContextUsage(*event.Usage)
 			}
 			a.refreshContextBar()
+		case tooling.EventUsage:
+			if event.Turn != nil {
+				a.recordTurnUsage(*event.Turn)
+			}
 		case tooling.EventSteering:
 			// Transcript line was already drawn at queue time
 			// (submit / submitScheduled) so the user sees it
