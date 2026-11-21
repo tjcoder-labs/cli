@@ -9,6 +9,8 @@
 package session
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -16,6 +18,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/tjcoder-labs/cli/internal/client"
 	"github.com/tjcoder-labs/cli/internal/workspace"
@@ -109,6 +112,9 @@ type Memory struct {
 // what either consumer writes today, which lets the TUI and headless
 // paths evolve independently without losing each other's data.
 type State struct {
+	// SessionID is the stable id of this conversation (minted on first save,
+	// replaced by /clear). Transcript sync keys the server conversation on it.
+	SessionID    string `json:"session_id,omitempty"`
 	CurrentAgent string `json:"current_agent"`
 	CurrentModel string `json:"current_model"`
 	// Persisted model management settings
@@ -141,6 +147,15 @@ type State struct {
 	ActiveWorkspace string           `json:"active_workspace,omitempty"`
 }
 
+// NewSessionID returns a random, URL-safe session id ("cs_" + 24 hex).
+func NewSessionID() string {
+	var b [12]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return fmt.Sprintf("cs_%x", time.Now().UnixNano())
+	}
+	return "cs_" + hex.EncodeToString(b[:])
+}
+
 // Load reads the session file for the given workspace root. If the file
 // is missing it returns (zero, false, nil) — callers should treat that
 // as "no prior session" and fall back to defaults. A corrupt file
@@ -163,6 +178,7 @@ func LoadFile(path string) (State, bool, error) {
 	}
 
 	var raw struct {
+		SessionID         string               `json:"session_id,omitempty"`
 		CurrentAgent      string               `json:"current_agent"`
 		CurrentModel      string               `json:"current_model"`
 		ToolMax           int                  `json:"tool_max,omitempty"`
@@ -184,6 +200,7 @@ func LoadFile(path string) (State, bool, error) {
 		return state, true, fmt.Errorf("session: decode %s: %w", path, err)
 	}
 
+	state.SessionID = raw.SessionID
 	state.CurrentAgent = raw.CurrentAgent
 	state.CurrentModel = raw.CurrentModel
 	state.ToolMax = raw.ToolMax

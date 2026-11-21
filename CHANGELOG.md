@@ -4,6 +4,17 @@
 
 All notable changes to Coder CLI. The source of truth is [release-notes/releases.json](release-notes/releases.json).
 
+## 0.9.275 — 2026-11-21
+
+**Conversations follow your tjcoder.com account.** When you are signed in to the tjcoder.com gateway, each session's transcript is saved to your account's conversations in the background, whichever provider you chat with.
+
+### Added
+
+- Signed-in sessions sync their transcript (your messages, replies and tool calls) to your tjcoder.com conversations, including turns served by Ollama, OpenAI-compatible, Gemini or other providers.
+  Sync runs in the background after each turn and never blocks or fails a turn. Unsynced turns stay in the session and are sent later, without duplicates, if you are offline. API keys, tokens and private keys are masked before upload. Each conversation records the provider, model, agent, working directory and CLI version.
+- Opt out with CODER_TRANSCRIPT_SYNC=0 or "transcript_sync": false in prefs.json.
+  Signed-out sessions never sync. /clear starts a new conversation.
+
 ## 0.9.274 — 2026-11-13
 
 **Reliable background updates and conversation resume.** Background commands can deliver periodic progress without blocking the conversation. Reply sizing fits short panes better, and resuming after a break retains the true conversation gap.

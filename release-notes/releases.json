@@ -3,6 +3,24 @@
   "schema_version": 1,
   "releases": [
     {
+      "version": "0.9.275",
+      "date": "2026-11-21",
+      "title": "Conversations follow your tjcoder.com account",
+      "summary": "When you are signed in to the tjcoder.com gateway, each session's transcript is saved to your account's conversations in the background, whichever provider you chat with.",
+      "changes": {
+        "added": [
+          {
+            "text": "Signed-in sessions sync their transcript (your messages, replies and tool calls) to your tjcoder.com conversations, including turns served by Ollama, OpenAI-compatible, Gemini or other providers.",
+            "details": "Sync runs in the background after each turn and never blocks or fails a turn. Unsynced turns stay in the session and are sent later, without duplicates, if you are offline. API keys, tokens and private keys are masked before upload. Each conversation records the provider, model, agent, working directory and CLI version."
+          },
+          {
+            "text": "Opt out with CODER_TRANSCRIPT_SYNC=0 or \"transcript_sync\": false in prefs.json.",
+            "details": "Signed-out sessions never sync. /clear starts a new conversation."
+          }
+        ]
+      }
+    },
+    {
       "version": "0.9.274",
       "date": "2026-11-13",
       "title": "Reliable background updates and conversation resume",

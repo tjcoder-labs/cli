@@ -98,6 +98,7 @@ func (a *App) loadSession() {
 		a.setTranscriptSplash()
 	}
 	a.sessionState = state
+	a.sessionID = state.SessionID
 	a.lastInteractionAt = state.LastInteractionAt
 	// Header / footer / status pill are built once in build() with
 	// default values, so we need to re-render them now that we've
@@ -187,6 +188,7 @@ func (a *App) saveSession() error {
 	}
 
 	newState := session.State{
+		SessionID:         a.ensureSessionID(),
 		CurrentAgent:      a.currentAgent.Name,
 		CurrentModel:      a.currentModel,
 		ToolMax:           a.sessionState.ToolMax,
@@ -228,5 +230,6 @@ func (a *App) saveSession() error {
 	if err := session.Save(a.workspaceRoot, newState); err != nil {
 		return err
 	}
+	a.notifyConvSync(newState.History)
 	return nil
 }

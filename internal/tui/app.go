@@ -21,6 +21,7 @@ import (
 	"github.com/tjcoder-labs/cli/internal/auth"
 	"github.com/tjcoder-labs/cli/internal/client"
 	ctxpkg "github.com/tjcoder-labs/cli/internal/context"
+	"github.com/tjcoder-labs/cli/internal/convsync"
 	"github.com/tjcoder-labs/cli/internal/mcp"
 	"github.com/tjcoder-labs/cli/internal/memories"
 	"github.com/tjcoder-labs/cli/internal/providers"
@@ -298,7 +299,11 @@ type App struct {
 	terminalScreen tcell.Screen
 	sessionState   session.State
 	palette        Palette
-	voice          VoiceState
+	// sessionID keys this conversation for transcript sync (session.State.SessionID).
+	sessionID string
+	// convSync mirrors saved transcripts to the gateway account (nil in tests / opted out).
+	convSync *convsync.Syncer
+	voice    VoiceState
 
 	workspaceRoot             string
 	productName               string
@@ -631,6 +636,7 @@ func New(provider client.Provider, registry *tools.Registry, workspaceRoot, mode
 	// races with the very first turn still has somewhere to send.
 	app.runner.Steering = app.steeringCh
 	app.scheduler = newScheduleWorker(app)
+	app.initConvSync()
 	app.build()
 	app.tv.SetAfterDrawFunc(app.afterDraw)
 	app.tv.SetBeforeDrawFunc(app.beforeDraw)
@@ -683,6 +689,7 @@ func (a *App) Run() error {
 	}
 	defer a.closeWorkspaces()
 	defer a.stopRemindersWatch()
+	defer a.closeConvSync() // runs after the final saveSession below
 	defer a.saveSession()
 	defer a.shutdownMCPTunnel()
 	defer a.stopSpinner()
@@ -3426,6 +3433,8 @@ func (a *App) clearSession() {
 	// Reset UI panels to default state
 	a.showPanel("activity")
 	a.history = nil
+	// A cleared session is a new conversation.
+	a.sessionID = session.NewSessionID()
 	a.transcript.Clear()
 	a.reasoning.Clear()
 	a.activity.Clear()

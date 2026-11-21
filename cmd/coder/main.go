@@ -11,17 +11,21 @@ import (
 	"fmt"
 	"github.com/tjcoder-labs/cli/internal/workspace"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"testing"
 	"time"
 
 	"github.com/rivo/tview"
 	"github.com/tjcoder-labs/cli/internal/agent"
+	"github.com/tjcoder-labs/cli/internal/auth"
 	"github.com/tjcoder-labs/cli/internal/browser"
 	"github.com/tjcoder-labs/cli/internal/client"
 	ctxpkg "github.com/tjcoder-labs/cli/internal/context"
+	"github.com/tjcoder-labs/cli/internal/convsync"
 	"github.com/tjcoder-labs/cli/internal/nativehost"
 	"github.com/tjcoder-labs/cli/internal/reminders"
 	"github.com/tjcoder-labs/cli/internal/session"
@@ -668,6 +672,36 @@ func saveSessionState(opts askOptions, state session.State) error {
 	return session.Save(opts.WorkspaceRoot, state)
 }
 
+// syncHeadlessTranscript mirrors the saved session to the signed-in
+// gateway account's conversations (best-effort, bounded to a few seconds,
+// never fatal). Opt out with CODER_TRANSCRIPT_SYNC=0.
+func syncHeadlessTranscript(opts askOptions, state session.State, provider, model, agentName string) {
+	if testing.Testing() || convsync.EnvDisabled() || !session.TranscriptSyncEnabled() {
+		return
+	}
+	sessionPath := opts.SessionPath
+	if sessionPath == "" {
+		sessionPath = session.Path(opts.WorkspaceRoot)
+	}
+	s := convsync.New(convsync.Options{BaseURL: convsync.DefaultBaseURL, Token: auth.ResolveErgoToken, HTTP: &http.Client{Timeout: 5 * time.Second}})
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_ = s.SyncNow(ctx, convsync.Snapshot{
+		SessionID:  state.SessionID,
+		CursorPath: convsync.CursorPathFor(sessionPath),
+		History:    state.History,
+		Meta: convsync.Meta{
+			Provider:   provider,
+			Model:      model,
+			Agent:      agentName,
+			Cwd:        opts.WorkspaceRoot,
+			CLIVersion: version,
+			Platform:   convsync.Platform(),
+			Title:      convsync.TitleFrom(state.History),
+		},
+	})
+}
+
 // askOptions bundles the headless ask-mode inputs so cmdAsk's signature
 // stays readable as we add flags.
 type askOptions struct {
@@ -1020,9 +1054,13 @@ func cmdAsk(opts askOptions) {
 		sessionState.Reasoning += reasoningBuf.String()
 		sessionState.Activity += activityBuf.String()
 
+		if sessionState.SessionID == "" {
+			sessionState.SessionID = session.NewSessionID()
+		}
 		if err := saveSessionState(opts, sessionState); err != nil && !opts.Quiet {
 			fmt.Fprintf(os.Stderr, "warning: failed to persist session: %v\n", err)
 		}
+		syncHeadlessTranscript(opts, sessionState, client.ProviderKey(provider), model, agentCfg.Name)
 	}
 
 	if err != nil {
