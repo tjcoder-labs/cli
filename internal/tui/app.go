@@ -247,6 +247,7 @@ var slashCommands = []slashCommand{
 	{"usage", "Token usage (and cost) for this session"},
 	{"activity", "Open the activity panel"},
 	{"canvas", "Open a file or range in the canvas"},
+	{"watch", "Watch a command's live colorized output: /watch [-n secs] <cmd>"},
 	{"add", "Add a workspace: path or ssh <host>[:<path>]"},
 	{"dirs", "List workspaces; /dirs rm <name> removes"},
 	{"use", "Set the active workspace"},
@@ -297,6 +298,13 @@ type App struct {
 	lastTurnPrompt string
 	mcpClient      *mcp.Client
 	mcpTunnel      *interactiveMCPTunnel
+	// watch is the canvas's watch mode: a command's live, colourised
+	// output rendered in the canvas (see watch.go).
+	watch watchPane
+	// slashFromAgent is true while invoke_cli_command is running a
+	// slash command, so commands that start processes (/watch) can
+	// apply agent limits. UI goroutine only.
+	slashFromAgent bool
 	mcpExecuting   bool
 	mcpURLView     *tview.TextView
 	mcpURLHint     *tview.TextView
@@ -458,6 +466,9 @@ type App struct {
 	// canvasPath/canvasStart/canvasEnd hold the file and optional
 	// 1-based line range currently rendered in the "canvas" panel.
 	canvasPath  string
+	// canvasMode is what the canvas renders: canvasModeFile (a.canvasPath)
+	// or canvasModeWatch (the live /watch output, see watch.go).
+	canvasMode string
 	canvasStart int
 	canvasEnd   int
 	// canvasWidth is the inner width the canvas was last wrapped to;
@@ -698,6 +709,7 @@ func (a *App) Run() error {
 	defer a.closeConvSync() // runs after the final saveSession below
 	defer a.saveSession()
 	defer a.shutdownMCPTunnel()
+	defer a.shutdownWatch()
 	defer a.stopSpinner()
 	a.running = true
 	defer func() { a.running = false }()
@@ -782,6 +794,10 @@ func (a *App) build() {
 	// Esc hands focus back to the chat input; the transcript/input are
 	// re-focused via Ctrl+Left (see globalKeys).
 	a.activity.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+		// In watch mode the canvas takes the watch keys (follow, stop, …).
+		if a.watchCanvasShowing() {
+			return a.watchKey(event)
+		}
 		switch event.Key() {
 		case tcell.KeyEscape:
 			a.restoreDefaultFocus()
@@ -2389,6 +2405,8 @@ func (a *App) handleSlashCommand(cmd string) {
 		a.togglePanel(command)
 	case "activity":
 		a.showPanel("activity")
+	case "watch":
+		a.handleWatchCommand(slashRest(cmd, parts[0]))
 	case "canvas", "code", "reference":
 		// /canvas [path] [start[-end]] — open a file (optionally a
 		// line range) in the canvas panel. With no path it shows the
@@ -2444,6 +2462,8 @@ func (a *App) showHelp() {
 		"  /reminder             create a reminder     /reminders  toggle reminders\n" +
 		"  /memory               store a memory        /memories   same\n" +
 		"  /canvas [path] [a-b]  open a file or range in the canvas\n" +
+		"  /watch [-n s] <cmd>   live colorized command output; stop|restart|clear|close\n" +
+		"                        Ctrl+E focus · f follow · s stop · r rerun · c clear\n" +
 		"\n" +
 		"Workspace\n" +
 		"  /add <path|ssh host>  add a workspace\n" +
@@ -2487,6 +2507,8 @@ func (a *App) showHelp() {
 // inline on the event loop, so this can no longer deadlock.
 func (a *App) InvokeCLICommand(command string) error {
 	a.postUIWait(func() {
+		a.slashFromAgent = true
+		defer func() { a.slashFromAgent = false }()
 		a.handleSlashCommand("/" + command)
 	})
 	return nil
@@ -3012,6 +3034,11 @@ func (a *App) showPanel(name string) {
 		a.rebuildLayout()
 		a.restoreDefaultFocus()
 		return
+	case "watch":
+		// The watch is a canvas content mode, not its own pane.
+		a.canvasMode = canvasModeWatch
+		a.showPanel("canvas")
+		return
 	case "test":
 		a.setActivePanel("test")
 		a.testView.SetText("Test Pane: Active\n\nThis is an empty test pane used for troubleshooting hangs.")
@@ -3255,11 +3282,16 @@ func (a *App) refreshCanvasPanel() {
 	if a.activity == nil {
 		return
 	}
+	if a.canvasMode == canvasModeWatch {
+		a.watch.drawn = 0 // the shared TextView held something else
+		a.renderWatch()
+		return
+	}
 	if strings.TrimSpace(a.canvasPath) == "" {
 		a.setActivityTitle("CANVAS", "")
 		a.activity.SetText(fmt.Sprintf(
-			"[%s]Files the agent reads or drafts appear here. The agent uses ui_control (panel=canvas, path, start_line, end_line) to open a file and range. Use [%s]/canvas <path> [start[-end]][-] or [%s]Alt+C[-] to open one yourself.[-]",
-			a.palette.HexLavender, a.palette.HexLavender, a.palette.HexLavender,
+			"[%s]Files the agent reads or drafts appear here. The agent uses ui_control (panel=canvas, path, start_line, end_line) to open a file and range. Use [%s]/canvas <path> [start[-end]][-] or [%s]Alt+C[-] to open one yourself, or [%s]/watch <command>[-] to stream a command's live output here.[-]",
+			a.palette.HexLavender, a.palette.HexLavender, a.palette.HexLavender, a.palette.HexLavender,
 		))
 		return
 	}
@@ -3360,7 +3392,7 @@ func (a *App) afterDraw(tcell.Screen) {
 // file and its pane width changed since the last render, it queues a
 // re-render (never inline: we are inside the draw pass).
 func (a *App) checkCanvasWidth() {
-	if a.activity == nil || a.canvasReflow || strings.TrimSpace(a.canvasPath) == "" {
+	if a.activity == nil || a.canvasReflow || strings.TrimSpace(a.canvasPath) == "" || a.canvasMode == canvasModeWatch {
 		return
 	}
 	switch a.activePanel {
@@ -3396,6 +3428,7 @@ func parseLineRange(s string) (int, int) {
 // panel and makes it the active right-hand panel. Callers on background
 // goroutines must wrap this via QueueUpdateDraw.
 func (a *App) openCanvas(path string, start, end int) {
+	a.canvasMode = canvasModeFile
 	a.canvasPath = strings.TrimSpace(path)
 	a.canvasStart = start
 	a.canvasEnd = end
@@ -4109,6 +4142,10 @@ func (a *App) handleEvent(event tooling.Event) {
 			a.addReferencesFromText(event.Text)
 		case tooling.EventToolResult:
 			// ui_control tool: event.Text contains a marker 'panel:<name>:<action>'
+			if event.ToolName == "ui_control" && strings.HasPrefix(strings.TrimSpace(event.Text), watchMarkerPrefix) {
+				a.handleWatchMarker(strings.TrimSpace(event.Text))
+				return
+			}
 			if event.ToolName == "ui_control" && strings.HasPrefix(strings.TrimSpace(event.Text), "panel:") {
 				marker := strings.TrimSpace(event.Text)
 				parts := strings.SplitN(marker, ":", 6)

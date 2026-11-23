@@ -4,6 +4,25 @@
 
 All notable changes to Coder CLI. The source of truth is [release-notes/releases.json](release-notes/releases.json).
 
+## 0.9.277 — 2026-11-23
+
+**Watch a command's live output in the canvas.** The canvas can now stream a command's output, in color, as it runs. Start it with /watch, or let the agent open it, to follow a dev server, a log or a test run next to the conversation.
+
+### Added
+
+- /watch &lt;command&gt; streams the command's live, colorized output into the canvas.
+  It reuses the canvas surface, so it has the same full-height layout, title row, Alt+C and /canvas toggle, Ctrl+E focus and theme. The command runs in the active local workspace on a pseudo-terminal, with FORCE_COLOR and CLICOLOR_FORCE set, so tools that only color a terminal still do. The last 5,000 lines are kept.
+- /watch -n &lt;secs&gt; &lt;command&gt; re-runs a command on an interval, like watch, and shows each run's output in one update.
+  Also /watch stop, restart, clear, close and status. --no-pty uses pipes instead of a terminal. Running /watch on its own shows or hides the watch canvas, and opening a file in the canvas leaves the watch running in the background.
+- Watch keys: with the canvas focused (Ctrl+E), f toggles follow, s stops, r re-runs, c clears and Esc returns to the input.
+  Scrolling up pauses follow, and End or G resumes it.
+- The agent can open the same canvas in watch mode with ui_control (panel canvas, command, optional interval_seconds) and end it with action stop.
+
+### Changed
+
+- Watched commands pass the same safety checks as run_command and never run sudo.
+  Each watch runs in its own session and process group, away from the TUI's terminal. Stopping it, starting another or quitting coder ends the whole process group. Watches the agent starts stop after an hour, like background jobs.
+
 ## 0.9.276 — 2026-11-21
 
 **See what every session costs in tokens.** Every model call's prompt and completion tokens are tracked per session, for every provider. The footer shows a running counter, /usage breaks totals down by model or gateway tier, and headless runs can report usage too.

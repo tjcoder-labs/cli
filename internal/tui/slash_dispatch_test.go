@@ -23,7 +23,7 @@ func TestSlashModeForEveryCommand(t *testing.T) {
 		"reminders": slashImmediate, "task": slashImmediate, "tasks": slashImmediate,
 		"memory": slashImmediate, "memories": slashImmediate, "config": slashImmediate,
 		"environment": slashImmediate, "env": slashImmediate, "balance": slashImmediate,
-		"activity": slashImmediate, "canvas": slashImmediate, "code": slashImmediate,
+		"activity": slashImmediate, "canvas": slashImmediate, "code": slashImmediate, "watch": slashImmediate,
 		"reference": slashImmediate, "about": slashImmediate, "telemetry": slashImmediate,
 		"test": slashImmediate, "articles": slashImmediate, "dirs": slashImmediate,
 		"add-dir": slashImmediate, "add": slashImmediate, "use": slashImmediate,
