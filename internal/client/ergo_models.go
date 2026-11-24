@@ -70,7 +70,7 @@ func NormalizeErgoModel(id string) string {
 		if strings.HasSuffix(suffix, ":cloud") {
 			return lower
 		}
-		// If the suffix is an ergo-* tier (without :cloud), we don't have a mapping for it in the map? 
+		// If the suffix is an ergo-* tier (without :cloud), we don't have a mapping for it in the map?
 		// But note: we have mappings for ergo-flash, ergo-pro, ergo-genius in the map (without the tjcoder/ prefix).
 		// So we should have caught them above.
 		// If we get here, the suffix is not in the map and not normalized.
@@ -245,6 +245,7 @@ func (e *Ergo) ListAllModels(ctx context.Context) ([]ModelInfo, error) {
 		return nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+e.apiKey)
+	ApplyErgoIdentityHeaders(req)
 	resp, err := e.httpClient.Do(req)
 	if err != nil {
 		return nil, err

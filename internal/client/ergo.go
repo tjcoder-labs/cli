@@ -393,9 +393,7 @@ func (e *Ergo) chat(ctx context.Context, request ChatRequest, onEvent func(Strea
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+e.apiKey)
-	httpReq.Header.Set("X-Ergo-Client", "tjcoder-cli")
-	httpReq.Header.Set("X-Ergo-Client-Version", Version)
-	httpReq.Header.Set("X-Ergo-Interface", "tui")
+	ApplyErgoIdentityHeaders(httpReq)
 	if tm := strings.TrimSpace(request.ThinkMode); tm != "" {
 		httpReq.Header.Set("X-Ergo-Think", tm)
 	}

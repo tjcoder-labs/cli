@@ -300,3 +300,37 @@ func TestClaimFirstRunOnce(t *testing.T) {
 }
 
 func appdirInstallIDOnDisk() string { return appdir.Load().InstallID }
+
+func TestLaunchSessionIDStableAndShaped(t *testing.T) {
+	a := LaunchSessionID()
+	b := LaunchSessionID()
+	if a == "" || a != b {
+		t.Fatalf("LaunchSessionID not stable: %q vs %q", a, b)
+	}
+	if len(a) != 36 || a[8] != '-' || a[13] != '-' || a[18] != '-' || a[23] != '-' {
+		t.Fatalf("LaunchSessionID not a UUID: %q", a)
+	}
+}
+
+func TestHeartbeatIncludesSessionID(t *testing.T) {
+	cleanEnv(t)
+	hs, srv := newHBServer(t)
+	hb := &Heartbeat{BaseURL: srv.URL, Version: "0.9.278", InstallID: "id-1", SessionID: "sess-1"}
+	hb.Send(context.Background(), HeartbeatSessionStart)
+	if len(hs.bodies) != 1 {
+		t.Fatalf("bodies = %d", len(hs.bodies))
+	}
+	if hs.bodies[0].SessionID != "sess-1" || hs.bodies[0].InstallID != "id-1" {
+		t.Fatalf("body = %+v", hs.bodies[0])
+	}
+}
+
+func TestHeartbeatOmitsEmptySessionID(t *testing.T) {
+	cleanEnv(t)
+	hs, srv := newHBServer(t)
+	hb := &Heartbeat{BaseURL: srv.URL, Version: "1", InstallID: "id"}
+	hb.Send(context.Background(), HeartbeatTick)
+	if len(hs.bodies) != 1 || hs.bodies[0].SessionID != "" {
+		t.Fatalf("body = %+v", hs.bodies)
+	}
+}

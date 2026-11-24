@@ -4,6 +4,17 @@
 
 All notable changes to Coder CLI. The source of truth is [release-notes/releases.json](release-notes/releases.json).
 
+## 0.9.278 — 2026-11-24
+
+**Count every open TUI and tag CLI usage.** Each TUI launch now has its own session, so two windows on one machine are counted separately, and calls to the tjcoder.com gateway identify themselves as the CLI.
+
+### Added
+
+- Each TUI launch sends a random session id with its heartbeat, so concurrent windows on the same machine are counted as separate open sessions.
+  Older clients that do not send a session id keep working as before.
+- Requests to the tjcoder.com gateway identify themselves as the Coder CLI, including the install and launch session when those ids already exist.
+  Usage on the gateway is recorded as coming from the CLI rather than falling back to another source. Telemetry opt-out still applies: an install id is never created just to tag a request.
+
 ## 0.9.277 — 2026-11-23
 
 **Watch a command's live output in the canvas.** The canvas can now stream a command's output, in color, as it runs. Start it with /watch, or let the agent open it, to follow a dev server, a log or a test run next to the conversation.

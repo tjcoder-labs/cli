@@ -34,6 +34,9 @@ type Heartbeat struct {
 	BaseURL   string
 	Version   string
 	InstallID string
+	// SessionID is the per-launch TUI id (LaunchSessionID). Empty on
+	// older call sites; the server then falls back to per-install throttle.
+	SessionID string
 	// Token returns the ergo-cli key when signed in ("" = anonymous).
 	Token    func() string
 	HTTP     *http.Client
@@ -42,6 +45,7 @@ type Heartbeat struct {
 
 type heartbeatBody struct {
 	InstallID string `json:"install_id"`
+	SessionID string `json:"session_id,omitempty"`
 	Version   string `json:"version"`
 	OS        string `json:"os"`
 	Arch      string `json:"arch"`
@@ -56,7 +60,7 @@ func (h *Heartbeat) Send(ctx context.Context, event string) {
 		return
 	}
 	body, _ := json.Marshal(heartbeatBody{
-		InstallID: h.InstallID, Version: h.Version,
+		InstallID: h.InstallID, SessionID: h.SessionID, Version: h.Version,
 		OS: runtime.GOOS, Arch: runtime.GOARCH, Event: event,
 	})
 	ctx, cancel := context.WithTimeout(ctx, HeartbeatTimeout)
