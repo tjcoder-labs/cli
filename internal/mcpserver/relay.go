@@ -117,7 +117,30 @@ func (r *Relay) request(ctx context.Context, method, path, token string, body an
 	}
 	return resp, nil
 }
+
+// Run creates a new publication then runs the session. Prefer RunWithPublication
+// when reusing a saved token.
 func (r *Relay) Run(ctx context.Context, announce func(Publication)) error {
+	return r.runCreate(ctx, announce)
+}
+
+// RunWithPublication reattaches to an existing session using a previously saved
+// Publication (ID + RelayToken). It does not create a new capability URL.
+// On 401 the caller must clear any saved credentials.
+func (r *Relay) RunWithPublication(ctx context.Context, p Publication, announce func(Publication)) error {
+	if p.ID == "" || p.RelayToken == "" {
+		return fmt.Errorf("saved publication missing id or relay token")
+	}
+	if strings.ContainsAny(p.ID, "/\\?#%") {
+		return fmt.Errorf("invalid publication id")
+	}
+	if p.URL != "" && !publicCapabilityURL.MatchString(p.URL) {
+		return fmt.Errorf("invalid saved capability URL")
+	}
+	return r.runSession(ctx, p, announce)
+}
+
+func (r *Relay) runCreate(ctx context.Context, announce func(Publication)) error {
 	u, e := url.Parse(r.BaseURL)
 	if e != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
 		return fmt.Errorf("relay requires an HTTPS base URL")
@@ -138,10 +161,16 @@ func (r *Relay) Run(ctx context.Context, announce func(Publication)) error {
 	if e != nil || p.ID == "" || p.RelayToken == "" || p.URL == "" {
 		return fmt.Errorf("invalid publication response")
 	}
-	// IDs returned by the relay cannot introduce paths, queries or alternate hosts.
 	if strings.ContainsAny(p.ID, "/\\?#%") {
 		return fmt.Errorf("invalid publication id")
 	}
+	if !publicCapabilityURL.MatchString(p.URL) {
+		return fmt.Errorf("relay requires secret-URL MCP access (server 1.1.750+)")
+	}
+	return r.runSession(ctx, p, announce)
+}
+
+func (r *Relay) runSession(ctx context.Context, p Publication, announce func(Publication)) error {
 	path := "/cli/mcp/sessions/" + p.ID
 	gone := false
 	defer func() {
@@ -154,9 +183,6 @@ func (r *Relay) Run(ctx context.Context, announce func(Publication)) error {
 			v.Body.Close()
 		}
 	}()
-	if !publicCapabilityURL.MatchString(p.URL) {
-		return fmt.Errorf("relay requires secret-URL MCP access (server 1.1.750+)")
-	}
 	expiry, _ := time.Parse(time.RFC3339, p.ExpiresAt)
 
 	runCtx, cancel := context.WithCancelCause(ctx)
