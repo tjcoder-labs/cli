@@ -63,6 +63,19 @@ type Registry struct {
 	tools    map[string]Tool
 }
 
+// SetDelegationFactory enables the delegate tool for this registry only.
+// Specialists are built with a plain NewRegistry, so they never receive it:
+// delegation cannot recurse and no process-wide mutable factory is needed.
+func (r *Registry) SetDelegationFactory(f DelegationProviderFactory) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if f == nil {
+		delete(r.tools, "delegate")
+		return
+	}
+	r.tools["delegate"] = delegationTool{factory: f}
+}
+
 func NewRegistry(provider client.Provider) *Registry {
 	r := &Registry{
 		provider: provider,
@@ -104,6 +117,8 @@ func NewRegistry(provider client.Provider) *Registry {
 		askUserTool{},
 		// Model management
 		manageModelTool{},
+		// delegate is injected by a coordinator-capable runtime (the TUI),
+		// rather than being globally enabled for headless or specialist runs.
 		// Code panel + Android device tools
 		highlightCodeTool{},
 		adbShellTool{},

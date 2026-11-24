@@ -30,7 +30,6 @@ import (
 	"github.com/tjcoder-labs/cli/internal/theme"
 	"github.com/tjcoder-labs/cli/internal/tooling"
 	"github.com/tjcoder-labs/cli/internal/tools"
-	"github.com/tjcoder-labs/cli/internal/tracking"
 	"github.com/tjcoder-labs/cli/internal/update"
 	"github.com/tjcoder-labs/cli/internal/workspace"
 
@@ -222,7 +221,7 @@ type slashCommand struct {
 // palette. Keep in sync with handleSlashCommand's switch.
 var slashCommands = []slashCommand{
 	{"help", "Show this command reference"},
-	{"voice", "Toggle voice mode (requires say/espeak on PATH)"},
+	{"voice", "Toggle speech output; /voice listen transcribes speech"},
 	{"agent", "Open the agent selector"},
 	{"agentinfo", "View the current agent prompt"},
 	{"tools", "Toggle tools on or off"},
@@ -256,6 +255,7 @@ var slashCommands = []slashCommand{
 	{"btw", "Alias for /ask: /btw @name <message>"},
 	{"providers", "Manage model providers"},
 	{"update", "Check for and install an update"},
+	{"reinvoke", "Rebuild, install and relaunch coder from source"},
 	{"telemetry", "Anonymous usage stats: on, off, or status"},
 }
 
@@ -615,11 +615,8 @@ func New(provider client.Provider, registry *tools.Registry, workspaceRoot, mode
 	app.runner.Prompter = app
 	app.runner.Sudo = &tools.SudoPolicy{}
 	app.initWorkspaces(workspaceRoot)
-	trackReg := tracking.NewRegistry()
-	trackReg.Register(tracking.NewTaskTracker())
-	trackReg.Register(tracking.NewMemoryTracker())
-	trackReg.Register(tracking.NewReminderTracker(workspaceRoot))
-	registry.RegisterTool(tools.ManageItemsBridge{Impl: tools.NewManageItems(trackReg, &app.sessionState)})
+	registry.RegisterTool(tools.ManageItemsBridge{Impl: app.manageItemsFor(&app.sessionState, workspaceRoot)})
+	registry.SetDelegationFactory(newSpecialistDelegationRunner(app))
 	app.resetEnabledTools(current.ToolNames)
 	app.runner.SessionState = &app.sessionState
 	app.runner.PersistSession = app.saveSession
@@ -714,6 +711,7 @@ func (a *App) Run() error {
 	bgCtx, stopBackground := context.WithCancel(context.Background())
 	defer stopBackground()
 	a.startBackground(bgCtx)
+	a.submitAfterReinvoke()
 	return a.runUI()
 }
 
@@ -2343,6 +2341,8 @@ func (a *App) handleSlashCommand(cmd string) {
 		a.handleTelemetryCommand(parts)
 	case "update":
 		go a.runUpdate(parts)
+	case "reinvoke":
+		a.runReinvoke(parts)
 	case "quit":
 		a.tv.Stop()
 	case "agentinfo":
@@ -2350,7 +2350,7 @@ func (a *App) handleSlashCommand(cmd string) {
 	case "trigger", "event":
 		a.openTriggerModal()
 	case "voice":
-		a.toggleVoice()
+		a.handleVoiceCommand(parts)
 	case "reminder":
 		a.openReminderModal()
 	case "task":
@@ -2414,6 +2414,7 @@ func (a *App) showHelp() {
 		"  /agent                switch agent          /agentinfo  view the prompt\n" +
 		"  /model                choose a model        /tools      toggle tools\n" +
 		"  /clear                clear the session     /compact    free context\n" +
+		"  /reinvoke             rebuild + install + relaunch from source\n" +
 		"  /scroll up|down [n]   scroll the transcript /quit       quit\n" +
 		"\n" +
 		"Work\n" +
@@ -2649,6 +2650,60 @@ func (a *App) openConfigModal() {
 		}
 	})
 
+	// --- Voice model ---
+	voiceNames := append([]string{"(fast model)", "(synthesis off)"}, compactNames[1:]...)
+	voiceIdx := 0
+	if work.VoiceModel == "off" {
+		voiceIdx = 1
+	} else {
+		for i, name := range voiceNames {
+			if name == work.VoiceModel {
+				voiceIdx = i
+				break
+			}
+		}
+	}
+	form.AddDropDown("Voice model", voiceNames, voiceIdx, func(option string, _ int) {
+		switch option {
+		case "(fast model)":
+			work.VoiceModel = ""
+		case "(synthesis off)":
+			work.VoiceModel = "off"
+		default:
+			work.VoiceModel = option
+		}
+	})
+
+	// --- Voice name (macOS say voice) ---
+	voiceOptions := []string{"(system default)"}
+	voiceByLabel := make(map[string]string)
+	voiceOptionIdx := 0
+	for _, v := range installedVoices() {
+		label := v.Name + " (" + v.Language + ")"
+		if v.Quality != "" && v.Quality != "default" {
+			label = v.Name + " (" + v.Language + ", " + v.Quality + ")"
+		}
+		if _, dup := voiceByLabel[label]; dup {
+			continue
+		}
+		voiceOptions = append(voiceOptions, label)
+		voiceByLabel[label] = v.Name
+		if strings.EqualFold(work.VoiceName, v.Name) {
+			voiceOptionIdx = len(voiceOptions) - 1
+		}
+	}
+	if work.VoiceName != "" && voiceOptionIdx == 0 {
+		// The saved voice is not in the enumerated list (e.g. an installed
+		// Siri voice); keep it selectable rather than silently resetting.
+		label := work.VoiceName + " (configured)"
+		voiceOptions = append(voiceOptions, label)
+		voiceByLabel[label] = work.VoiceName
+		voiceOptionIdx = len(voiceOptions) - 1
+	}
+	form.AddDropDown("Voice (name + language)", voiceOptions, voiceOptionIdx, func(option string, _ int) {
+		work.VoiceName = voiceByLabel[option]
+	})
+
 	// --- Auto-compact threshold ---
 	form.AddInputField("Auto-compact at % (0=off)", strconv.Itoa(work.AutoCompactPercent), 4,
 		func(textToCheck string, _ rune) bool {
@@ -2783,6 +2838,11 @@ func (a *App) buildEnvironmentInfo() ctxpkg.Info {
 	info.Model = a.currentModel
 	info.Provider = providerLabel(a.provider)
 	info.Agent = a.currentAgent.Name
+	a.voice.mu.Lock()
+	if a.voice.Enabled {
+		info.Voice = "on"
+	}
+	a.voice.mu.Unlock()
 	return info
 }
 

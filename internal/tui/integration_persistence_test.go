@@ -20,16 +20,16 @@ func TestMessagePersistenceToJSON(t *testing.T) {
 
 	// Step 1: Create app and send message
 	app := &App{
-		workspaceRoot: tmpDir,
-		transcript:    tview.NewTextView(),
-		reasoning:     tview.NewTextView(),
-		activity:      tview.NewTextView(),
-		palette:       darkPalette(),
-		currentAgent:  mockAgent(),
-		currentModel:  "test-model",
-		enabledTools:  map[string]bool{},
-		history:       []client.Message{},
-		sessionState:  session.State{},
+		workspaceRoot:  tmpDir,
+		transcript:     tview.NewTextView(),
+		reasoning:      tview.NewTextView(),
+		activity:       tview.NewTextView(),
+		palette:        darkPalette(),
+		currentAgent:   mockAgent(),
+		currentModel:   "test-model",
+		enabledTools:   map[string]bool{},
+		history:        []client.Message{},
+		sessionState:   session.State{},
 		assistantState: "thinking",
 	}
 

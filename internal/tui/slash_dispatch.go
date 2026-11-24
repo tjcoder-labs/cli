@@ -53,7 +53,7 @@ func slashModeFor(parts []string) slashMode {
 		// back, and replaying it after the turn would silently discard
 		// the answer the user just watched arrive.
 		return slashBlocked
-	case "compact", "login", "logout", "update":
+	case "compact", "login", "logout", "update", "reinvoke":
 		// compact runs its own model call over the history; login and
 		// logout swap the live provider the runner reads per step;
 		// update may replace the binary.

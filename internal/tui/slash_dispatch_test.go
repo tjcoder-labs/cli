@@ -35,7 +35,7 @@ func TestSlashModeForEveryCommand(t *testing.T) {
 		"clear": slashBlocked,
 
 		"compact": slashQueued, "login": slashQueued, "logout": slashQueued,
-		"update": slashQueued, "providers": slashQueued, "mcp": slashImmediate,
+		"update": slashQueued, "reinvoke": slashQueued, "providers": slashQueued, "mcp": slashImmediate,
 	}
 	for _, sc := range slashCommands {
 		if _, ok := want[sc.cmd]; !ok {

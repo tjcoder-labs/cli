@@ -4,6 +4,62 @@
 
 All notable changes to Coder CLI. The source of truth is [release-notes/releases.json](release-notes/releases.json).
 
+## 0.9.279 — 2026-11-13
+
+**Use the voice you actually configured.** Spoken replies now use Siri voices such as Nicky instead of silently falling back to a different speaker. The voice picker lists every installed voice, including Siri voices, with its language.
+
+### Fixed
+
+- Spoken replies use the configured voice even when it is a Siri voice (Nicky, Nora, …). (`/voice`, `/config`)
+  macOS `say` cannot reach Siri voices at all: `say -v nicky` fails, so speech previously fell back to an unrelated speaker and could sound like the wrong language. Speech now routes through the native AVFoundation synthesizer whenever the configured voice is not visible to `say`, and an empty voice name follows the voice chosen in System Settings.
+- The voice picker shows every installed voice with its language and quality, including Siri voices.
+  Classic `say` voices and AVFoundation voices are merged and de-duplicated, so a voice like Alice is visible as it_IT instead of sounding Italian while reading English. A saved voice that cannot be enumerated still appears as "(configured)" rather than being silently reset.
+
+## 0.9.278 — 2026-11-13
+
+**Ergo orchestration and reliable voice input.** Introduces Ergo as a specialist coordinator with structured handoffs and shared context. Fixes macOS microphone activation for /voice listen.
+
+### Added
+
+- New Ergo orchestrator coordinates specialist agents using structured delegation, shared tasks and reviewable user memories.
+  Ergo uses she/her first-person ownership language. Specialists receive isolated transcripts, explicit goals and constraints, and return structured outcomes without recursive delegation.
+
+### Fixed
+
+- Fixed /voice listen failing to activate the microphone on macOS. (`/voice`)
+  The native helper now embeds microphone and speech privacy descriptions, has a stable signed identity, requests microphone access before capture, and reports recognition errors without hanging or inserting them as dictated text.
+
+## 0.9.277 — 2026-11-13
+
+**Agent obeys live TUI turn metadata.** The software-engineer prompt now tells the agent to honor the ephemeral &lt;tui_context&gt; block: pane-sized replies, canvas sizing, and the repository's build-and-reinvoke change workflow.
+
+### Added
+
+- The software-engineer agent prompt now reads the per-request &lt;tui_context&gt; metadata and sizes replies, tables, and canvas excerpts to the live transcript and canvas panes.
+  Also codifies the repository change workflow into the prompt: version bump in both package.json files, release-notes entry, CHANGELOG regeneration, tests, make install, and /reinvoke. Commits and pushes still require explicit user approval.
+
+## 0.9.276 — 2026-11-13
+
+**Configurable spoken voice.** Adds a voiceName setting so spoken replies use a chosen macOS say voice instead of the system default.
+
+### Added
+
+- New Voice name field in /config selects the say voice for spoken replies. (`/voice`, `/config`)
+  The Siri voice picker and the say system voice are separate macOS settings; say cannot access Siri-only voices such as nicky. Set Voice name to an installed voice (Samantha, Alex, Daniel, …) to hear it.
+
+## 0.9.274 – 0.9.275 — 2026-11-13
+
+**Voice input and self re-invoke.** Adds native macOS speech input, model-backed spoken summaries, and /reinvoke for rebuilding and relaunching coder from source.
+
+### Added
+
+- New /reinvoke slash command: runs `make install` in the source tree, then re-executes the fresh binary with the same session. (`/reinvoke`)
+  Use /reinvoke to rebuild and relaunch, or /reinvoke --no-exec to build and install without restarting. Session is saved before the process is replaced. After relaunch, a one-shot message tells the agent the restart succeeded and asks it to resume the active work.
+- Voice mode can synthesize natural two-sentence spoken summaries using a separately configured voice model. (`/voice`, `/config`)
+  The full answer stays on screen; spoken summaries point to it when more context is available. Configure Voice model in /config or disable synthesis there.
+- On macOS, /voice listen transcribes microphone speech into the input field for review before sending. (`/voice`)
+  Uses the system Speech framework and Swift compiler, with speech permission checked before capture. /voice stop cancels listening.
+
 ## 0.9.273 — 2026-11-13
 
 **Better package discovery.** Sharper npm and Homebrew metadata so the CLI is easier to find: keyword-rich descriptions and search terms that reflect its 7 agents and 30+ tools.

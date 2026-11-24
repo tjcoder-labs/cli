@@ -153,8 +153,8 @@ func TestRuneDisplayWidth(t *testing.T) {
 	}{
 		{"", 0},
 		{"hello", 5},
-		{"世界", 4}, // CJK wide
-		{"e\u0301", 1}, // combining accent — zero-width
+		{"世界", 4},       // CJK wide
+		{"e\u0301", 1},  // combining accent — zero-width
 		{"a\u200Bb", 2}, // zero-width space — skipped
 	}
 	for _, c := range cases {

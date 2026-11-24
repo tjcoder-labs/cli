@@ -40,6 +40,12 @@ type AppConfig struct {
 	// lets the user pick a cheaper / faster model for compaction
 	// while keeping a more capable model for the main conversation.
 	CompactModel string `json:"compactModel,omitempty"`
+	// VoiceName is the macOS `say` voice name (e.g. "Samantha", "Alex").
+	// Empty uses the system default voice.
+	VoiceName string `json:"voiceName,omitempty"`
+	// VoiceModel synthesizes short, natural spoken replies. Empty uses a
+	// fast compatible model; "off" disables synthesis and uses local text.
+	VoiceModel string `json:"voiceModel,omitempty"`
 	// AutoCompactPercent is the context-window fill percentage at which
 	// the app automatically compacts history when a turn settles. 0
 	// (the default) disables automatic compaction; a positive value

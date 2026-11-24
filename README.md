@@ -1,7 +1,7 @@
 
 # @tjcoder/cli
 
-## **An AI-powered terminal coding assistant — designed and built for the future, from the command line.**
+## **Open source, interactive command line agent harness built and maintained by TJ Coder AI Labs.**
 
 A fast, keyboard-driven TUI that pairs a conversational agent with real developer tools: filesystem operations, shell execution, Git, task tracking, and a live "cognition" view of the model's reasoning. Runs against the TJ Coder (ergo) gateway by default, with three experimental TJ Coder models, or local Ollama models and other cloud providers.
 

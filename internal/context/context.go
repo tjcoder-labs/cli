@@ -31,6 +31,7 @@ type Info struct {
 	Provider      string // Active provider name (ergo, ollama, gemini, …)
 	Agent         string // Currently selected agent name (set by caller)
 	Git           string // "branch clean|dirty", set by caller (e.g. "main clean")
+	Voice         string // "on" when spoken replies are enabled
 }
 
 // DefaultEnvironmentTemplate is the built-in environment/context block
@@ -51,10 +52,12 @@ const DefaultEnvironmentTemplate = `[execution-context]
 - Provider: {{provider}}
 - Agent: {{agent}}
 - Git: {{git}}
+- Voice: {{voice}}
 
 [co-development]
 - The user can co-develop with you in VS Code using the open_in_ide tool.
 - When you need to view or edit code, invoke open_in_ide to open files at specific line numbers.
+- When Voice is on, your full reply is shown on screen and a short spoken summary is read aloud.
 - At the start of your session, ask the user if they want to co-develop in VS Code.
 - This enables the user to see exactly what code you're referencing and collaborate in real-time.
 `
@@ -141,6 +144,7 @@ func (i Info) tokens() map[string]string {
 		"provider":    i.Provider,
 		"agent":       i.Agent,
 		"git":         i.Git,
+		"voice":       i.Voice,
 		"cli_path":    i.CLIPath,
 		"cli_version": i.CLIVersion,
 	}

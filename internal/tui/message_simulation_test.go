@@ -23,27 +23,27 @@ func TestUserMessagePersistenceSimulation(t *testing.T) {
 	// Simulate user sends "Hello" and app immediately saves
 	{
 		app := &App{
-			workspaceRoot: tmpDir,
-			transcript:    tview.NewTextView(),
-			reasoning:     tview.NewTextView(),
-			activity:      tview.NewTextView(),
-			palette:       darkPalette(),
-			currentAgent:  mockAgent(),
-			currentModel:  "test-model",
-			enabledTools:  map[string]bool{},
-			history:       []client.Message{},
-			sessionState:  session.State{},
+			workspaceRoot:  tmpDir,
+			transcript:     tview.NewTextView(),
+			reasoning:      tview.NewTextView(),
+			activity:       tview.NewTextView(),
+			palette:        darkPalette(),
+			currentAgent:   mockAgent(),
+			currentModel:   "test-model",
+			enabledTools:   map[string]bool{},
+			history:        []client.Message{},
+			sessionState:   session.State{},
 			assistantState: "thinking",
 		}
 
 		// Simulate what submit() does:
 		// 0. Add message to history (source of truth)
 		app.history = append(app.history, client.Message{Role: "user", Content: "Hello"})
-		
+
 		// 1. Render user message
 		app.appendUserMessage("Hello")
 		app.appendAssistantTurnLabel()
-		
+
 		// 2. Save session (simulating the QueueUpdateDraw callback)
 		if err := app.saveSession(); err != nil {
 			t.Fatalf("save failed: %v", err)
@@ -78,7 +78,7 @@ func TestUserMessagePersistenceSimulation(t *testing.T) {
 				break
 			}
 		}
-		
+
 		if !found {
 			t.Logf("ERROR: user message 'Hello' not found in transcript entries")
 			t.Logf("Loaded transcript entries: %+v", loaded.Transcript)
@@ -89,7 +89,7 @@ func TestUserMessagePersistenceSimulation(t *testing.T) {
 	// Now reload and verify
 	{
 		time.Sleep(100 * time.Millisecond) // Ensure file is flushed
-		
+
 		// Just load the file, don't reconstruct the full app
 		loaded2, exists, err := session.Load(tmpDir)
 		if err != nil || !exists {
@@ -107,7 +107,7 @@ func TestUserMessagePersistenceSimulation(t *testing.T) {
 				break
 			}
 		}
-		
+
 		if !found {
 			t.Fatalf("user message 'Hello' not persisted across reload. Transcript: %+v", loaded2.Transcript)
 		}

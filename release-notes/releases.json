@@ -3,6 +3,114 @@
   "schema_version": 1,
   "releases": [
     {
+      "version": "0.9.279",
+      "date": "2026-11-13",
+      "title": "Use the voice you actually configured",
+      "summary": "Spoken replies now use Siri voices such as Nicky instead of silently falling back to a different speaker. The voice picker lists every installed voice, including Siri voices, with its language.",
+      "changes": {
+        "fixed": [
+          {
+            "text": "Spoken replies use the configured voice even when it is a Siri voice (Nicky, Nora, …).",
+            "details": "macOS `say` cannot reach Siri voices at all: `say -v nicky` fails, so speech previously fell back to an unrelated speaker and could sound like the wrong language. Speech now routes through the native AVFoundation synthesizer whenever the configured voice is not visible to `say`, and an empty voice name follows the voice chosen in System Settings.",
+            "commands": ["/voice", "/config"],
+            "highlight": true
+          },
+          {
+            "text": "The voice picker shows every installed voice with its language and quality, including Siri voices.",
+            "details": "Classic `say` voices and AVFoundation voices are merged and de-duplicated, so a voice like Alice is visible as it_IT instead of sounding Italian while reading English. A saved voice that cannot be enumerated still appears as \"(configured)\" rather than being silently reset."
+          }
+        ]
+      }
+    },
+    {
+      "version": "0.9.278",
+      "date": "2026-11-13",
+      "title": "Ergo orchestration and reliable voice input",
+      "summary": "Introduces Ergo as a specialist coordinator with structured handoffs and shared context. Fixes macOS microphone activation for /voice listen.",
+      "changes": {
+        "added": [
+          {
+            "text": "New Ergo orchestrator coordinates specialist agents using structured delegation, shared tasks and reviewable user memories.",
+            "details": "Ergo uses she/her first-person ownership language. Specialists receive isolated transcripts, explicit goals and constraints, and return structured outcomes without recursive delegation."
+          }
+        ],
+        "fixed": [
+          {
+            "text": "Fixed /voice listen failing to activate the microphone on macOS.",
+            "details": "The native helper now embeds microphone and speech privacy descriptions, has a stable signed identity, requests microphone access before capture, and reports recognition errors without hanging or inserting them as dictated text.",
+            "commands": ["/voice"]
+          }
+        ]
+      }
+    },
+    {
+      "version": "0.9.277",
+      "date": "2026-11-13",
+      "title": "Agent obeys live TUI turn metadata",
+      "summary": "The software-engineer prompt now tells the agent to honor the ephemeral <tui_context> block: pane-sized replies, canvas sizing, and the repository's build-and-reinvoke change workflow.",
+      "changes": {
+        "added": [
+          {
+            "text": "The software-engineer agent prompt now reads the per-request <tui_context> metadata and sizes replies, tables, and canvas excerpts to the live transcript and canvas panes.",
+            "details": "Also codifies the repository change workflow into the prompt: version bump in both package.json files, release-notes entry, CHANGELOG regeneration, tests, make install, and /reinvoke. Commits and pushes still require explicit user approval."
+          }
+        ]
+      }
+    },
+    {
+      "version": "0.9.276",
+      "date": "2026-11-13",
+      "title": "Configurable spoken voice",
+      "summary": "Adds a voiceName setting so spoken replies use a chosen macOS say voice instead of the system default.",
+      "changes": {
+        "added": [
+          {
+            "text": "New Voice name field in /config selects the say voice for spoken replies.",
+            "details": "The Siri voice picker and the say system voice are separate macOS settings; say cannot access Siri-only voices such as nicky. Set Voice name to an installed voice (Samantha, Alex, Daniel, \u2026) to hear it.",
+            "commands": [
+              "/voice",
+              "/config"
+            ],
+            "highlight": true
+          }
+        ]
+      }
+    },
+    {
+      "version": "0.9.275",
+      "covers_from": "0.9.274",
+      "date": "2026-11-13",
+      "title": "Voice input and self re-invoke",
+      "summary": "Adds native macOS speech input, model-backed spoken summaries, and /reinvoke for rebuilding and relaunching coder from source.",
+      "changes": {
+        "added": [
+          {
+            "text": "New /reinvoke slash command: runs `make install` in the source tree, then re-executes the fresh binary with the same session.",
+            "details": "Use /reinvoke to rebuild and relaunch, or /reinvoke --no-exec to build and install without restarting. Session is saved before the process is replaced. After relaunch, a one-shot message tells the agent the restart succeeded and asks it to resume the active work.",
+            "commands": [
+              "/reinvoke"
+            ],
+            "highlight": true
+          },
+          {
+            "text": "Voice mode can synthesize natural two-sentence spoken summaries using a separately configured voice model.",
+            "details": "The full answer stays on screen; spoken summaries point to it when more context is available. Configure Voice model in /config or disable synthesis there.",
+            "commands": [
+              "/voice",
+              "/config"
+            ]
+          },
+          {
+            "text": "On macOS, /voice listen transcribes microphone speech into the input field for review before sending.",
+            "details": "Uses the system Speech framework and Swift compiler, with speech permission checked before capture. /voice stop cancels listening.",
+            "commands": [
+              "/voice"
+            ]
+          }
+        ]
+      }
+    },
+    {
       "version": "0.9.273",
       "date": "2026-11-13",
       "title": "Better package discovery",
@@ -59,7 +167,9 @@
           {
             "text": "New /voice toggle reads the assistant's first 1-2 sentences aloud via macOS say or Linux espeak.",
             "details": "Works with any provider and model; only a TTS binary on PATH is required.",
-            "commands": ["/voice"]
+            "commands": [
+              "/voice"
+            ]
           },
           {
             "text": "Press Esc while voice is speaking to barge in; the assistant yields with \"Go ahead\"."
@@ -140,7 +250,7 @@
       "changes": {
         "added": [
           {
-            "text": "The interactive tunnel banner shows unique consumer connections, the tool call in flight (for example → run_command) and reconnecting… while the relay redials.",
+            "text": "The interactive tunnel banner shows unique consumer connections, the tool call in flight (for example \u2192 run_command) and reconnecting\u2026 while the relay redials.",
             "details": "Connections are counted by opaque server-assigned IDs; caller IP and user agent never reach the CLI. Consumers idle for five minutes drop off the count."
           },
           {
@@ -212,7 +322,7 @@
       "changes": {
         "added": [
           {
-            "text": "Public tunnel hosts print timestamped tool activity to stderr: the TUI’s Deep arrow, Bright bold success/error marks, and Text/Dim body/timestamp roles. NO_COLOR and TERM=dumb disable ANSI styling."
+            "text": "Public tunnel hosts print timestamped tool activity to stderr: the TUI\u2019s Deep arrow, Bright bold success/error marks, and Text/Dim body/timestamp roles. NO_COLOR and TERM=dumb disable ANSI styling."
           }
         ],
         "security": [
@@ -247,7 +357,7 @@
         ],
         "security": [
           {
-            "text": "Interactive MCP calls use the live session’s Prompter and SudoPolicy; only the TUI owner approves sudo and enters a masked password. Standalone tunnels still deny sudo.",
+            "text": "Interactive MCP calls use the live session\u2019s Prompter and SudoPolicy; only the TUI owner approves sudo and enters a masked password. Standalone tunnels still deny sudo.",
             "details": "Consumers receive command output or a denial, never passwords or whether approval was once-only or session-wide. Calls reserve the interactive execution slot instead of racing an agent turn."
           }
         ]
@@ -296,7 +406,7 @@
       "version": "0.9.258",
       "date": "2026-11-07",
       "title": "Ephemeral public MCP host sessions",
-      "summary": "Publish Coder’s local interactive toolset to a remote MCP consumer with a short-lived, authenticated outbound relay.",
+      "summary": "Publish Coder\u2019s local interactive toolset to a remote MCP consumer with a short-lived, authenticated outbound relay.",
       "changes": {
         "added": [
           {
@@ -634,7 +744,7 @@
             "highlight": true
           },
           {
-            "text": "manage_model enumerates ergo's full unified catalog (tiers plus xai/, ollama/, google/, …) when validating a model."
+            "text": "manage_model enumerates ergo's full unified catalog (tiers plus xai/, ollama/, google/, \u2026) when validating a model."
           }
         ]
       }
@@ -709,7 +819,7 @@
       "changes": {
         "added": [
           {
-            "text": "New manage_model tool lets agents and users switch ergo tiers (flash↔pro↔genius) and control reasoning (think on/off/auto) without restarting. Persists choice across sessions.",
+            "text": "New manage_model tool lets agents and users switch ergo tiers (flash\u2194pro\u2194genius) and control reasoning (think on/off/auto) without restarting. Persists choice across sessions.",
             "highlight": true
           },
           {
@@ -725,7 +835,7 @@
         ],
         "fixed": [
           {
-            "text": "Corrected NormalizeErgoModel to properly map legacy ids like ergo-lite → tjcoder/ergo-flash:cloud and handle tjcoder/* prefixes consistently.",
+            "text": "Corrected NormalizeErgoModel to properly map legacy ids like ergo-lite \u2192 tjcoder/ergo-flash:cloud and handle tjcoder/* prefixes consistently.",
             "details": "Fixes model resolution for saved legacy aliases and explicit tjcoder/* inputs."
           }
         ]

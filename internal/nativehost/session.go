@@ -21,6 +21,7 @@ const Origin = "chrome-extension://" + ExtensionID + "/"
 type Session struct {
 	commands, native net.Listener
 	backend          string
+	path             string // original socket path
 	mu               sync.Mutex
 	closed           bool
 	connections      map[net.Conn]bool
@@ -59,9 +60,27 @@ func StartSession(path string) (*Session, error) {
 		return nil, err
 	}
 	listen := func(p string) (net.Listener, error) {
-		if _, err := os.Lstat(p); !os.IsNotExist(err) {
-			return nil, fmt.Errorf("browser relay path already exists: %s", p)
+		// If the path exists, check if it's a socket and if we can connect to it.
+		if info, err := os.Lstat(p); err == nil {
+			// Check if it's a socket
+			if info.Mode()&os.ModeSocket != 0 {
+				// Try to dial to see if there's a process listening
+				if c, err := net.DialTimeout("unix", p, 250*time.Millisecond); err == nil {
+					c.Close()
+					return nil, fmt.Errorf("browser relay path already exists and is in use: %s", p)
+				}
+				// If we can't dial, assume it's stale and remove it.
+				if err := os.Remove(p); err != nil {
+					return nil, err
+				}
+			} else {
+				// If it exists but is not a socket, refuse to replace.
+				return nil, fmt.Errorf("browser relay path already exists and is not a socket: %s", p)
+			}
+		} else if !os.IsNotExist(err) {
+			return nil, err
 		}
+
 		l, err := net.Listen("unix", p)
 		if err != nil {
 			return nil, err
@@ -72,7 +91,7 @@ func StartSession(path string) (*Session, error) {
 		}
 		return l, nil
 	}
-	s := &Session{connections: map[net.Conn]bool{}}
+	s := &Session{connections: map[net.Conn]bool{}, path: path}
 	var err error
 	if s.commands, err = listen(path); err != nil {
 		return nil, err
@@ -131,6 +150,9 @@ func (s *Session) Close() error {
 		s.mu.Unlock()
 		s.wg.Wait()
 		os.RemoveAll(filepath.Dir(s.backend))
+		// Remove the fixed socket files to clean up after ourselves.
+		os.Remove(s.path)
+		os.Remove(s.path + ".native")
 	})
 	return nil
 }

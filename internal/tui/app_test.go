@@ -8,7 +8,6 @@ import (
 
 	"github.com/rivo/tview"
 
-
 	"github.com/tjcoder-labs/cli/internal/session"
 	"github.com/tjcoder-labs/cli/internal/tasks"
 )
