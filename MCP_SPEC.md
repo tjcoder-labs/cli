@@ -32,6 +32,10 @@ TUI shutdown closes all MCP transports, including child processes.
   until removed or retried, but are not persisted.
 - `/mcp remove <name>` removes active, failed or disabled entries, unregisters
   tools, stops a local child if present, and saves the configuration.
+- `/mcp tunnel` opens (or reattaches to) a public capability URL.
+- `/mcp tunnel save` explicitly persists the current session's RelayToken so a
+  later invocation can reattach. Nothing is saved unless the user runs this.
+- `/mcp tunnel stop` revokes the session and clears any saved credentials.
 
 ### Persistence and process boundary
 
@@ -54,9 +58,22 @@ An empty type is treated as `sse` for compatibility.
       "env": {"SERVER_MODE": "read-only"},
       "enabled": true
     }
+  },
+  "mcp_tunnel": {
+    "sessionId": "…",
+    "relayToken": "…",
+    "url": "https://api.tjcoder.com/mcp/hosts/…",
+    "expiresAt": "2026-11-24T15:00:00Z",
+    "savedAt": "2026-11-24T14:00:00Z"
   }
 }
 ```
+
+The `mcp_tunnel` object is written only by `/mcp tunnel save` (or standalone
+`--save`). It is removed on `/mcp tunnel stop`, TUI exit, standalone exit, or
+when the relay returns 401. Ending the CLI therefore always kills the tunnel.
+The file mode remains 0600. The capability URL is a credential; treat the
+saved token the same way while the session is live.
 
 The client API supports `AddServer(name, target, args...)` for URL/argv callers
 and `AddServerConfig(name, ServerConfig)` for persisted configuration, including
@@ -114,6 +131,7 @@ From an already-running interactive session:
 ```text
 /login
 /mcp tunnel
+/mcp tunnel save
 /mcp tunnel stop
 ```
 
@@ -126,6 +144,14 @@ updates are marshalled through the UI event loop. `/mcp tunnel stop` works even
 while a tool is waiting for approval, cancels outstanding calls and best-effort
 revokes the session. Exiting the TUI also cancels and revokes it. A failed DELETE
 falls back to relay lease expiry; cancellation is not command rollback.
+
+`/mcp tunnel save` (explicit opt-in) writes the current session ID and RelayToken
+to `.ergo-cli-go/config.json`. A subsequent `/mcp tunnel` will attempt to
+reattach with `RunWithPublication` instead of creating a new capability URL.
+On 401 or expiry the saved entry is cleared and a fresh session is created.
+Ending the CLI (clean exit or `/mcp tunnel stop`) always clears the saved
+credentials, so the tunnel cannot be resumed by another process after the user
+has terminated it.
 
 Since 0.9.263 the secret capability URL stays in a dedicated, themed bar pinned
 immediately above the chat input, **not** an overlay/modal. Its URL-only rows
@@ -154,12 +180,13 @@ queued), and `reconnecting…` while the relay redials. Activity gets one line w
 a drop starts and one when the same link is live again; the URL is never logged.
 
 The link is held only in tunnel-owned memory/the dedicated view, **not** activity
-history, conversation, input history, or saved configuration. Toggling and copying
-do not log it. Stop immediately hides/scrubs the bar and requests revocation;
-TUI exit also scrubs it. The bar remains pinned through resize/fullscreen while
-the tunnel is live. Clipboard managers, recordings and screenshots may retain a
-revealed/copied URL, so treat it as a password. A second `/mcp tunnel` reports
-that one is already running; use `stop` before restarting.
+history, conversation, input history, or saved configuration (unless the user
+explicitly runs `/mcp tunnel save`). Toggling and copying do not log it. Stop
+immediately hides/scrubs the bar and requests revocation; TUI exit also scrubs
+it and clears any saved token. The bar remains pinned through resize/fullscreen
+while the tunnel is live. Clipboard managers, recordings and screenshots may
+retain a revealed/copied URL, so treat it as a password. A second `/mcp tunnel`
+reports that one is already running; use `stop` before restarting.
 
 Interactive tools use exactly the runner's `ExecEnv`, including its Prompter
 and SudoPolicy. A consuming service calling `run_command` with sudo must pass
@@ -218,8 +245,10 @@ Local `--stdio` and piped modes do not attach the activity printer, so their
 stdout remains exclusively MCP protocol messages. Standalone sudo stays denied.
 
 The foreground process prints **one secret URL plus local-time expiry** to its
-terminal; it does not persist the URL secret. The link alone is sufficient for
-MCP initialize, tools/list and tools/call; no Authorization header is needed.
+terminal. With `--save` it also writes the RelayToken to the workspace config.
+On exit (Ctrl-C / SIGTERM) the saved entry is always cleared, so ending the
+process kills the tunnel. The link alone is sufficient for MCP initialize,
+tools/list and tools/call; no Authorization header is needed.
 This is capability-URL / connector-style access. A consumer uses:
 
 ```json
@@ -331,3 +360,7 @@ required for this link-only flow; 0.9.258 used a separate Bearer credential.
   Multi-replica routing/shared leases and replay of in-flight calls are deferred.
 - Lifetime and quotas are code constants initially. No persistent or unattended
   publications, no per-tool capability narrowing, no new OS sandbox.
+- Saved tunnel tokens are an explicit opt-in and are always cleared when the
+  CLI process ends, preserving the property that ending the CLI kills the tunnel.
+  There is no mechanism that would allow one user's publication to be guessed
+  or used by another; all identifiers remain 256-bit server-generated values.
