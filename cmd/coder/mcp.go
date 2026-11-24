@@ -121,6 +121,9 @@ func mcpCommand(args []string) error {
 				persistConfig(cfgPath, &cfg)
 				fmt.Fprintln(os.Stderr, "Saved tunnel no longer valid; cleared.")
 			}
+		} else {
+			// Expired or unparseable saved entry: drop it so the create fallback runs.
+			cfg.MCPTunnel = nil
 		}
 	}
 	if runErr == nil && cfg.MCPTunnel == nil {
