@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/tjcoder-labs/cli/internal/agent"
@@ -56,6 +57,10 @@ const (
 	// the ToolName field (always "steering") to style it
 	// differently from a regular /submit message.
 	EventSteering EventType = "steering"
+	// EventUsage is emitted after every successful model call with the
+	// call's token usage (and known cost) in Turn. UIs aggregate it into
+	// session.State.Usage; it is never emitted for cancelled calls.
+	EventUsage EventType = "usage"
 )
 
 type Event struct {
@@ -64,6 +69,8 @@ type Event struct {
 	Text     string
 	// Usage is set on EventContext events.
 	Usage *client.ContextUsage
+	// Turn is set on EventUsage events.
+	Turn *session.TurnUsage
 }
 
 // Observer receives anonymous timing/outcome signals (telemetry). It
@@ -86,6 +93,13 @@ type Runner struct {
 	CLICommandSink tools.CLICommandSink
 	SessionState   *session.State
 	PersistSession func() error
+	// BackgroundJobMu serializes job snapshots with asynchronous job
+	// completion/progress updates. It is separate from serializable State.
+	BackgroundJobMu     sync.Mutex
+	NotifyBackgroundJob func(client.Message)
+	SyncSession         func()
+	backgroundNoticeMu  sync.Mutex
+	backgroundNotices   []client.Message
 	// Prompter lets tools ask the user inline questions (TUI only);
 	// Sudo carries the sudo authorization policy. Both nil headless
 	// unless --allow-sudo sets Sudo.
@@ -353,6 +367,7 @@ func (r *Runner) run(ctx context.Context, history []client.Message, prompt strin
 	// not a hardcoded default, so /config toolMax is what the user gets.
 	stepGrant := r.MaxSteps
 	history = append(history, client.Message{Role: "user", Content: prompt})
+	history = r.drainBackgroundNotices(history)
 	defs := r.Registry.Definitions(enabledTools)
 	offered := make(map[string]bool, len(defs))
 	for _, d := range defs {
@@ -393,7 +408,10 @@ func (r *Runner) run(ctx context.Context, history []client.Message, prompt strin
 		// Inject background job status so the agent sees queued/running/
 		// completed jobs without a tool call. Terminal-state notifications
 		// are also appended to history by the job goroutine.
-		if jobs := r.SessionState.BackgroundJobs; len(jobs) > 0 {
+		r.BackgroundJobMu.Lock()
+		jobs := append([]session.BackgroundJob(nil), r.SessionState.BackgroundJobs...)
+		r.BackgroundJobMu.Unlock()
+		if len(jobs) > 0 {
 			if jobBlock := backgroundjobs.FormatPromptBlock(jobs, 20); jobBlock != "" {
 				systemPrompt = jobBlock + "\n\n" + systemPrompt
 			}
@@ -450,6 +468,7 @@ budget:
 		}
 
 		// 1. The model generates its response for the current turn
+		history = r.drainBackgroundNotices(history)
 		if r.LiveEnabledTools != nil {
 			defs = r.Registry.Definitions(r.LiveEnabledTools())
 			offered = make(map[string]bool, len(defs))
@@ -758,6 +777,10 @@ func (r *Runner) runChatTurn(ctx context.Context, model, systemPrompt string, hi
 		return client.Message{}, err
 	}
 	if onEvent != nil {
+		turn := session.NewTurnUsage(model, client.ProviderKey(r.Provider), client.UsageFromMessage(req.Messages, msg))
+		onEvent(Event{Type: EventUsage, Turn: &turn})
+	}
+	if onEvent != nil {
 		reasoning, commentary := parser.Flush()
 		if reasoning != "" {
 			onEvent(Event{Type: EventReasoning, Text: reasoning})
@@ -853,11 +876,48 @@ func formatTokensCompact(n int) string {
 	return fmt.Sprintf("%.1fM", v)
 }
 
+// EnqueueBackgroundNotice queues an asynchronous system message for the
+// next model request. It is safe to call from job watcher goroutines.
+func (r *Runner) EnqueueBackgroundNotice(msg client.Message) {
+	r.backgroundNoticeMu.Lock()
+	r.backgroundNotices = append(r.backgroundNotices, msg)
+	r.backgroundNoticeMu.Unlock()
+}
+
+func (r *Runner) drainBackgroundNotices(history []client.Message) []client.Message {
+	r.backgroundNoticeMu.Lock()
+	defer r.backgroundNoticeMu.Unlock()
+	for _, notice := range r.backgroundNotices {
+		// Idle TUI notices are already saved in canonical history. Active
+		// turns can supersede that slice, so merge by identity once.
+		found := false
+		for _, existing := range history {
+			if existing.Role == notice.Role && existing.ToolName == notice.ToolName && existing.Content == notice.Content {
+				found = true
+				break
+			}
+		}
+		if !found {
+			history = append(history, notice)
+		}
+	}
+	r.backgroundNotices = nil
+	return history
+}
+
+// DrainBackgroundNotices merges pending asynchronous notices into the
+// final TUI history before it is persisted at turn completion.
+func (r *Runner) DrainBackgroundNotices(history []client.Message) []client.Message {
+	return r.drainBackgroundNotices(history)
+}
+
 // ExecEnv is the execution context shared by agent turns and interactive MCP
 // calls. In particular, neither transport can bypass the TUI sudo gate.
 func (r *Runner) ExecEnv() tools.ExecEnv {
 	return tools.ExecEnv{WorkspaceRoot: r.WorkspaceRoot, Provider: r.Provider,
 		Sink: r.HighlightSink, CommandSink: r.CLICommandSink,
 		SessionState: r.SessionState, PersistSession: r.PersistSession,
-		Prompter: r.Prompter, Sudo: r.Sudo, Workspaces: r.Workspaces}
+		BackgroundJobMu: &r.BackgroundJobMu, NotifyBackgroundJob: r.NotifyBackgroundJob,
+		SyncSession: r.SyncSession,
+		Prompter:    r.Prompter, Sudo: r.Sudo, Workspaces: r.Workspaces}
 }

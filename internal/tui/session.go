@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/rivo/tview"
 	"github.com/tjcoder-labs/cli/internal/agent"
 	"github.com/tjcoder-labs/cli/internal/client"
 	"github.com/tjcoder-labs/cli/internal/session"
@@ -97,6 +98,9 @@ func (a *App) loadSession() {
 		a.setTranscriptSplash()
 	}
 	a.sessionState = state
+	a.sessionID = state.SessionID
+	a.setUsage(state.Usage)
+	a.lastInteractionAt = state.LastInteractionAt
 	// Header / footer / status pill are built once in build() with
 	// default values, so we need to re-render them now that we've
 	// restored the last-used agent + model from disk. Without this
@@ -145,6 +149,25 @@ func (a *App) renderTranscriptFromEntries(entries []session.TranscriptEntry) {
 	a.transcript.ScrollToEnd()
 }
 
+// recordBackgroundJobNotice persists asynchronous job updates in the
+// canonical conversation. The runner drains the same notices before its
+// next model request. No provider call or in-flight cancellation occurs.
+func (a *App) recordBackgroundJobNotice(msg client.Message) {
+	if a.tv == nil {
+		return
+	}
+	// Waiting here is UI handoff only: no provider request, process wait,
+	// or ticker delay. It makes saveSession UI-owned and race-free.
+	a.postUIWait(func() {
+		a.history = append(a.history, msg)
+		a.runner.EnqueueBackgroundNotice(msg)
+		a.appendActivity("[" + a.palette.HexLavender + "]" + tview.Escape(msg.Content) + "[-]")
+		if err := a.saveSession(); err != nil {
+			a.appendActivity("[" + a.palette.HexAlert + "]background job save failed: " + tview.Escape(err.Error()) + "[-]")
+		}
+	})
+}
+
 func (a *App) saveSession() error {
 	if a.workspaceRoot == "" {
 		return nil
@@ -166,20 +189,23 @@ func (a *App) saveSession() error {
 	}
 
 	newState := session.State{
-		CurrentAgent:   a.currentAgent.Name,
-		CurrentModel:   a.currentModel,
-		ToolMax:        a.sessionState.ToolMax,
-		EnabledTools:   a.enabledToolList(),
-		History:        append([]client.Message(nil), a.history...),
-		ContextUsage:   a.sessionContextUsage(),
-		RefOrder:       append([]string(nil), a.refOrder...),
-		Transcript:     entries,
-		Reasoning:      a.reasoning.GetText(true),
-		Activity:       a.activityLogText(),
-		Tasks:          append([]session.Task(nil), a.sessionState.Tasks...),
-		Articles:       append([]session.Article(nil), a.sessionState.Articles...),
-		Memories:       append([]session.Memory(nil), a.sessionState.Memories...),
-		BackgroundJobs: append([]session.BackgroundJob(nil), a.sessionState.BackgroundJobs...),
+		SessionID:         a.ensureSessionID(),
+		CurrentAgent:      a.currentAgent.Name,
+		CurrentModel:      a.currentModel,
+		ToolMax:           a.sessionState.ToolMax,
+		EnabledTools:      a.enabledToolList(),
+		History:           append([]client.Message(nil), a.history...),
+		ContextUsage:      a.sessionContextUsage(),
+		RefOrder:          append([]string(nil), a.refOrder...),
+		Transcript:        entries,
+		Reasoning:         a.reasoning.GetText(true),
+		Activity:          a.activityLogText(),
+		LastInteractionAt: a.lastInteractionAt,
+		Tasks:             append([]session.Task(nil), a.sessionState.Tasks...),
+		Articles:          append([]session.Article(nil), a.sessionState.Articles...),
+		Memories:          append([]session.Memory(nil), a.sessionState.Memories...),
+		BackgroundJobs:    append([]session.BackgroundJob(nil), a.sessionState.BackgroundJobs...),
+		Usage:             a.usageSnapshot(),
 	}
 	if a.workspaces != nil {
 		newState.Workspaces = a.workspaces.Specs()
@@ -206,5 +232,6 @@ func (a *App) saveSession() error {
 	if err := session.Save(a.workspaceRoot, newState); err != nil {
 		return err
 	}
+	a.notifyConvSync(newState.History)
 	return nil
 }

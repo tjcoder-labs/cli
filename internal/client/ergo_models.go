@@ -271,6 +271,8 @@ func (e *Ergo) ListAllModels(ctx context.Context) ([]ModelInfo, error) {
 				Reasoning string `json:"reasoning"`
 				Vision    bool   `json:"vision"`
 				IdealFor  string `json:"ideal_for"`
+				// Optional gateway-published rate (same shape as /v1/models).
+				Pricing *ModelPricing `json:"pricing_cents_per_1m_tokens,omitempty"`
 			} `json:"models"`
 		} `json:"providers"`
 	}
@@ -279,6 +281,15 @@ func (e *Ergo) ListAllModels(ctx context.Context) ([]ModelInfo, error) {
 	}
 
 	var models []ModelInfo
+	var priced []ergoModelsEntry
+	for _, p := range decoded.Providers {
+		for _, m := range p.Models {
+			if m.Pricing != nil {
+				priced = append(priced, ergoModelsEntry{ID: m.ID, PricingCentsPer1M: m.Pricing})
+			}
+		}
+	}
+	e.storePricing(priced)
 	for _, p := range decoded.Providers {
 		for _, m := range p.Models {
 			id := strings.TrimSpace(m.ID)

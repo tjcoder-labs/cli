@@ -43,6 +43,52 @@ func (p *scriptedProvider) BaseURL() string {
 	return "http://localhost:11434"
 }
 
+func TestRunner_DrainsBackgroundNoticeBeforeProviderCall(t *testing.T) {
+	provider := &scriptedProvider{responses: []client.Message{{Role: "assistant", Content: "done"}}}
+	runner := &Runner{Provider: provider, Registry: tools.NewRegistry(provider), WorkspaceRoot: t.TempDir(), MaxSteps: 1}
+	runner.EnqueueBackgroundNotice(client.Message{Role: "system", ToolName: "background_job", Content: "Background job job-test completed."})
+	history, err := runner.Run(context.Background(), nil, "continue", agent.Config{Name: "test-agent"}, "model", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	messages := provider.requests[0].Messages
+	if len(messages) < 3 || messages[2].Content != "Background job job-test completed." {
+		t.Fatalf("provider messages = %+v", messages)
+	}
+	if len(runner.backgroundNotices) != 0 {
+		t.Fatal("notice was not drained")
+	}
+	count := 0
+	for _, msg := range history {
+		if msg.Content == "Background job job-test completed." {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("notice appears %d times in returned history", count)
+	}
+}
+
+func TestRunner_DrainsPersistedBackgroundNoticeWithoutDuplication(t *testing.T) {
+	provider := &scriptedProvider{responses: []client.Message{{Role: "assistant", Content: "done"}}}
+	runner := &Runner{Provider: provider, Registry: tools.NewRegistry(provider), WorkspaceRoot: t.TempDir(), MaxSteps: 1}
+	notice := client.Message{Role: "system", ToolName: "background_job", Content: "Background job job-test completed."}
+	runner.EnqueueBackgroundNotice(notice)
+	history, err := runner.Run(context.Background(), []client.Message{notice}, "continue", agent.Config{Name: "test-agent"}, "model", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	count := 0
+	for _, msg := range history {
+		if msg.Content == notice.Content {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("notice appears %d times in returned history", count)
+	}
+}
+
 func TestRunner_LoadsCoderPrompt(t *testing.T) {
 	provider := &scriptedProvider{responses: []client.Message{{Role: "assistant", Content: "ok"}}}
 	registry := tools.NewRegistry(provider)

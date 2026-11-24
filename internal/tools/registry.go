@@ -34,6 +34,15 @@ type ExecEnv struct {
 	// other session-scoped metadata outside the active turn.
 	SessionState   *session.State
 	PersistSession func() error
+	// SyncSession, when non-nil, synchronously persists a TUI-owned
+	// snapshot on its event loop without generating a conversation notice.
+	SyncSession func()
+	// BackgroundJobMu serializes job state and persistence snapshots. It
+	// lives outside session.State because State is intentionally copied.
+	BackgroundJobMu *sync.Mutex
+	// NotifyBackgroundJob delivers a durable system message to the live
+	// conversation. Implementations must not block on a provider call.
+	NotifyBackgroundJob func(client.Message)
 	// Prompter, when non-nil, lets tools ask the user numbered-choice
 	// questions and authorizations inline in the transcript (ask_user,
 	// the sudo gate). nil means headless: tools must not block on a user.

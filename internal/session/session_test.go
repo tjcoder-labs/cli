@@ -42,17 +42,18 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 			{Role: "user", Content: "hello"},
 			{Role: "assistant", Content: "hi", Timestamp: "1:02 PM"},
 		},
-		Reasoning: "thinking...",
-		Activity:  "13:40:32 Loaded",
+		Reasoning:         "thinking...",
+		Activity:          "13:40:32 Loaded",
+		LastInteractionAt: "2026-07-08T13:05:00Z",
 		Tasks: []Task{
 			{ID: "a", Status: "todo", Title: "one", UpdatedAt: "2026-07-08T13:00:00Z"},
 			{ID: "b", Status: "doing", Title: "two", UpdatedAt: "2026-07-08T13:05:00Z"},
 		},
 		BackgroundJobs: []BackgroundJob{{
-			ID:        "job-1",
-			Command:   "coder ask -p 'hello'",
-			Status:    "running",
-			StartedAt: "2026-07-14T03:00:00Z",
+			ID:         "job-1",
+			Command:    "coder ask -p 'hello'",
+			Status:     "running",
+			StartedAt:  "2026-07-14T03:00:00Z",
 			OutputPath: "/tmp/job-1.log",
 		}},
 	}
@@ -157,7 +158,7 @@ func TestLoadLegacyStringTranscript(t *testing.T) {
 		"current_model": "minimax-m3:cloud",
 		"enabled_tools": []string{"run_command"},
 		"history":       []any{},
-		"transcript":   "[#C4A5FF::b]You[-:-:-]\nHello there\n\n[#A77CF8::b]Assistant[-:-:-]\nGeneral Kenobi\n\n",
+		"transcript":    "[#C4A5FF::b]You[-:-:-]\nHello there\n\n[#A77CF8::b]Assistant[-:-:-]\nGeneral Kenobi\n\n",
 	}
 	data, _ := json.Marshal(legacy)
 	if err := os.MkdirAll(filepath.Join(tmp, DirName), 0o700); err != nil {

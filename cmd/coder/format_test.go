@@ -6,6 +6,8 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	"github.com/tjcoder-labs/cli/internal/session"
 )
 
 func TestExtractAndPrettyJSON(t *testing.T) {
@@ -166,5 +168,57 @@ func TestEmitFinalReplyPrintsReply(t *testing.T) {
 	}
 	if got := out.String(); got != "OK\n" {
 		t.Fatalf("stdout = %q, want %q", got, "OK\n")
+	}
+}
+
+func TestEmitFinalReplyJSONIncludesUsage(t *testing.T) {
+	run := &session.UsageStats{}
+	run.Add(session.TurnUsage{Model: "tjcoder/ergo-genius:cloud", Provider: "tjcoder", PromptTokens: 100, CompletionTokens: 20, CostUSD: 0.01, CostSource: "gateway", SubCalls: 2})
+	sess := run.Clone()
+	sess.Add(session.TurnUsage{Model: "tjcoder/ergo-pro:cloud", PromptTokens: 10, CompletionTokens: 2})
+	report := headlessUsageReport(run, sess, true)
+
+	var out, errOut bytes.Buffer
+	if err := emitFinalReplyWithUsage(&out, &errOut, "json", "```json\n{\"answer\":42}\n```", true, &report); err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		Answer int                 `json:"answer"`
+		Usage  session.UsageReport `json:"usage"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+		t.Fatalf("stdout is not JSON: %v\n%s", err, out.String())
+	}
+	u := got.Usage
+	if got.Answer != 42 || u.Requests != 1 || u.PromptTokens != 100 || u.CompletionTokens != 20 || u.TotalTokens != 120 ||
+		u.CostUSD != 0.01 || u.CostSource != "gateway" || u.SubCalls != 2 {
+		t.Fatalf("usage = %+v", u)
+	}
+	if len(u.ByModel) != 1 || u.ByModel[0].Label != "ergo-genius" {
+		t.Fatalf("by_model = %+v", u.ByModel)
+	}
+	if u.Session == nil || u.Session.Requests != 2 || u.Session.TotalTokens != 132 {
+		t.Fatalf("session totals = %+v", u.Session)
+	}
+
+	// A non-object reply is never reshaped: stdout keeps the array and
+	// the usage object goes to stderr.
+	out.Reset()
+	errOut.Reset()
+	if err := emitFinalReplyWithUsage(&out, &errOut, "json", "[1,2]", true, &report); err != nil {
+		t.Fatal(err)
+	}
+	var arr []int
+	if err := json.Unmarshal(out.Bytes(), &arr); err != nil || len(arr) != 2 {
+		t.Fatalf("array reply changed: %q", out.String())
+	}
+	if !strings.HasPrefix(errOut.String(), "usage: {") {
+		t.Fatalf("stderr = %q, want usage object", errOut.String())
+	}
+
+	// Text mode is untouched by the usage report.
+	out.Reset()
+	if err := emitFinalReplyWithUsage(&out, &errOut, "text", "plain", true, &report); err != nil || out.String() != "plain\n" {
+		t.Fatalf("text = %q err=%v", out.String(), err)
 	}
 }

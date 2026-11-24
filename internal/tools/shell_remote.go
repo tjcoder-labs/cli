@@ -16,12 +16,12 @@ import (
 // as `cd <dir> && <command>` on the host over the shared ControlMaster.
 // PTY mode is not available remotely (ssh -T); sudo goes through
 // authorizeRemoteSudo.
-func runRemoteCommand(ctx context.Context, ws *workspace.Workspace, dir, command string, timeoutSeconds int, background bool, env ExecEnv) (Result, error) {
+func runRemoteCommand(ctx context.Context, ws *workspace.Workspace, dir, command string, timeoutSeconds, checkAfterSeconds int, background bool, env ExecEnv) (Result, error) {
 	if background {
 		if IsSudoCommand(command) {
 			return Result{}, fmt.Errorf("%w: sudo is not supported for background commands; run it in the foreground", errSudoDenied)
 		}
-		return startBackgroundJob(env, ws.Name+": "+command, ws.Host+":"+dir, timeoutSeconds, func(runCtx context.Context) (*exec.Cmd, error) {
+		return startBackgroundJob(env, ws.Name+": "+command, ws.Host+":"+dir, timeoutSeconds, checkAfterSeconds, func(runCtx context.Context) (*exec.Cmd, error) {
 			return ws.FS.Command(runCtx, dir, command, nil)
 		})
 	}

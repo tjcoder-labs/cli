@@ -312,7 +312,7 @@ func (a *App) handleBalanceCommand() {
 		packs, _ := fetchWalletPacks(ctx, key)
 		a.postUI(func() {
 			a.setErgoBalanceCents(cents)
-			header.SetText(walletHeader(a.palette, cents))
+			header.SetText(walletHeader(a.palette, cents, a.sessionSpendLine()))
 			list.Clear()
 			for _, p := range packs {
 				p := p
@@ -345,7 +345,7 @@ func (a *App) handleBalanceCommand() {
 					}
 					a.postUI(func() {
 						a.setErgoBalanceCents(newCents)
-						header.SetText(walletHeader(a.palette, newCents))
+						header.SetText(walletHeader(a.palette, newCents, a.sessionSpendLine()))
 					})
 				}
 			}
@@ -360,6 +360,9 @@ func (a *App) refreshErgoBalanceAsync() {
 	if !ok || !e.Authenticated() {
 		return
 	}
+	// Load the gateway's published rates (once per client) so /usage
+	// can estimate cost when a response carries no gateway cost.
+	e.PrefetchPricing()
 	key := auth.ResolveErgoToken()
 	if key == "" {
 		return
@@ -378,6 +381,7 @@ func (a *App) refreshErgoBalanceAsync() {
 func (a *App) setErgoBalanceCents(cents int64) {
 	a.ergoBalanceCents = cents
 	a.ergoBalanceKnown = true
+	a.observeWalletForUsage(cents)
 	a.refreshContextBar()
 }
 
@@ -522,10 +526,17 @@ func defaultWalletPacks() []walletPack {
 	}
 }
 
-func walletHeader(pal Palette, cents int64) string {
+// walletHeader renders the /balance header. session is the session
+// spend line shared with /usage ("" before the first model call); it
+// rides on the label line so the header keeps its fixed height.
+func walletHeader(pal Palette, cents int64, session string) string {
+	label := fmt.Sprintf("[%s]Balance[-]", pal.HexDim)
+	if session != "" {
+		label += fmt.Sprintf("   [%s]%s[-]", pal.HexFaint, tview.Escape(session))
+	}
 	return fmt.Sprintf(
-		"\n  [%s]Balance[-]\n\n      [%s::b]%s[-:-:-]\n\n  [%s]1–9 picks · ↑↓ moves · Enter confirms · Esc closes[-]\n",
-		pal.HexDim, pal.HexPurple, formatCents(cents), pal.HexDim)
+		"\n  %s\n\n      [%s::b]%s[-:-:-]\n\n  [%s]1–9 picks · ↑↓ moves · Enter confirms · Esc closes[-]\n",
+		label, pal.HexPurple, formatCents(cents), pal.HexDim)
 }
 
 func fetchWalletPacks(ctx context.Context, key string) ([]walletPack, error) {

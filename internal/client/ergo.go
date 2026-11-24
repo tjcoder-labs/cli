@@ -106,6 +106,100 @@ type ergoUsage struct {
 	PromptTokens     int `json:"prompt_tokens"`
 	CompletionTokens int `json:"completion_tokens"`
 	TotalTokens      int `json:"total_tokens"`
+
+	// Optional OpenAI-style details.
+	PromptDetails *struct {
+		CachedTokens int `json:"cached_tokens"`
+	} `json:"prompt_tokens_details,omitempty"`
+	CompletionDetails *struct {
+		ReasoningTokens int `json:"reasoning_tokens"`
+	} `json:"completion_tokens_details,omitempty"`
+
+	// Optional gateway-reported cost. Any of these, when present, is the
+	// gateway's own figure for this request (preferred over estimates):
+	// billed_cents (what the wallet was debited), cost_cents, cost_usd,
+	// or cost (USD, OpenRouter convention).
+	BilledCents  *float64 `json:"billed_cents,omitempty"`
+	CostCents    *float64 `json:"cost_cents,omitempty"`
+	CostUSD      *float64 `json:"cost_usd,omitempty"`
+	Cost         *float64 `json:"cost,omitempty"`
+	BalanceCents *float64 `json:"balance_cents,omitempty"`
+
+	// Ergo is the gateway's extension block for research / multi-step
+	// tier models (e.g. ergo-genius): sub-model calls, searches and
+	// server-side tools run to produce the reply, and their cost.
+	Ergo *ergoUsageExt `json:"ergo,omitempty"`
+}
+
+type ergoUsageExt struct {
+	BilledCents       *float64 `json:"billed_cents,omitempty"`
+	CostCents         *float64 `json:"cost_cents,omitempty"`
+	BalanceCents      *float64 `json:"balance_cents,omitempty"`
+	SubCalls          int      `json:"sub_calls,omitempty"`
+	SearchCalls       int      `json:"search_calls,omitempty"`
+	ToolCalls         int      `json:"tool_calls,omitempty"`
+	ResearchCostCents *float64 `json:"research_cost_cents,omitempty"`
+	// Steps is an optional per-step breakdown; its prompt/completion
+	// tokens are already included in the top-level counts.
+	Steps []struct {
+		Kind      string   `json:"kind"`
+		CostCents *float64 `json:"cost_cents,omitempty"`
+	} `json:"steps,omitempty"`
+}
+
+// toUsage converts a gateway usage block into the client Usage.
+func (u *ergoUsage) toUsage() *Usage {
+	if u == nil {
+		return nil
+	}
+	out := &Usage{PromptTokens: u.PromptTokens, CompletionTokens: u.CompletionTokens}
+	if u.PromptDetails != nil {
+		out.CachedPromptTokens = u.PromptDetails.CachedTokens
+	}
+	if u.CompletionDetails != nil {
+		out.ReasoningTokens = u.CompletionDetails.ReasoningTokens
+	}
+	setCost := func(usd float64) {
+		out.CostUSD, out.CostSource = usd, CostGateway
+	}
+	ext := u.Ergo
+	switch {
+	case ext != nil && ext.BilledCents != nil:
+		setCost(*ext.BilledCents / 100)
+	case u.BilledCents != nil:
+		setCost(*u.BilledCents / 100)
+	case ext != nil && ext.CostCents != nil:
+		setCost(*ext.CostCents / 100)
+	case u.CostCents != nil:
+		setCost(*u.CostCents / 100)
+	case u.CostUSD != nil:
+		setCost(*u.CostUSD)
+	case u.Cost != nil:
+		setCost(*u.Cost)
+	}
+	bal := u.BalanceCents
+	if ext != nil {
+		out.SubCalls, out.SearchCalls, out.ToolCalls = ext.SubCalls, ext.SearchCalls, ext.ToolCalls
+		if ext.ResearchCostCents != nil {
+			out.ResearchCostUSD = *ext.ResearchCostCents / 100
+		} else {
+			var steps float64
+			for _, st := range ext.Steps {
+				if st.CostCents != nil {
+					steps += *st.CostCents
+				}
+			}
+			out.ResearchCostUSD = steps / 100
+		}
+		if ext.BalanceCents != nil {
+			bal = ext.BalanceCents
+		}
+	}
+	if bal != nil {
+		b := int64(*bal)
+		out.BalanceCents = &b
+	}
+	return out
 }
 
 type ergoStreamChunk struct {
@@ -196,6 +290,11 @@ type Ergo struct {
 	ollama     *Ollama // non-nil when speaking the Ollama protocol
 	showOnce   sync.Once
 	show       *Ollama // /api/show client for context windows (OpenAI mode)
+
+	pricingOnce sync.Once
+	pricingMu   sync.Mutex
+	pricing     map[string]ModelPricing // gateway-published rates by model id
+	pricingDone chan struct{}           // closed when the prefetch finishes
 }
 
 // ErgoDefaultOllamaPath is the gateway's Ollama-compatible API prefix
@@ -241,10 +340,24 @@ func (e *Ergo) BaseURL() string { return e.baseURL }
 // validate the key against the gateway.
 func (e *Ergo) Authenticated() bool { return e.apiKey != "" }
 
+// Chat streams one completion and attaches the gateway's usage report
+// (msg.Usage). When the gateway reports tokens but no cost, the cost is
+// estimated from the rates it publishes on /v1/models (loaded by
+// PrefetchPricing); when no rate is known for the model, no cost is
+// attached.
 func (e *Ergo) Chat(ctx context.Context, request ChatRequest, onEvent func(StreamEvent) error) (Message, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	msg, err := e.chat(ctx, request, onEvent)
+	if err != nil {
+		return msg, err
+	}
+	e.annotateUsage(&msg, request.Model)
+	return msg, nil
+}
+
+func (e *Ergo) chat(ctx context.Context, request ChatRequest, onEvent func(StreamEvent) error) (Message, error) {
 	if e.apiKey == "" {
 		return Message{}, &ErgoAuthError{Message: "no ergo API key configured — run /login to authenticate"}
 	}
@@ -252,9 +365,9 @@ func (e *Ergo) Chat(ctx context.Context, request ChatRequest, onEvent func(Strea
 		return e.ollama.Chat(ctx, request, onEvent)
 	}
 	req := ergoChatRequest{
-		Model:       request.Model,
-		Stream:      true, // always stream; matches the TUI's incremental rendering
-		StreamOpts:  &ergoStreamOpts{IncludeUsage: true},
+		Model:      request.Model,
+		Stream:     true, // always stream; matches the TUI's incremental rendering
+		StreamOpts: &ergoStreamOpts{IncludeUsage: true},
 	}
 
 	// Map messages. System messages pass through as role "system".
@@ -318,6 +431,7 @@ func (e *Ergo) Chat(ctx context.Context, request ChatRequest, onEvent func(Strea
 	var contentBuf strings.Builder
 	toolCalls := map[int]*ToolCall{}
 	promptTokens, outTokens := 0, 0
+	var usage *Usage
 
 	scanner := bufio.NewScanner(resp.Body)
 	scanner.Buffer(make([]byte, 0, 64*1024), 2*1024*1024)
@@ -337,6 +451,7 @@ func (e *Ergo) Chat(ctx context.Context, request ChatRequest, onEvent func(Strea
 		if chunk.Usage != nil {
 			promptTokens = chunk.Usage.PromptTokens
 			outTokens = chunk.Usage.CompletionTokens
+			usage = chunk.Usage.toUsage()
 		}
 		for _, choice := range chunk.Choices {
 			if choice.Delta.Content != "" {
@@ -382,6 +497,7 @@ func (e *Ergo) Chat(ctx context.Context, request ChatRequest, onEvent func(Strea
 		ToolCalls:       ordered,
 		PromptEvalCount: promptTokens,
 		EvalCount:       outTokens,
+		Usage:           usage,
 	}, nil
 }
 
@@ -426,32 +542,11 @@ func (e *Ergo) ListModels(ctx context.Context) ([]ModelInfo, error) {
 	if e.ollama != nil {
 		return e.ollama.ListModels(ctx)
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, e.baseURL+"/v1/models", nil)
+	entries, err := e.fetchV1Models(ctx)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Authorization", "Bearer "+e.apiKey)
-	resp, err := e.httpClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode == 401 || resp.StatusCode == 403 {
-		return nil, &ErgoAuthError{Message: strings.TrimSpace(decodeErgoError(resp.Body))}
-	}
-	if resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("ergo list models: %s", resp.Status)
-	}
-	var decoded struct {
-		Data []struct {
-			ID       string `json:"id"`
-			OwnedBy  string `json:"owned_by"`
-			AliasFor string `json:"alias_for"`
-		} `json:"data"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&decoded); err != nil {
-		return nil, err
-	}
+	decoded := struct{ Data []ergoModelsEntry }{Data: entries}
 	models := make([]ModelInfo, 0, len(decoded.Data))
 	for _, m := range decoded.Data {
 		if m.AliasFor != "" || strings.TrimSpace(m.ID) == "" {

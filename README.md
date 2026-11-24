@@ -160,6 +160,7 @@ Type a message to chat, or use slash commands. Start typing `/` to see inline su
 | `/providers` | Manage providers: sign in, activate, add a gateway |
 | `/login` · `/logout` | Sign in to / out of the TJ Coder gateway |
 | `/balance` | TJ Coder wallet balance and top-up |
+| `/usage` | Session token usage by model (requests, prompt, completion, total, and cost where the gateway prices it) |
 | `/tools` | Toggle which tools are enabled |
 | `/environment` | Edit the injected context template (`{{token}}` interpolation) |
 | `/config` | Edit user config (e.g. `toolMax`, bubble width) |
@@ -170,6 +171,10 @@ Type a message to chat, or use slash commands. Start typing `/` to see inline su
 | `/about` | Show the welcome / about screen |
 | `/clear` | Clear the current session |
 | `/quit` | Exit |
+
+### Token usage
+
+Every model call's prompt and completion tokens are recorded per session (in `.ergo-cli-go/session.json`, so totals survive a `--session` resume). The footer shows a compact running counter such as `↑ 12.3k ↓ 4.5k tokens`, and `/usage` prints a table by model or gateway tier. A `~` marks values that are estimates: tokens counted locally because the provider reported none, or a cost worked out from the rates the TJ Coder gateway publishes. A cost the gateway reports itself (including research sub-calls, searches and tool steps) is shown as is. Local Ollama shows tokens only. When you're signed in, `/usage` and `/balance` show the same session spend, measured from your wallet.
 
 Editors and selectors (config, environment, agent/model/tool pickers) open **in place of the Conversation pane**, keeping the Cognition and Activity panes visible alongside. Toggle fullscreen to give the transcript the whole width.
 
@@ -195,7 +200,8 @@ Useful headless flags:
 | `-p`, `--prompt` | One-shot prompt (or pipe via stdin) |
 | `--agent <name>` | Agent to use (default: `software-engineer`) |
 | `--model <name>` | Override the model |
-| `--format {text,json,xml}` | Coerce and validate model output |
+| `--format {text,json,xml}` | Coerce and validate model output (`json` adds a top-level `usage` object with tokens, cost and per-model totals) |
+| `--usage` | Write a one-line token usage summary to stderr (stdout stays clean) |
 | `--all-tools` / `--no-tools` | Enable every tool / disable all tools |
 | `--tool-max <n>` | Cap tool calls per turn (persisted in the session) |
 | `--session` | Load/save session history for the workspace (default: on) |

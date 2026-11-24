@@ -71,6 +71,10 @@ type Prefs struct {
 	// been shown. Stored cross-workspace so it appears once, not on
 	// every new repo.
 	IntroSeen bool `json:"intro_seen,omitempty"`
+	// TranscriptSync controls mirroring session transcripts into the
+	// signed-in tjcoder.com account's conversations. nil = default (on
+	// when signed in); false opts out. CODER_TRANSCRIPT_SYNC=0 also opts out.
+	TranscriptSync *bool `json:"transcript_sync,omitempty"`
 }
 
 // mergePrefs overlays overrides onto base, returning the merged
@@ -108,6 +112,10 @@ func mergePrefs(base, overrides Prefs) Prefs {
 	}
 	if overrides.IntroSeen {
 		out.IntroSeen = true
+	}
+	if overrides.TranscriptSync != nil {
+		v := *overrides.TranscriptSync
+		out.TranscriptSync = &v
 	}
 	return out
 }
@@ -404,5 +412,28 @@ func ClearModelForProvider(provider string) error {
 		return nil
 	}
 	delete(p.ModelsByProvider, provider)
+	return savePrefsLocked(p)
+}
+
+// TranscriptSyncEnabled reports the transcript-sync preference (default true).
+func TranscriptSyncEnabled() bool {
+	prefsMu.Lock()
+	defer prefsMu.Unlock()
+	p, _, err := loadPrefsLocked()
+	if err != nil || p.TranscriptSync == nil {
+		return true
+	}
+	return *p.TranscriptSync
+}
+
+// SetTranscriptSync persists the transcript-sync preference.
+func SetTranscriptSync(on bool) error {
+	prefsMu.Lock()
+	defer prefsMu.Unlock()
+	p, _, err := loadPrefsLocked()
+	if err != nil {
+		p = Prefs{}
+	}
+	p.TranscriptSync = &on
 	return savePrefsLocked(p)
 }

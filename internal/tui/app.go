@@ -21,6 +21,7 @@ import (
 	"github.com/tjcoder-labs/cli/internal/auth"
 	"github.com/tjcoder-labs/cli/internal/client"
 	ctxpkg "github.com/tjcoder-labs/cli/internal/context"
+	"github.com/tjcoder-labs/cli/internal/convsync"
 	"github.com/tjcoder-labs/cli/internal/mcp"
 	"github.com/tjcoder-labs/cli/internal/memories"
 	"github.com/tjcoder-labs/cli/internal/providers"
@@ -242,8 +243,10 @@ var slashCommands = []slashCommand{
 	{"login", "Sign in to the TJ Coder gateway"},
 	{"logout", "Sign out of the TJ Coder gateway"},
 	{"balance", "Wallet balance and top-up"},
+	{"usage", "Token usage (and cost) for this session"},
 	{"activity", "Open the activity panel"},
 	{"canvas", "Open a file or range in the canvas"},
+	{"watch", "Watch a command's live colorized output: /watch [-n secs] <cmd>"},
 	{"add", "Add a workspace: path or ssh <host>[:<path>]"},
 	{"dirs", "List workspaces; /dirs rm <name> removes"},
 	{"use", "Set the active workspace"},
@@ -277,6 +280,11 @@ type App struct {
 	// ergoBalanceKnown. Touched only on the UI goroutine.
 	ergoBalanceCents int64
 	ergoBalanceKnown bool
+	// usage is the session's cumulative token usage (persisted as
+	// session.State.Usage); guarded by usageMu because saveSession can
+	// run off the UI goroutine.
+	usageMu sync.Mutex
+	usage   *session.UsageStats
 	registry         *tools.Registry
 	runner           *tooling.Runner
 	// steeringCh carries mid-turn user steering messages from the
@@ -290,6 +298,13 @@ type App struct {
 	lastTurnPrompt string
 	mcpClient      *mcp.Client
 	mcpTunnel      *interactiveMCPTunnel
+	// watch is the canvas's watch mode: a command's live, colourised
+	// output rendered in the canvas (see watch.go).
+	watch watchPane
+	// slashFromAgent is true while invoke_cli_command is running a
+	// slash command, so commands that start processes (/watch) can
+	// apply agent limits. UI goroutine only.
+	slashFromAgent bool
 	mcpExecuting   bool
 	mcpURLView     *tview.TextView
 	mcpURLHint     *tview.TextView
@@ -298,7 +313,11 @@ type App struct {
 	terminalScreen tcell.Screen
 	sessionState   session.State
 	palette        Palette
-	voice          VoiceState
+	// sessionID keys this conversation for transcript sync (session.State.SessionID).
+	sessionID string
+	// convSync mirrors saved transcripts to the gateway account (nil in tests / opted out).
+	convSync *convsync.Syncer
+	voice    VoiceState
 
 	workspaceRoot             string
 	productName               string
@@ -320,6 +339,7 @@ type App struct {
 	burstTailUntil            time.Time     // swallow burstTail keys until then; UI goroutine only
 	history                   []client.Message
 	busy                      bool
+	lastInteractionAt         string   // completed assistant turn; UI goroutine only
 	idleQueue                 []func() // slash work deferred until the turn settles (whenIdle)
 	ctxUsage                  client.ContextUsage
 	refSet                    map[string]struct{}
@@ -446,6 +466,9 @@ type App struct {
 	// canvasPath/canvasStart/canvasEnd hold the file and optional
 	// 1-based line range currently rendered in the "canvas" panel.
 	canvasPath  string
+	// canvasMode is what the canvas renders: canvasModeFile (a.canvasPath)
+	// or canvasModeWatch (the live /watch output, see watch.go).
+	canvasMode string
 	canvasStart int
 	canvasEnd   int
 	// canvasWidth is the inner width the canvas was last wrapped to;
@@ -620,11 +643,14 @@ func New(provider client.Provider, registry *tools.Registry, workspaceRoot, mode
 	app.resetEnabledTools(current.ToolNames)
 	app.runner.SessionState = &app.sessionState
 	app.runner.PersistSession = app.saveSession
+	app.runner.NotifyBackgroundJob = app.recordBackgroundJobNotice
+	app.runner.SyncSession = func() { app.postUIWait(func() { _ = app.saveSession() }) }
 	// Wire the steering channel last: it must exist on the App
 	// before we hand a reference to the runner so a submit() that
 	// races with the very first turn still has somewhere to send.
 	app.runner.Steering = app.steeringCh
 	app.scheduler = newScheduleWorker(app)
+	app.initConvSync()
 	app.build()
 	app.tv.SetAfterDrawFunc(app.afterDraw)
 	app.tv.SetBeforeDrawFunc(app.beforeDraw)
@@ -677,8 +703,10 @@ func (a *App) Run() error {
 	}
 	defer a.closeWorkspaces()
 	defer a.stopRemindersWatch()
+	defer a.closeConvSync() // runs after the final saveSession below
 	defer a.saveSession()
 	defer a.shutdownMCPTunnel()
+	defer a.shutdownWatch()
 	defer a.stopSpinner()
 	a.running = true
 	defer func() { a.running = false }()
@@ -764,6 +792,10 @@ func (a *App) build() {
 	// Esc hands focus back to the chat input; the transcript/input are
 	// re-focused via Ctrl+Left (see globalKeys).
 	a.activity.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+		// In watch mode the canvas takes the watch keys (follow, stop, …).
+		if a.watchCanvasShowing() {
+			return a.watchKey(event)
+		}
 		switch event.Key() {
 		case tcell.KeyEscape:
 			a.restoreDefaultFocus()
@@ -1498,8 +1530,13 @@ func (a *App) refreshFooter() {
 		return fmt.Sprintf("[%s]%s[-] %s", a.palette.HexLavender, key, label)
 	}
 	a.footer.SetTextAlign(tview.AlignRight)
+	counter := a.usageCounterSegment()
+	if counter != "" {
+		counter += "   "
+	}
 	a.footer.SetText(fmt.Sprintf(
-		"  %s  %s  %s",
+		"  %s%s  %s  %s",
+		counter,
 		hint("[Alt+A]", "Activity"),
 		hint("[Alt+T]", "Tasks"),
 		hint("[Alt+C]", "Code"),
@@ -2368,6 +2405,8 @@ func (a *App) handleSlashCommand(cmd string) {
 		a.togglePanel(command)
 	case "activity":
 		a.showPanel("activity")
+	case "watch":
+		a.handleWatchCommand(slashRest(cmd, parts[0]))
 	case "canvas", "code", "reference":
 		// /canvas [path] [start[-end]] — open a file (optionally a
 		// line range) in the canvas panel. With no path it shows the
@@ -2395,6 +2434,8 @@ func (a *App) handleSlashCommand(cmd string) {
 		a.handleLogoutCommand()
 	case "balance":
 		a.handleBalanceCommand()
+	case "usage":
+		a.handleUsageCommand()
 	case "add", "add-dir":
 		a.handleAddCommand(commandArgs(cmd))
 	case "dirs", "workspaces":
@@ -2422,6 +2463,8 @@ func (a *App) showHelp() {
 		"  /reminder             create a reminder     /reminders  toggle reminders\n" +
 		"  /memory               store a memory        /memories   same\n" +
 		"  /canvas [path] [a-b]  open a file or range in the canvas\n" +
+		"  /watch [-n s] <cmd>   live colorized command output; stop|restart|clear|close\n" +
+		"                        Ctrl+E focus · f follow · s stop · r rerun · c clear\n" +
 		"\n" +
 		"Workspace\n" +
 		"  /add <path|ssh host>  add a workspace\n" +
@@ -2431,6 +2474,7 @@ func (a *App) showHelp() {
 		"Gateway\n" +
 		"  /login                sign in               /logout     sign out\n" +
 		"  /balance              wallet and top-up     /providers  manage providers\n" +
+		"  /usage                session token usage and cost by model\n" +
 		"\n" +
 		"Session\n" +
 		"  /config               edit config           /environment  edit the env template\n" +
@@ -2464,6 +2508,8 @@ func (a *App) showHelp() {
 // inline on the event loop, so this can no longer deadlock.
 func (a *App) InvokeCLICommand(command string) error {
 	a.postUIWait(func() {
+		a.slashFromAgent = true
+		defer func() { a.slashFromAgent = false }()
 		a.handleSlashCommand("/" + command)
 	})
 	return nil
@@ -3048,6 +3094,11 @@ func (a *App) showPanel(name string) {
 		a.rebuildLayout()
 		a.restoreDefaultFocus()
 		return
+	case "watch":
+		// The watch is a canvas content mode, not its own pane.
+		a.canvasMode = canvasModeWatch
+		a.showPanel("canvas")
+		return
 	case "test":
 		a.setActivePanel("test")
 		a.testView.SetText("Test Pane: Active\n\nThis is an empty test pane used for troubleshooting hangs.")
@@ -3291,11 +3342,16 @@ func (a *App) refreshCanvasPanel() {
 	if a.activity == nil {
 		return
 	}
+	if a.canvasMode == canvasModeWatch {
+		a.watch.drawn = 0 // the shared TextView held something else
+		a.renderWatch()
+		return
+	}
 	if strings.TrimSpace(a.canvasPath) == "" {
 		a.setActivityTitle("CANVAS", "")
 		a.activity.SetText(fmt.Sprintf(
-			"[%s]Files the agent reads or drafts appear here. The agent uses ui_control (panel=canvas, path, start_line, end_line) to open a file and range. Use [%s]/canvas <path> [start[-end]][-] or [%s]Alt+C[-] to open one yourself.[-]",
-			a.palette.HexLavender, a.palette.HexLavender, a.palette.HexLavender,
+			"[%s]Files the agent reads or drafts appear here. The agent uses ui_control (panel=canvas, path, start_line, end_line) to open a file and range. Use [%s]/canvas <path> [start[-end]][-] or [%s]Alt+C[-] to open one yourself, or [%s]/watch <command>[-] to stream a command's live output here.[-]",
+			a.palette.HexLavender, a.palette.HexLavender, a.palette.HexLavender, a.palette.HexLavender,
 		))
 		return
 	}
@@ -3396,7 +3452,7 @@ func (a *App) afterDraw(tcell.Screen) {
 // file and its pane width changed since the last render, it queues a
 // re-render (never inline: we are inside the draw pass).
 func (a *App) checkCanvasWidth() {
-	if a.activity == nil || a.canvasReflow || strings.TrimSpace(a.canvasPath) == "" {
+	if a.activity == nil || a.canvasReflow || strings.TrimSpace(a.canvasPath) == "" || a.canvasMode == canvasModeWatch {
 		return
 	}
 	switch a.activePanel {
@@ -3432,6 +3488,7 @@ func parseLineRange(s string) (int, int) {
 // panel and makes it the active right-hand panel. Callers on background
 // goroutines must wrap this via QueueUpdateDraw.
 func (a *App) openCanvas(path string, start, end int) {
+	a.canvasMode = canvasModeFile
 	a.canvasPath = strings.TrimSpace(path)
 	a.canvasStart = start
 	a.canvasEnd = end
@@ -3483,10 +3540,14 @@ func (a *App) clearSession() {
 	// Reset UI panels to default state
 	a.showPanel("activity")
 	a.history = nil
+	// A cleared session is a new conversation.
+	a.sessionID = session.NewSessionID()
 	a.transcript.Clear()
 	a.reasoning.Clear()
 	a.activity.Clear()
 	a.ctxUsage = client.ContextUsage{}
+	a.setUsage(nil)
+	a.refreshFooter()
 	a.refSet = map[string]struct{}{}
 	a.refOrder = nil
 	a.setTranscriptSplash()
@@ -4023,6 +4084,10 @@ func (a *App) launchTurnWithContext(prompt, agentNameOverride, turnContext strin
 			if len(nextHistory) > 0 {
 				a.history = nextHistory
 			}
+			a.history = a.runner.DrainBackgroundNotices(a.history)
+			if err == nil && len(a.history) > 0 && a.history[len(a.history)-1].Role == "assistant" {
+				a.lastInteractionAt = time.Now().UTC().Format(time.RFC3339)
+			}
 			a.busy = false
 			a.stopSpinner()
 			a.refreshContextBar()
@@ -4137,6 +4202,10 @@ func (a *App) handleEvent(event tooling.Event) {
 			a.addReferencesFromText(event.Text)
 		case tooling.EventToolResult:
 			// ui_control tool: event.Text contains a marker 'panel:<name>:<action>'
+			if event.ToolName == "ui_control" && strings.HasPrefix(strings.TrimSpace(event.Text), watchMarkerPrefix) {
+				a.handleWatchMarker(strings.TrimSpace(event.Text))
+				return
+			}
 			if event.ToolName == "ui_control" && strings.HasPrefix(strings.TrimSpace(event.Text), "panel:") {
 				marker := strings.TrimSpace(event.Text)
 				parts := strings.SplitN(marker, ":", 6)
@@ -4187,6 +4256,10 @@ func (a *App) handleEvent(event tooling.Event) {
 				a.recordContextUsage(*event.Usage)
 			}
 			a.refreshContextBar()
+		case tooling.EventUsage:
+			if event.Turn != nil {
+				a.recordTurnUsage(*event.Turn)
+			}
 		case tooling.EventSteering:
 			// Transcript line was already drawn at queue time
 			// (submit / submitScheduled) so the user sees it

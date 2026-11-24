@@ -21,9 +21,9 @@ func TestWordBudget(t *testing.T) {
 	cases := []struct {
 		cols, lines, want int
 	}{
-		{100, 30, 373},   // 100/6 × 28 × 0.8 = 373.3
-		{80, 24, 234},    // 80/6 × 22 × 0.8 = 234.7
-		{0, 0, 234},      // unknown size → 80×24 fallback
+		{100, 30, 303},   // 100/6 × 28 × 0.65 = 303.3
+		{80, 24, 190},    // 80/6 × 22 × 0.65 = 190.6
+		{0, 0, 190},      // unknown size → 80×24 fallback
 		{20, 5, 40},      // tiny pane clamps to the floor
 		{300, 120, 1500}, // huge pane clamps to the ceiling
 		{120, 2, 40},     // label rows only
@@ -36,6 +36,20 @@ func TestWordBudget(t *testing.T) {
 	// Monotonic in both dimensions.
 	if WordBudget(100, 40) <= WordBudget(100, 30) || WordBudget(140, 30) <= WordBudget(100, 30) {
 		t.Error("budget should grow with pane size")
+	}
+}
+
+func TestConversationResume(t *testing.T) {
+	now := time.Date(2026, 11, 13, 17, 24, 0, 0, time.UTC)
+	if got := conversationResume(now.Add(-10*time.Minute).Format(time.RFC3339), now); got != "" {
+		t.Fatalf("short gap should be silent: %q", got)
+	}
+	got := conversationResume(now.Add(-48*time.Hour).Format(time.RFC3339), now)
+	if !strings.Contains(got, "2.0 days") || !strings.Contains(got, "briefly recap") {
+		t.Fatalf("resume guidance: %q", got)
+	}
+	if got := conversationResume("invalid", now); got != "" {
+		t.Fatalf("invalid timestamp should be silent: %q", got)
 	}
 }
 
@@ -74,7 +88,7 @@ func TestFormatTurnContext(t *testing.T) {
 		"transcript_width_cols: 100\n",
 		"transcript_visible_lines: 30\n",
 		"transcript_line_count: 212\n",
-		"respond in fewer than 373 words",
+		"respond in fewer than 303 words",
 		"at most 100 columns",
 		"attachment: path=main.go size=2.0KB lines=80 mime=text/x-go lang=go\n",
 		"attachment: path=logo.png size=4.0KB mime=image/png binary=true",
@@ -103,7 +117,7 @@ func TestBuildTurnContextToggles(t *testing.T) {
 	}
 	t.Setenv("CODER_TURN_CONTEXT", "")
 	got := app.buildTurnContext(nil)
-	for _, want := range []string{"cwd: /tmp/ws", "right_panel: tasks", "layout: fullscreen", "respond in fewer than 234 words"} {
+	for _, want := range []string{"cwd: /tmp/ws", "right_panel: tasks", "layout: fullscreen", "respond in fewer than 190 words"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing %q in\n%s", want, got)
 		}

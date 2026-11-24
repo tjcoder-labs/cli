@@ -4,61 +4,72 @@
 
 All notable changes to Coder CLI. The source of truth is [release-notes/releases.json](release-notes/releases.json).
 
-## 0.9.279 — 2026-11-13
+## 0.9.277 — 2026-11-23
 
-**Use the voice you actually configured.** Spoken replies now use Siri voices such as Nicky instead of silently falling back to a different speaker. The voice picker lists every installed voice, including Siri voices, with its language.
+**Watch a command's live output in the canvas.** The canvas can now stream a command's output, in color, as it runs. Start it with /watch, or let the agent open it, to follow a dev server, a log or a test run next to the conversation.
+
+### Added
+
+- /watch &lt;command&gt; streams the command's live, colorized output into the canvas.
+  It reuses the canvas surface, so it has the same full-height layout, title row, Alt+C and /canvas toggle, Ctrl+E focus and theme. The command runs in the active local workspace on a pseudo-terminal, with FORCE_COLOR and CLICOLOR_FORCE set, so tools that only color a terminal still do. The last 5,000 lines are kept.
+- /watch -n &lt;secs&gt; &lt;command&gt; re-runs a command on an interval, like watch, and shows each run's output in one update.
+  Also /watch stop, restart, clear, close and status. --no-pty uses pipes instead of a terminal. Running /watch on its own shows or hides the watch canvas, and opening a file in the canvas leaves the watch running in the background.
+- Watch keys: with the canvas focused (Ctrl+E), f toggles follow, s stops, r re-runs, c clears and Esc returns to the input.
+  Scrolling up pauses follow, and End or G resumes it.
+- The agent can open the same canvas in watch mode with ui_control (panel canvas, command, optional interval_seconds) and end it with action stop.
+
+### Changed
+
+- Watched commands pass the same safety checks as run_command and never run sudo.
+  Each watch runs in its own session and process group, away from the TUI's terminal. Stopping it, starting another or quitting coder ends the whole process group. Watches the agent starts stop after an hour, like background jobs.
+
+## 0.9.276 — 2026-11-21
+
+**See what every session costs in tokens.** Every model call's prompt and completion tokens are tracked per session, for every provider. The footer shows a running counter, /usage breaks totals down by model or gateway tier, and headless runs can report usage too.
+
+### Added
+
+- A compact token counter in the footer, such as ↑ 12.3k ↓ 4.5k tokens.
+  Counts come from each provider's own usage report (the TJ Coder gateway, Ollama, Ollama Cloud, Gemini and OpenAI-compatible providers). When a provider reports nothing, tokens are estimated and marked with ~.
+- /usage prints a table of requests, prompt, completion and total tokens by model or gateway tier, with a total row.
+  A cost column appears only when the TJ Coder gateway prices the calls. A cost the gateway reports, including research sub-calls, searches and tool steps, is shown as is. Otherwise the cost is estimated from the gateway's published rates and marked ~. Local Ollama shows tokens only. When you are signed in, /usage and /balance show the same session spend, measured from your wallet.
+- Headless runs: --format json adds a top-level usage object, and --usage writes a one-line summary to stderr.
+  The usage object has this run's tokens, cost and per-model breakdown, plus the session total. If the reply is not a JSON object, stdout is left unchanged and the usage object goes to stderr.
+
+### Changed
+
+- Usage totals are saved in the session file, so /usage stays correct after a --session resume. Older session files still load.
+
+## 0.9.275 — 2026-11-21
+
+**Conversations follow your tjcoder.com account.** When you are signed in to the tjcoder.com gateway, each session's transcript is saved to your account's conversations in the background, whichever provider you chat with.
+
+### Added
+
+- Signed-in sessions sync their transcript (your messages, replies and tool calls) to your tjcoder.com conversations, including turns served by Ollama, OpenAI-compatible, Gemini or other providers.
+  Sync runs in the background after each turn and never blocks or fails a turn. Unsynced turns stay in the session and are sent later, without duplicates, if you are offline. API keys, tokens and private keys are masked before upload. Each conversation records the provider, model, agent, working directory and CLI version.
+- Opt out with CODER_TRANSCRIPT_SYNC=0 or "transcript_sync": false in prefs.json.
+  Signed-out sessions never sync. /clear starts a new conversation.
+
+## 0.9.274 — 2026-11-13
+
+**Reliable background updates and conversation resume.** Background commands can deliver periodic progress without blocking the conversation. Reply sizing fits short panes better, and resuming after a break retains the true conversation gap.
+
+### Added
+
+- Background run_command jobs accept check_after_seconds for recurring progress updates without a blocking status check.
+  Progress and completion updates are saved in the conversation and delivered to the next model request without interrupting an active response or starting a provider call while idle.
+
+### Changed
+
+- Reduced the transcript-aware reply word budget to better fit narrow, short panes.
+- The agent now knows how long it has been since the last completed turn when a conversation resumes after a meaningful pause.
+  The timestamp advances only after a completed assistant reply, so reopening the CLI preserves the original gap.
 
 ### Fixed
 
-- Spoken replies use the configured voice even when it is a Siri voice (Nicky, Nora, …). (`/voice`, `/config`)
-  macOS `say` cannot reach Siri voices at all: `say -v nicky` fails, so speech previously fell back to an unrelated speaker and could sound like the wrong language. Speech now routes through the native AVFoundation synthesizer whenever the configured voice is not visible to `say`, and an empty voice name follows the voice chosen in System Settings.
-- The voice picker shows every installed voice with its language and quality, including Siri voices.
-  Classic `say` voices and AVFoundation voices are merged and de-duplicated, so a voice like Alice is visible as it_IT instead of sounding Italian while reading English. A saved voice that cannot be enumerated still appears as "(configured)" rather than being silently reset.
-
-## 0.9.278 — 2026-11-13
-
-**Ergo orchestration and reliable voice input.** Introduces Ergo as a specialist coordinator with structured handoffs and shared context. Fixes macOS microphone activation for /voice listen.
-
-### Added
-
-- New Ergo orchestrator coordinates specialist agents using structured delegation, shared tasks and reviewable user memories.
-  Ergo uses she/her first-person ownership language. Specialists receive isolated transcripts, explicit goals and constraints, and return structured outcomes without recursive delegation.
-
-### Fixed
-
-- Fixed /voice listen failing to activate the microphone on macOS. (`/voice`)
-  The native helper now embeds microphone and speech privacy descriptions, has a stable signed identity, requests microphone access before capture, and reports recognition errors without hanging or inserting them as dictated text.
-
-## 0.9.277 — 2026-11-13
-
-**Agent obeys live TUI turn metadata.** The software-engineer prompt now tells the agent to honor the ephemeral &lt;tui_context&gt; block: pane-sized replies, canvas sizing, and the repository's build-and-reinvoke change workflow.
-
-### Added
-
-- The software-engineer agent prompt now reads the per-request &lt;tui_context&gt; metadata and sizes replies, tables, and canvas excerpts to the live transcript and canvas panes.
-  Also codifies the repository change workflow into the prompt: version bump in both package.json files, release-notes entry, CHANGELOG regeneration, tests, make install, and /reinvoke. Commits and pushes still require explicit user approval.
-
-## 0.9.276 — 2026-11-13
-
-**Configurable spoken voice.** Adds a voiceName setting so spoken replies use a chosen macOS say voice instead of the system default.
-
-### Added
-
-- New Voice name field in /config selects the say voice for spoken replies. (`/voice`, `/config`)
-  The Siri voice picker and the say system voice are separate macOS settings; say cannot access Siri-only voices such as nicky. Set Voice name to an installed voice (Samantha, Alex, Daniel, …) to hear it.
-
-## 0.9.274 – 0.9.275 — 2026-11-13
-
-**Voice input and self re-invoke.** Adds native macOS speech input, model-backed spoken summaries, and /reinvoke for rebuilding and relaunching coder from source.
-
-### Added
-
-- New /reinvoke slash command: runs `make install` in the source tree, then re-executes the fresh binary with the same session. (`/reinvoke`)
-  Use /reinvoke to rebuild and relaunch, or /reinvoke --no-exec to build and install without restarting. Session is saved before the process is replaced. After relaunch, a one-shot message tells the agent the restart succeeded and asks it to resume the active work.
-- Voice mode can synthesize natural two-sentence spoken summaries using a separately configured voice model. (`/voice`, `/config`)
-  The full answer stays on screen; spoken summaries point to it when more context is available. Configure Voice model in /config or disable synthesis there.
-- On macOS, /voice listen transcribes microphone speech into the input field for review before sending. (`/voice`)
-  Uses the system Speech framework and Swift compiler, with speech permission checked before capture. /voice stop cancels listening.
+- Background job updates now persist through the live conversation without racing the TUI or disappearing after a turn.
+- Session reloads retain the last completed interaction timestamp for accurate resume guidance.
 
 ## 0.9.273 — 2026-11-13
 

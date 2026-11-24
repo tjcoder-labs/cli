@@ -9,6 +9,8 @@
 package session
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -16,6 +18,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/tjcoder-labs/cli/internal/client"
 	"github.com/tjcoder-labs/cli/internal/workspace"
@@ -109,6 +112,9 @@ type Memory struct {
 // what either consumer writes today, which lets the TUI and headless
 // paths evolve independently without losing each other's data.
 type State struct {
+	// SessionID is the stable id of this conversation (minted on first save,
+	// replaced by /clear). Transcript sync keys the server conversation on it.
+	SessionID    string `json:"session_id,omitempty"`
 	CurrentAgent string `json:"current_agent"`
 	CurrentModel string `json:"current_model"`
 	// Persisted model management settings
@@ -124,6 +130,8 @@ type State struct {
 	Transcript   []TranscriptEntry    `json:"transcript"`
 	Reasoning    string               `json:"reasoning,omitempty"`
 	Activity     string               `json:"activity,omitempty"`
+	// LastInteractionAt is the last completed user/assistant turn (RFC3339).
+	LastInteractionAt string `json:"last_interaction_at,omitempty"`
 
 	// Tasks, Articles, and Memories are added by the task-tracking work
 	// and the unified-right-pane work. They are omitempty so old session
@@ -137,6 +145,19 @@ type State struct {
 	// primary excluded; ActiveWorkspace is the /use choice.
 	Workspaces      []workspace.Spec `json:"workspaces,omitempty"`
 	ActiveWorkspace string           `json:"active_workspace,omitempty"`
+
+	// Usage is the cumulative token usage (and known cost) of the
+	// session; nil in session files written before usage tracking.
+	Usage *UsageStats `json:"usage,omitempty"`
+}
+
+// NewSessionID returns a random, URL-safe session id ("cs_" + 24 hex).
+func NewSessionID() string {
+	var b [12]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return fmt.Sprintf("cs_%x", time.Now().UnixNano())
+	}
+	return "cs_" + hex.EncodeToString(b[:])
 }
 
 // Load reads the session file for the given workspace root. If the file
@@ -161,26 +182,30 @@ func LoadFile(path string) (State, bool, error) {
 	}
 
 	var raw struct {
-		CurrentAgent   string               `json:"current_agent"`
-		CurrentModel   string               `json:"current_model"`
-		ToolMax        int                  `json:"tool_max,omitempty"`
-		EnabledTools   []string             `json:"enabled_tools"`
-		History        []client.Message     `json:"history"`
-		ContextInfo    string               `json:"context_info,omitempty"`
-		ContextUsage   *client.ContextUsage `json:"context_usage,omitempty"`
-		RefOrder       []string             `json:"ref_order,omitempty"`
-		Transcript     json.RawMessage      `json:"transcript"`
-		Reasoning      string               `json:"reasoning,omitempty"`
-		Activity       string               `json:"activity,omitempty"`
-		Tasks          []Task               `json:"tasks,omitempty"`
-		Articles       []Article            `json:"articles,omitempty"`
-		Memories       []Memory             `json:"memories,omitempty"`
-		BackgroundJobs []BackgroundJob      `json:"background_jobs,omitempty"`
+		SessionID         string               `json:"session_id,omitempty"`
+		CurrentAgent      string               `json:"current_agent"`
+		CurrentModel      string               `json:"current_model"`
+		ToolMax           int                  `json:"tool_max,omitempty"`
+		EnabledTools      []string             `json:"enabled_tools"`
+		History           []client.Message     `json:"history"`
+		ContextInfo       string               `json:"context_info,omitempty"`
+		ContextUsage      *client.ContextUsage `json:"context_usage,omitempty"`
+		RefOrder          []string             `json:"ref_order,omitempty"`
+		Transcript        json.RawMessage      `json:"transcript"`
+		Reasoning         string               `json:"reasoning,omitempty"`
+		Activity          string               `json:"activity,omitempty"`
+		LastInteractionAt string               `json:"last_interaction_at,omitempty"`
+		Tasks             []Task               `json:"tasks,omitempty"`
+		Articles          []Article            `json:"articles,omitempty"`
+		Memories          []Memory             `json:"memories,omitempty"`
+		BackgroundJobs    []BackgroundJob      `json:"background_jobs,omitempty"`
+		Usage             *UsageStats          `json:"usage,omitempty"`
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return state, true, fmt.Errorf("session: decode %s: %w", path, err)
 	}
 
+	state.SessionID = raw.SessionID
 	state.CurrentAgent = raw.CurrentAgent
 	state.CurrentModel = raw.CurrentModel
 	state.ToolMax = raw.ToolMax
@@ -191,10 +216,12 @@ func LoadFile(path string) (State, bool, error) {
 	state.RefOrder = raw.RefOrder
 	state.Reasoning = raw.Reasoning
 	state.Activity = raw.Activity
+	state.LastInteractionAt = raw.LastInteractionAt
 	state.Tasks = raw.Tasks
 	state.Articles = raw.Articles
 	state.Memories = raw.Memories
 	state.BackgroundJobs = raw.BackgroundJobs
+	state.Usage = raw.Usage
 	state.Transcript = parseTranscript(raw.Transcript)
 	return state, true, nil
 }
