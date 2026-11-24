@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/tjcoder-labs/cli/internal/mcp"
+	"github.com/tjcoder-labs/cli/internal/mcpserver"
 )
 
 // AppConfig is the persisted user-tunable configuration for the
@@ -60,6 +62,21 @@ type AppConfig struct {
 	// CaptureDir is the directory where /screenshot and /capture save
 	// their media. An empty string means the default (~/Downloads).
 	CaptureDir string `json:"captureDir,omitempty"`
+	// MCPTunnel holds an explicitly saved tunnel publication so a later
+	// /mcp tunnel can reattach using the same RelayToken. Cleared on
+	// stop, exit, or 401. Never written unless the user runs
+	// /mcp tunnel save. File mode remains 0600.
+	MCPTunnel *SavedMCPTunnel `json:"mcp_tunnel,omitempty"`
+}
+
+// SavedMCPTunnel is the minimal credential set needed to reattach to an
+// existing relay session. The capability URL is optional (for display).
+type SavedMCPTunnel struct {
+	SessionID  string `json:"sessionId"`
+	RelayToken string `json:"relayToken"`
+	URL        string `json:"url,omitempty"`
+	ExpiresAt  string `json:"expiresAt"`
+	SavedAt    string `json:"savedAt"`
 }
 
 // MCPServerConfig persists either an HTTP endpoint or a local argv and optional
@@ -122,4 +139,23 @@ func (a *App) saveConfig(cfg AppConfig) error {
 		return err
 	}
 	return os.Rename(tmp, a.configPath())
+}
+
+// saveMCPTunnel persists the current publication only when the user
+// explicitly requests it. The file remains mode 0600.
+func (a *App) saveMCPTunnel(p mcpserver.Publication) error {
+	a.config.MCPTunnel = &SavedMCPTunnel{
+		SessionID:  p.ID,
+		RelayToken: p.RelayToken,
+		URL:        p.URL,
+		ExpiresAt:  p.ExpiresAt,
+		SavedAt:    time.Now().UTC().Format(time.RFC3339),
+	}
+	return a.saveConfig(a.config)
+}
+
+// clearMCPTunnel removes any saved tunnel credentials.
+func (a *App) clearMCPTunnel() {
+	a.config.MCPTunnel = nil
+	_ = a.saveConfig(a.config)
 }
