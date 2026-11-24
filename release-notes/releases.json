@@ -3,6 +3,24 @@
   "schema_version": 1,
   "releases": [
     {
+      "version": "0.9.278",
+      "date": "2026-11-24",
+      "title": "Count every open TUI and tag CLI usage",
+      "summary": "Each TUI launch now has its own session, so two windows on one machine are counted separately, and calls to the tjcoder.com gateway identify themselves as the CLI.",
+      "changes": {
+        "added": [
+          {
+            "text": "Each TUI launch sends a random session id with its heartbeat, so concurrent windows on the same machine are counted as separate open sessions.",
+            "details": "Older clients that do not send a session id keep working as before."
+          },
+          {
+            "text": "Requests to the tjcoder.com gateway identify themselves as the Coder CLI, including the install and launch session when those ids already exist.",
+            "details": "Usage on the gateway is recorded as coming from the CLI rather than falling back to another source. Telemetry opt-out still applies: an install id is never created just to tag a request."
+          }
+        ]
+      }
+    },
+    {
       "version": "0.9.277",
       "date": "2026-11-23",
       "title": "Watch a command's live output in the canvas",

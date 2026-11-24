@@ -81,6 +81,7 @@ func (e *Ergo) fetchV1Models(ctx context.Context) ([]ergoModelsEntry, error) {
 		return nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+e.apiKey)
+	ApplyErgoIdentityHeaders(req)
 	resp, err := e.httpClient.Do(req)
 	if err != nil {
 		return nil, err

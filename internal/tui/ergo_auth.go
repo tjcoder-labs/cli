@@ -469,6 +469,7 @@ func fetchErgoBalanceCents(ctx context.Context, key string) (int64, error) {
 		return 0, err
 	}
 	req.Header.Set("Authorization", "Bearer "+key)
+	client.ApplyErgoIdentityHeaders(req)
 	resp, err := (&http.Client{Timeout: ergoAuthTimeout}).Do(req)
 	if err != nil {
 		return 0, fmt.Errorf("wallet balance request failed: %w", err)
@@ -545,6 +546,7 @@ func fetchWalletPacks(ctx context.Context, key string) ([]walletPack, error) {
 		return defaultWalletPacks(), err
 	}
 	req.Header.Set("Authorization", "Bearer "+key)
+	client.ApplyErgoIdentityHeaders(req)
 	resp, err := (&http.Client{Timeout: ergoAuthTimeout}).Do(req)
 	if err != nil || resp.StatusCode != http.StatusOK {
 		if resp != nil {
@@ -625,6 +627,7 @@ func createCheckout(ctx context.Context, key string, p walletPack) (string, erro
 		return "", err
 	}
 	req.Header.Set("Authorization", "Bearer "+key)
+	client.ApplyErgoIdentityHeaders(req)
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := (&http.Client{Timeout: ergoAuthTimeout}).Do(req)
 	if err != nil {

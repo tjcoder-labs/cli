@@ -89,6 +89,7 @@ func (a *App) startTelemetry(ctx context.Context) {
 		BaseURL:   ergoBaseURL(),
 		Version:   a.appVersion,
 		InstallID: id,
+		SessionID: telemetry.LaunchSessionID(),
 		Token:     auth.ResolveErgoToken,
 	}
 	hb.Run(ctx, first)
