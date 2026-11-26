@@ -72,6 +72,7 @@ func (a *App) toggleVoice() {
 	} else {
 		a.stopVoiceInput(false)
 		a.stopTTS()
+		a.duckMusic(false, false)
 		a.appendActivity("Voice mode off")
 	}
 }
@@ -237,6 +238,7 @@ func (a *App) speak(text string) {
 	a.voice.ttsCmd = cmd
 	a.voice.Speaking = true
 	a.voice.mu.Unlock()
+	a.duckMusic(true, a.voice.Listening)
 
 	go func() {
 		_ = cmd.Run()
@@ -247,7 +249,9 @@ func (a *App) speak(text string) {
 			a.voice.ttsCmd = nil
 			a.voice.Speaking = false
 		}
+		listening := a.voice.Listening
 		a.voice.mu.Unlock()
+		a.duckMusic(false, listening)
 	}()
 }
 
@@ -268,6 +272,7 @@ func (a *App) speakViaNative(text, voiceName string) {
 	a.voice.ttsCmd = cmd
 	a.voice.Speaking = true
 	a.voice.mu.Unlock()
+	a.duckMusic(true, a.voice.Listening)
 	go func() {
 		defer cancel()
 		if out, err := cmd.CombinedOutput(); err != nil {
@@ -282,7 +287,9 @@ func (a *App) speakViaNative(text, voiceName string) {
 			a.voice.ttsCmd = nil
 			a.voice.Speaking = false
 		}
+		listening := a.voice.Listening
 		a.voice.mu.Unlock()
+		a.duckMusic(false, listening)
 	}()
 }
 
@@ -291,10 +298,12 @@ func (a *App) stopTTS() {
 	cmd := a.voice.ttsCmd
 	a.voice.ttsCmd = nil
 	a.voice.Speaking = false
+	listening := a.voice.Listening
 	a.voice.mu.Unlock()
 	if cmd != nil && cmd.Process != nil {
 		_ = cmd.Process.Kill()
 	}
+	a.duckMusic(false, listening)
 }
 
 func (a *App) onBargeIn() {
