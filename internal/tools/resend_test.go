@@ -2,7 +2,10 @@ package tools
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -55,20 +58,58 @@ func TestResendInboxAttachmentRequiresIDs(t *testing.T) {
 	}
 }
 
-func TestInboxLimit(t *testing.T) {
-	cases := map[int]int{
-		-5:  20,
-		0:   20,
-		1:   1,
-		20:  20,
-		50:  50,
-		100: 100,
-		101: 100,
-		999: 100,
+func TestInferContentType(t *testing.T) {
+	cases := map[string]string{
+		".html": "text/html",
+		".HTML": "text/html",
+		".htm":  "text/html",
+		".txt":  "text/plain",
+		".md":   "text/plain",
+		".pdf":  "application/pdf",
+		".png":  "image/png",
+		".jpg":  "image/jpeg",
+		".jpeg": "image/jpeg",
+		".gif":  "image/gif",
+		".svg":  "image/svg+xml",
+		".csv":  "text/csv",
+		".json": "application/json",
+		".zip":  "application/zip",
+		".xyz":  "application/octet-stream",
 	}
 	for in, want := range cases {
-		if got := inboxLimit(in); got != want {
-			t.Fatalf("inboxLimit(%d) = %d, want %d", in, got, want)
+		if got := inferContentType(in); got != want {
+			t.Fatalf("inferContentType(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+func TestResendBuildAttachments(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "note.txt")
+	if err := os.WriteFile(p, []byte("hello"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	atts, err := resendBuildAttachments([]string{p})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(atts) != 1 {
+		t.Fatalf("got %d attachments, want 1", len(atts))
+	}
+	a := atts[0]
+	if a["filename"] != "note.txt" {
+		t.Fatalf("filename = %q, want note.txt", a["filename"])
+	}
+	if a["content"] != base64.StdEncoding.EncodeToString([]byte("hello")) {
+		t.Fatalf("content = %q", a["content"])
+	}
+	if a["content_type"] != "text/plain" {
+		t.Fatalf("content_type = %q, want text/plain", a["content_type"])
+	}
+}
+
+func TestResendBuildAttachmentsMissing(t *testing.T) {
+	if _, err := resendBuildAttachments([]string{"/no/such/file.txt"}); err == nil {
+		t.Fatal("expected error for missing file")
 	}
 }

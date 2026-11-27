@@ -72,17 +72,22 @@ type Registry struct {
 	tools    map[string]Tool
 }
 
-// SetDelegationFactory enables the delegate tool for this registry only.
-// Specialists are built with a plain NewRegistry, so they never receive it:
-// delegation cannot recurse and no process-wide mutable factory is needed.
+// SetDelegationFactory enables the delegate and collect tools for this
+// registry only. Specialists are built with a plain NewRegistry, so they
+// never receive it: delegation cannot recurse and no process-wide mutable
+// factory is needed. A single hub is shared by delegate and collect so the
+// coordinator can poll in-flight runs without any process-wide state.
 func (r *Registry) SetDelegationFactory(f DelegationProviderFactory) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if f == nil {
 		delete(r.tools, "delegate")
+		delete(r.tools, "collect")
 		return
 	}
-	r.tools["delegate"] = delegationTool{factory: f}
+	hub := &delegationHub{records: map[string]*delegationRecord{}}
+	r.tools["delegate"] = delegationTool{factory: f, hub: hub}
+	r.tools["collect"] = collectTool{hub: hub}
 }
 
 func NewRegistry(provider client.Provider) *Registry {
@@ -231,6 +236,10 @@ func numberProp(description string) map[string]any {
 
 func boolProp(description string) map[string]any {
 	return map[string]any{"type": "boolean", "description": description}
+}
+
+func arrayProp(description string, items map[string]any) map[string]any {
+	return map[string]any{"type": "array", "description": description, "items": items}
 }
 
 func preview(text string) string {

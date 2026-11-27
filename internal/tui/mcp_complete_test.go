@@ -18,18 +18,28 @@ func TestMCPArgumentPaletteMatchesAdd(t *testing.T) {
 		if a.hintMode != "wsargs" || a.wsArgCmd != "mcp" {
 			t.Fatalf("mode %q", a.hintMode)
 		}
-		if got := strings.Join(wsLabels(a), "|"); got != "list|status|add <name> <url|command>|remove <name>|tunnel|tunnel stop" {
+		if got := strings.Join(wsLabels(a), "|"); got != "list|status|add <name> <url|command>|remove <name>|tunnel" {
 			t.Fatal(got)
 		}
 		if txt := stripTags(a.renderWorkspaceArgPalette()); !strings.Contains(txt, "list") || !strings.Contains(txt, "mcp:") {
 			t.Fatal(txt)
 		}
 		a.updateInputHint("/mcp tu")
-		if got := strings.Join(wsLabels(a), "|"); got != "tunnel|tunnel stop" {
+		if got := strings.Join(wsLabels(a), "|"); got != "tunnel" {
+			t.Fatal(got)
+		}
+		// /mcp tunnel completes its own subcommands, including save (which
+		// persists the relay token for reattach) and stop.
+		a.updateInputHint("/mcp tunnel ")
+		if got := strings.Join(wsLabels(a), "|"); got != "tunnel|tunnel save|tunnel stop" {
+			t.Fatal(got)
+		}
+		a.updateInputHint("/mcp tunnel s")
+		if got := strings.Join(wsLabels(a), "|"); got != "tunnel save|tunnel stop" {
 			t.Fatal(got)
 		}
 		// Shift+Tab cycles, Tab inserts the highlighted option — same keys as /add.
-		a.input.SetText("/mcp tu")
+		a.input.SetText("/mcp tunnel sto")
 		a.input.GetInputCapture()(tcell.NewEventKey(tcell.KeyBacktab, 0, tcell.ModShift))
 		a.input.GetInputCapture()(tcell.NewEventKey(tcell.KeyTab, 0, tcell.ModNone))
 		if a.input.GetText() != "/mcp tunnel stop" {

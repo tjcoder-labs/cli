@@ -4,7 +4,25 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
+
+// voiceEnumerateTimeout bounds how long a test waits for the background voice
+// enumeration; the native pass compiles a Swift helper, so allow generously.
+const voiceEnumerateTimeout = 60 * time.Second
+
+// The inventory must never be produced synchronously: warming only starts a
+// goroutine, and reading before it lands returns nil rather than blocking.
+func TestWarmVoiceCacheIsNonBlocking(t *testing.T) {
+	start := time.Now()
+	warmVoiceCache()
+	warmVoiceCache() // idempotent; must not start a second enumeration
+	if elapsed := time.Since(start); elapsed > 100*time.Millisecond {
+		t.Fatalf("warmVoiceCache blocked for %s", elapsed)
+	}
+	_ = installedVoices() // must return immediately, possibly nil
+	_ = voicesReady()
+}
 
 func TestSayVoicesParsesLocales(t *testing.T) {
 	if runtime.GOOS != "darwin" {
@@ -29,6 +47,14 @@ func TestSayVoicesParsesLocales(t *testing.T) {
 func TestInstalledVoicesIncludeSiriVoices(t *testing.T) {
 	if runtime.GOOS != "darwin" {
 		t.Skip("voice inventory is macOS-only")
+	}
+	// Enumeration is background-cached now: warming is non-blocking, so the
+	// test must wait for it rather than expect a synchronous result.
+	warmVoiceCache()
+	select {
+	case <-voicesReadyChan():
+	case <-time.After(voiceEnumerateTimeout):
+		t.Fatal("voice enumeration did not finish")
 	}
 	voices := installedVoices()
 	if len(voices) == 0 {

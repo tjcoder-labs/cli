@@ -37,7 +37,7 @@ func (r *specialistDelegationRunner) RunDelegation(ctx context.Context, state *s
 	runner := &tooling.Runner{
 		Provider: r.app.provider, Registry: registry, WorkspaceRoot: r.root,
 		MaxSteps: 12, HighlightSink: r.env.Sink, CLICommandSink: r.env.CommandSink,
-		SessionState: state, Prompter: r.env.Prompter, Sudo: r.env.Sudo, Workspaces: r.env.Workspaces,
+		SessionState: state, Sudo: r.env.Sudo, Workspaces: r.env.Workspaces,
 		PersistSession: func() error { return nil },
 	}
 	return runner.Run(ctx, nil, prompt, specialist, model, specialist.ToolNames, func(ev tooling.Event) {

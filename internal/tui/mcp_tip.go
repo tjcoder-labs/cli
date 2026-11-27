@@ -38,15 +38,22 @@ func (a *App) mcpTip(text string) string {
 			if !a.mcpTunnel.ready {
 				return "MCP tunnel is connecting; /mcp tunnel stop cancels it. The link will be the credential."
 			}
-			return "/mcp tunnel stop — revoke access. F7 show/hide; F8 copy revealed link. The link is the credential; sudo remains user-gated."
+			return "/mcp tunnel save keeps this link for reattach · /mcp tunnel stop revokes it. F7 show/hide, F8 copy. Sudo stays user-gated."
 		}
 		if len(parts) > 2 && parts[2] == "stop" {
 			return "/mcp tunnel stop — no tunnel is running."
 		}
+		if len(parts) > 2 && parts[2] == "save" {
+			return "/mcp tunnel save — needs a running tunnel; start one with /mcp tunnel."
+		}
 		if auth.ResolveErgoToken() == "" {
 			return "Run /login first, then /mcp tunnel to open a secret capability URL. Sudo requires your TUI approval."
 		}
-		return "/mcp tunnel — open a secret capability URL for this session; sudo requires your TUI approval. /mcp tunnel stop revokes it."
+		return "/mcp tunnel opens a secret link · save reattaches later · stop revokes. F7 show/hide, F8 copy; sudo needs your TUI approval."
+	case "tunnel stop":
+		return "/mcp tunnel stop — revoke the tunnel link and cancel its tool calls."
+	case "tunnel save":
+		return "/mcp tunnel save — persist the token so a later /mcp tunnel reattaches to the same link."
 	}
 	if len(names) > 0 {
 		return "/mcp list: tools · status: health · /mcp remove " + names[0] + ": disconnect · add: connect · tunnel: secret link."

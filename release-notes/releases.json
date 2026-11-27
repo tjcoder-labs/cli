@@ -3,6 +3,50 @@
   "schema_version": 1,
   "releases": [
     {
+      "version": "0.9.280",
+      "date": "2026-11-26",
+      "title": "Async delegation so Ergo never blocks while specialists work",
+      "summary": "Ergo's delegate tool now returns immediately with a delegation ID; the specialist runs in the background while Ergo keeps orchestrating, and a new collect tool merges the specialist's report, tasks, and memories back into the session.",
+      "changes": {
+        "added": [
+          {
+            "text": "delegate now starts a specialist in the background and returns a delegation ID instead of blocking the coordinator loop.",
+            "details": "Independent specialists can run in parallel. The specialist's finished report is auto-delivered to the conversation, and its isolated transcript is saved under .ergo-cli-go/delegations/.",
+            "commands": ["/delegate"]
+          },
+          {
+            "text": "new collect tool retrieves a delegation's result and merges the specialist's shared tasks and memories into the session exactly once.",
+            "details": "collect returns 'running' until the specialist finishes, then merges shared state and returns the full report.",
+            "commands": ["/collect"]
+          }
+        ],
+        "fixed": [
+          {
+            "text": "/config no longer freezes while enumerating installed voices; the list loads in the background and fills in when ready.",
+            "details": "Opening the config modal now warms the voice cache on a background goroutine and shows a 'loading voices…' placeholder until enumeration completes, instead of blocking the UI on the system voice listing."
+          },
+          {
+            "text": "Background specialists no longer pop the interactive tool-budget card into the live TUI.",
+            "details": "A delegated specialist that hits its tool-call budget now produces a headless checkpoint response instead of stealing the user's focus with a Continue prompt."
+          }
+        ]
+      }
+    },
+    {
+      "version": "0.9.279",
+      "date": "2026-11-25",
+      "title": "Attach files to emails sent with the resend tool",
+      "summary": "The resend tool's send action accepts an attachments list of file paths, reads each file, and attaches it with an inferred MIME type so invoices and other documents can be emailed directly.",
+      "changes": {
+        "added": [
+          {
+            "text": "resend send now takes an attachments array of file paths; each file is read and attached with its basename and an inferred content type.",
+            "details": "Content types are inferred from the extension (html, txt, pdf, png, jpg, csv, json, zip, and more), falling back to application/octet-stream. Missing or empty files fail with a clear error before sending."
+          }
+        ]
+      }
+    },
+    {
       "version": "0.9.278",
       "date": "2026-11-24",
       "title": "Count every open TUI and tag CLI usage",
@@ -59,7 +103,7 @@
       "changes": {
         "added": [
           {
-            "text": "A compact token counter in the footer, such as ↑ 12.3k ↓ 4.5k tokens.",
+            "text": "A compact token counter in the footer, such as \u2191 12.3k \u2193 4.5k tokens.",
             "details": "Counts come from each provider's own usage report (the TJ Coder gateway, Ollama, Ollama Cloud, Gemini and OpenAI-compatible providers). When a provider reports nothing, tokens are estimated and marked with ~."
           },
           {
@@ -184,7 +228,9 @@
           {
             "text": "New /voice toggle reads the assistant's first 1-2 sentences aloud via macOS say or Linux espeak.",
             "details": "Works with any provider and model; only a TTS binary on PATH is required.",
-            "commands": ["/voice"]
+            "commands": [
+              "/voice"
+            ]
           },
           {
             "text": "Press Esc while voice is speaking to barge in; the assistant yields with \"Go ahead\"."
@@ -265,7 +311,7 @@
       "changes": {
         "added": [
           {
-            "text": "The interactive tunnel banner shows unique consumer connections, the tool call in flight (for example → run_command) and reconnecting… while the relay redials.",
+            "text": "The interactive tunnel banner shows unique consumer connections, the tool call in flight (for example \u2192 run_command) and reconnecting\u2026 while the relay redials.",
             "details": "Connections are counted by opaque server-assigned IDs; caller IP and user agent never reach the CLI. Consumers idle for five minutes drop off the count."
           },
           {
@@ -337,7 +383,7 @@
       "changes": {
         "added": [
           {
-            "text": "Public tunnel hosts print timestamped tool activity to stderr: the TUI’s Deep arrow, Bright bold success/error marks, and Text/Dim body/timestamp roles. NO_COLOR and TERM=dumb disable ANSI styling."
+            "text": "Public tunnel hosts print timestamped tool activity to stderr: the TUI\u2019s Deep arrow, Bright bold success/error marks, and Text/Dim body/timestamp roles. NO_COLOR and TERM=dumb disable ANSI styling."
           }
         ],
         "security": [
@@ -372,7 +418,7 @@
         ],
         "security": [
           {
-            "text": "Interactive MCP calls use the live session’s Prompter and SudoPolicy; only the TUI owner approves sudo and enters a masked password. Standalone tunnels still deny sudo.",
+            "text": "Interactive MCP calls use the live session\u2019s Prompter and SudoPolicy; only the TUI owner approves sudo and enters a masked password. Standalone tunnels still deny sudo.",
             "details": "Consumers receive command output or a denial, never passwords or whether approval was once-only or session-wide. Calls reserve the interactive execution slot instead of racing an agent turn."
           }
         ]
@@ -421,7 +467,7 @@
       "version": "0.9.258",
       "date": "2026-11-07",
       "title": "Ephemeral public MCP host sessions",
-      "summary": "Publish Coder’s local interactive toolset to a remote MCP consumer with a short-lived, authenticated outbound relay.",
+      "summary": "Publish Coder\u2019s local interactive toolset to a remote MCP consumer with a short-lived, authenticated outbound relay.",
       "changes": {
         "added": [
           {
@@ -759,7 +805,7 @@
             "highlight": true
           },
           {
-            "text": "manage_model enumerates ergo's full unified catalog (tiers plus xai/, ollama/, google/, …) when validating a model."
+            "text": "manage_model enumerates ergo's full unified catalog (tiers plus xai/, ollama/, google/, \u2026) when validating a model."
           }
         ]
       }
@@ -834,7 +880,7 @@
       "changes": {
         "added": [
           {
-            "text": "New manage_model tool lets agents and users switch ergo tiers (flash↔pro↔genius) and control reasoning (think on/off/auto) without restarting. Persists choice across sessions.",
+            "text": "New manage_model tool lets agents and users switch ergo tiers (flash\u2194pro\u2194genius) and control reasoning (think on/off/auto) without restarting. Persists choice across sessions.",
             "highlight": true
           },
           {
@@ -850,7 +896,7 @@
         ],
         "fixed": [
           {
-            "text": "Corrected NormalizeErgoModel to properly map legacy ids like ergo-lite → tjcoder/ergo-flash:cloud and handle tjcoder/* prefixes consistently.",
+            "text": "Corrected NormalizeErgoModel to properly map legacy ids like ergo-lite \u2192 tjcoder/ergo-flash:cloud and handle tjcoder/* prefixes consistently.",
             "details": "Fixes model resolution for saved legacy aliases and explicit tjcoder/* inputs."
           }
         ]

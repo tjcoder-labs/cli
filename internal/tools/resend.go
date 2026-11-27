@@ -3,6 +3,7 @@ package tools
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -65,22 +66,23 @@ func (e resendAPIError) String() string {
 
 // resendArgs is the decoded argument set for the resend tool.
 type resendArgs struct {
-	Action       string `json:"action"`
-	Token        string `json:"token"`
-	From         string `json:"from"`
-	To           string `json:"to"`
-	Subject      string `json:"subject"`
-	HTML         string `json:"html"`
-	Text         string `json:"text"`
-	CC           string `json:"cc"`
-	BCC          string `json:"bcc"`
-	ReplyTo      string `json:"reply_to"`
-	ScheduledAt  string `json:"scheduled_at"`
-	ID           string `json:"id"`
-	Limit        int    `json:"limit"`
-	After        string `json:"after"`
-	Before       string `json:"before"`
-	AttachmentID string `json:"attachment_id"`
+	Action       string   `json:"action"`
+	Token        string   `json:"token"`
+	From         string   `json:"from"`
+	To           string   `json:"to"`
+	Subject      string   `json:"subject"`
+	HTML         string   `json:"html"`
+	Text         string   `json:"text"`
+	CC           string   `json:"cc"`
+	BCC          string   `json:"bcc"`
+	ReplyTo      string   `json:"reply_to"`
+	ScheduledAt  string   `json:"scheduled_at"`
+	ID           string   `json:"id"`
+	Limit        int      `json:"limit"`
+	After        string   `json:"after"`
+	Before       string   `json:"before"`
+	AttachmentID string   `json:"attachment_id"`
+	Attachments  []string `json:"attachments"`
 }
 
 // resendTool provides send/list/retrieve access to emails via the
@@ -100,7 +102,7 @@ AUTHENTICATION (required before any other action):
 
 ACTIONS:
 - auth(token): save the API key locally and verify it with a GET /emails?limit=1 call.
-- send(from, to, subject, html?, text?, cc?, bcc?, reply_to?, scheduled_at?): send an email.
+- send(from, to, subject, html?, text?, cc?, bcc?, reply_to?, scheduled_at?, attachments?): send an email.
 - list(limit?, after?): list sent emails (id, to, subject, created_at).
 - get(id): retrieve a single email by id (includes html, text, subject, from, to).
 - inbox(limit?, after?, before?): list received (inbound) emails. Requires the Resend Inbound feature enabled on a domain route; returns an empty list otherwise.
@@ -121,6 +123,7 @@ SAFETY: list/get/inbox actions are safe and read-only. send sends a real email; 
 				"bcc":           stringProp("BCC recipient(s), comma-separated."),
 				"reply_to":      stringProp("Reply-to email address."),
 				"scheduled_at":  stringProp("Schedule email (natural language or ISO 8601)."),
+				"attachments":   arrayProp("File paths to attach to the email (send only). Each path is read from disk and attached with its basename as the filename and an inferred content type.", stringProp("Absolute or workspace-relative path to a file to attach.")),
 				"id":            stringProp("Email id (for get, inbox_get, inbox_attachments)."),
 				"attachment_id": stringProp("Attachment id (for inbox_attachment)."),
 				"limit":         numberProp("Max results for list/inbox (1-100, default 20)."),
@@ -228,6 +231,13 @@ func resendSend(ctx context.Context, token string, a resendArgs) (Result, error)
 	if a.ScheduledAt != "" {
 		payload["scheduled_at"] = a.ScheduledAt
 	}
+	if len(a.Attachments) > 0 {
+		atts, err := resendBuildAttachments(a.Attachments)
+		if err != nil {
+			return Result{}, err
+		}
+		payload["attachments"] = atts
+	}
 
 	raw, _ := json.Marshal(payload)
 	body, err := resendCall(ctx, token, "POST", "/emails", raw)
@@ -235,6 +245,61 @@ func resendSend(ctx context.Context, token string, a resendArgs) (Result, error)
 		return Result{}, err
 	}
 	return Result{Content: body, Preview: preview(body)}, nil
+}
+
+// resendBuildAttachments reads each path and returns Resend's
+// attachments array: filename, content (base64), and a MIME type
+// inferred from the file extension.
+func resendBuildAttachments(paths []string) ([]map[string]string, error) {
+	out := make([]map[string]string, 0, len(paths))
+	for _, p := range paths {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		data, err := os.ReadFile(p)
+		if err != nil {
+			return nil, fmt.Errorf("read attachment %q: %w", p, err)
+		}
+		if len(data) == 0 {
+			return nil, fmt.Errorf("attachment %q is empty", p)
+		}
+		out = append(out, map[string]string{
+			"filename":     filepath.Base(p),
+			"content":      base64.StdEncoding.EncodeToString(data),
+			"content_type": inferContentType(filepath.Ext(p)),
+		})
+	}
+	return out, nil
+}
+
+// inferContentType maps a file extension (including the leading dot)
+// to a MIME type, falling back to application/octet-stream.
+func inferContentType(ext string) string {
+	switch strings.ToLower(ext) {
+	case ".html", ".htm":
+		return "text/html"
+	case ".txt", ".md":
+		return "text/plain"
+	case ".pdf":
+		return "application/pdf"
+	case ".png":
+		return "image/png"
+	case ".jpg", ".jpeg":
+		return "image/jpeg"
+	case ".gif":
+		return "image/gif"
+	case ".svg":
+		return "image/svg+xml"
+	case ".csv":
+		return "text/csv"
+	case ".json":
+		return "application/json"
+	case ".zip":
+		return "application/zip"
+	default:
+		return "application/octet-stream"
+	}
 }
 
 // resendList lists sent emails.

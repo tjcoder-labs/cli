@@ -60,7 +60,7 @@ func TestMCPTipsAdaptAndEscapeNames(t *testing.T) {
 		t.Error(got)
 	}
 	a.mcpTunnel.ready = true
-	if got := a.mcpTip("/mcp tunnel"); !strings.Contains(got, "link is the credential") || !strings.Contains(got, "user-gated") {
+	if got := a.mcpTip("/mcp tunnel"); !strings.Contains(got, "revokes") || !strings.Contains(got, "user-gated") {
 		t.Error(got)
 	}
 	a.mcpTunnel.stopping = true
@@ -81,7 +81,7 @@ func TestMCPTunnelUsageAndStop(t *testing.T) {
 	a.handleMCPCommand([]string{"mcp", "tunnel", "unexpected"})
 	a.handleMCPCommand([]string{"mcp", "tunnel"})
 	a.handleMCPCommand([]string{"mcp", "tunnel", "stop"})
-	for _, want := range []string{"remove|tunnel", "/mcp tunnel [stop]", "Run /login first", "No MCP tunnel is running"} {
+	for _, want := range []string{"remove|tunnel", "/mcp tunnel [stop|save]", "Run /login first", "No MCP tunnel is running"} {
 		if !strings.Contains(a.capturedActivity(), want) {
 			t.Error(a.capturedActivity())
 		}

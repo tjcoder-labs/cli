@@ -2721,34 +2721,76 @@ func (a *App) openConfigModal() {
 	})
 
 	// --- Voice name (macOS say voice) ---
-	voiceOptions := []string{"(system default)"}
-	voiceByLabel := make(map[string]string)
-	voiceOptionIdx := 0
-	for _, v := range installedVoices() {
-		label := v.Name + " (" + v.Language + ")"
-		if v.Quality != "" && v.Quality != "default" {
-			label = v.Name + " (" + v.Language + ", " + v.Quality + ")"
+	//
+	// Building this list shells out to `swift`, which can take seconds, so it
+	// is enumerated on a background goroutine: warm the cache here (cheap on
+	// every later call) and, until it lands, show a placeholder instead of
+	// blocking the event loop. The dropdown is filled in when the cache
+	// arrives so the modal never has to be reopened.
+	warmVoiceCache()
+	buildVoiceOptions := func() ([]string, map[string]string, int) {
+		options := []string{"(system default)"}
+		byLabel := make(map[string]string)
+		idx := 0
+		for _, v := range installedVoices() {
+			label := v.Name + " (" + v.Language + ")"
+			if v.Quality != "" && v.Quality != "default" {
+				label = v.Name + " (" + v.Language + ", " + v.Quality + ")"
+			}
+			if _, dup := byLabel[label]; dup {
+				continue
+			}
+			options = append(options, label)
+			byLabel[label] = v.Name
+			if strings.EqualFold(work.VoiceName, v.Name) {
+				idx = len(options) - 1
+			}
 		}
-		if _, dup := voiceByLabel[label]; dup {
-			continue
+		if !voicesReady() {
+			// Enumeration is still running; the real entries replace this
+			// placeholder once it finishes.
+			options = append(options, "(loading voices…)")
+			byLabel["(loading voices…)"] = work.VoiceName
+			if work.VoiceName == "" {
+				idx = len(options) - 1
+			}
 		}
-		voiceOptions = append(voiceOptions, label)
-		voiceByLabel[label] = v.Name
-		if strings.EqualFold(work.VoiceName, v.Name) {
-			voiceOptionIdx = len(voiceOptions) - 1
+		if work.VoiceName != "" && idx == 0 {
+			// The saved voice is not in the enumerated list (e.g. an installed
+			// Siri voice); keep it selectable rather than silently resetting.
+			label := work.VoiceName + " (configured)"
+			options = append(options, label)
+			byLabel[label] = work.VoiceName
+			idx = len(options) - 1
 		}
+		return options, byLabel, idx
 	}
-	if work.VoiceName != "" && voiceOptionIdx == 0 {
-		// The saved voice is not in the enumerated list (e.g. an installed
-		// Siri voice); keep it selectable rather than silently resetting.
-		label := work.VoiceName + " (configured)"
-		voiceOptions = append(voiceOptions, label)
-		voiceByLabel[label] = work.VoiceName
-		voiceOptionIdx = len(voiceOptions) - 1
-	}
-	form.AddDropDown("Voice (name + language)", voiceOptions, voiceOptionIdx, func(option string, _ int) {
+	voiceOptions, voiceByLabel, voiceOptionIdx := buildVoiceOptions()
+	voiceSelect := func(option string, _ int) {
+		if option == "(loading voices…)" {
+			return
+		}
 		work.VoiceName = voiceByLabel[option]
-	})
+	}
+	voiceDD := tview.NewDropDown().
+		SetLabel("Voice (name + language)").
+		SetOptions(voiceOptions, voiceSelect).
+		SetCurrentOption(voiceOptionIdx)
+	form.AddFormItem(voiceDD)
+
+	// Fill the dropdown in when the background enumeration lands. The wait
+	// happens off the event loop and the mutation is posted back to it; if
+	// the user has already closed the modal the stale dropdown is simply no
+	// longer in the layout, so updating it is harmless.
+	go func() {
+		<-voicesReadyChan()
+		a.postUI(func() {
+			opts, byLabel, idx := buildVoiceOptions()
+			voiceByLabel = byLabel
+			voiceDD.SetOptions(opts, voiceSelect)
+			voiceDD.SetCurrentOption(idx)
+		})
+	}()
 
 	// --- Auto-compact threshold ---
 	form.AddInputField("Auto-compact at % (0=off)", strconv.Itoa(work.AutoCompactPercent), 4,

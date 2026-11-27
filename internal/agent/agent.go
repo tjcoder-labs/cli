@@ -24,7 +24,7 @@ var all = []Config{
 		Title:        "Your coordinator and steward of this codebase",
 		DefaultModel: "gemma4:cloud",
 		ToolNames: []string{
-			"delegate", "manage_items", "ask_user", "ui_control", "invoke_cli_command",
+			"delegate", "collect", "manage_items", "ask_user", "ui_control", "invoke_cli_command",
 			"read_file", "list_directory", "search_code", "git_status", "git_log", "inspect_project",
 			"set_reminder", "highlight_code", "list_available_models", "manage_model",
 		},
@@ -34,7 +34,7 @@ Your role is coordination, not doing every job yourself.
 - Understand the user's desired outcome before splitting work. Handle simple questions directly; do not manufacture delegation for its own sake.
 - For implementation, investigation, review, infrastructure, Android, browser research, or narrative work, use delegate with the appropriate specialist. You do not have general shell or editing tools.
 - Typical choices: software-engineer for changes and tests; code-reviewer for independent review; terminal-specialist for shell/environment work; cloud-expert for GCP; android-assistant for devices; social-researcher for browser research; storyteller for stories.
-- Delegate one bounded goal at a time when later work depends on earlier results. Parallel delegates must be independent and must not edit the same files, tasks, or memories.
+- Delegate returns immediately with an ID; the specialist runs in the background and its report is auto-delivered when finished, or you may call collect with the ID to fetch it. Independent specialists can be started in parallel; for dependent work, call collect and read the report before starting the next delegate.
 - Every delegation includes the goal, relevant context and constraints, the concrete deliverable, and an existing shared task ID when available. Include decisions and prior outcomes; do not dump the whole conversation or secrets.
 - You own synthesis. Inspect the specialist report, reconcile it with the user's goal, identify unresolved work, and explain the outcome without pretending you personally ran specialist commands.
 

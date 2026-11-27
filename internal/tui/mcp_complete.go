@@ -29,9 +29,16 @@ func (a *App) mcpArgHints(text string) (string, []wsArg, bool) {
 		if strings.ContainsAny(r, " \t") {
 			return "", nil, false
 		}
+		q := strings.ToLower(strings.TrimSpace(r))
 		var items []wsArg
-		if strings.HasPrefix("stop", strings.ToLower(r)) {
-			items = append(items, wsArg{label: "stop", insert: "tunnel stop", desc: a.mcpTunnelStopDesc()})
+		for _, it := range a.mcpTunnelSubcommandArgs() {
+			// Match the subcommand itself ("stop"/"save"), not the leading
+			// "tunnel" keyword every entry shares.
+			fields := strings.Fields(it.insert)
+			word := strings.ToLower(fields[len(fields)-1])
+			if q == "" || strings.HasPrefix(word, q) {
+				items = append(items, it)
+			}
 		}
 		return "tunnel:", items, true
 	}
@@ -52,10 +59,29 @@ func (a *App) mcpArgHints(text string) (string, []wsArg, bool) {
 	return "mcp:", items, true
 }
 
+func (a *App) mcpTunnelSubcommandArgs() []wsArg {
+	running := a.mcpTunnel != nil && !a.mcpTunnel.stopping
+	items := []wsArg{
+		{label: "tunnel", insert: "tunnel", desc: "open a secret link for this session; F7 reveal, F8 copy, sudo stays user-gated"},
+	}
+	if running {
+		items = append(items,
+			wsArg{label: "tunnel save", insert: "tunnel save", desc: "persist the token so a later /mcp tunnel reattaches to the same link"},
+			wsArg{label: "tunnel stop", insert: "tunnel stop", desc: a.mcpTunnelStopDesc()},
+		)
+	} else {
+		items = append(items,
+			wsArg{label: "tunnel save", insert: "tunnel save", desc: "persist the token so a later /mcp tunnel reattaches (needs a running tunnel)"},
+			wsArg{label: "tunnel stop", insert: "tunnel stop", desc: "revoke the tunnel link (none running)"},
+		)
+	}
+	return items
+}
+
 func (a *App) mcpSubcommandArgs() []wsArg {
-	tunnel := wsArg{label: "tunnel", insert: "tunnel", desc: "open a secret capability URL for this session; sudo stays user-gated"}
+	tunnel := wsArg{label: "tunnel", insert: "tunnel", desc: "open a secret link for this session; F7 reveals, F8 copies"}
 	if a.mcpTunnel != nil {
-		tunnel.desc = "a tunnel is running; use tunnel stop to revoke it"
+		tunnel.desc = "a tunnel is running; Tab-complete tunnel stop/save for more"
 	}
 	return []wsArg{
 		{label: "list", insert: "list", desc: "configured servers, their tools and descriptions"},
@@ -63,7 +89,6 @@ func (a *App) mcpSubcommandArgs() []wsArg {
 		{label: "add <name> <url|command>", insert: "add ", desc: "connect an HTTP server or local process"},
 		{label: "remove <name>", insert: "remove ", desc: "disconnect and forget a server (alias: rm)"},
 		tunnel,
-		{label: "tunnel stop", insert: "tunnel stop", desc: a.mcpTunnelStopDesc()},
 	}
 }
 

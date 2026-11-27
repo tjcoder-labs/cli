@@ -21,17 +21,58 @@ type sayVoice struct {
 	Quality  string
 }
 
+// The voice inventory is expensive to build: nativeVoices() shells out to
+// `swift`, which may have to compile the AVFoundation helper script first
+// (seconds, not milliseconds). Enumerating it inline on the event loop is
+// what froze /config, so the work always happens on a background goroutine
+// and the UI only ever reads whatever has been cached so far.
 var (
-	voiceListOnce sync.Once
+	voiceWarmOnce sync.Once             // guards starting the enumeration
+	voiceReady    = make(chan struct{}) // closed once the inventory is cached
+	voiceListMu   sync.RWMutex          // guards voiceList
 	voiceList     []sayVoice
 )
 
-// installedVoices returns the merged, de-duplicated voice inventory.
-// Results are cached: enumerating Siri voices costs a compiler round trip.
+// warmVoiceCache starts the background voice enumeration and returns
+// immediately. It is safe (and cheap) to call on every /config open: only the
+// first call does anything.
+func warmVoiceCache() {
+	voiceWarmOnce.Do(func() {
+		go func() {
+			voices := enumerateVoices()
+			voiceListMu.Lock()
+			voiceList = voices
+			voiceListMu.Unlock()
+			close(voiceReady)
+		}()
+	})
+}
+
+// installedVoices returns the merged, de-duplicated voice inventory without
+// blocking. It is nil until warmVoiceCache's enumeration has finished; use
+// voicesReady to tell those two states apart. Callers must treat the slice as
+// read-only (it is shared with every other caller).
 func installedVoices() []sayVoice {
-	voiceListOnce.Do(func() { voiceList = enumerateVoices() })
+	voiceListMu.RLock()
+	defer voiceListMu.RUnlock()
 	return voiceList
 }
+
+// voicesReady reports whether the background enumeration has completed, so
+// the picker can swap its "(loading voices…)" placeholder for the real list.
+func voicesReady() bool {
+	select {
+	case <-voiceReady:
+		return true
+	default:
+		return false
+	}
+}
+
+// voicesReadyChan returns a channel that is closed once the background
+// enumeration has finished. It lets callers wait for the inventory from a
+// goroutine instead of polling or blocking on the event loop.
+func voicesReadyChan() <-chan struct{} { return voiceReady }
 
 func enumerateVoices() []sayVoice {
 	if runtime.GOOS != "darwin" {

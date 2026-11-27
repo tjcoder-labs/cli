@@ -4,6 +4,33 @@
 
 All notable changes to Coder CLI. The source of truth is [release-notes/releases.json](release-notes/releases.json).
 
+## 0.9.280 — 2026-11-26
+
+**Async delegation so Ergo never blocks while specialists work.** Ergo's delegate tool now returns immediately with a delegation ID; the specialist runs in the background while Ergo keeps orchestrating, and a new collect tool merges the specialist's report, tasks, and memories back into the session.
+
+### Added
+
+- delegate now starts a specialist in the background and returns a delegation ID instead of blocking the coordinator loop. (`/delegate`)
+  Independent specialists can run in parallel. The specialist's finished report is auto-delivered to the conversation, and its isolated transcript is saved under .ergo-cli-go/delegations/.
+- new collect tool retrieves a delegation's result and merges the specialist's shared tasks and memories into the session exactly once. (`/collect`)
+  collect returns 'running' until the specialist finishes, then merges shared state and returns the full report.
+
+### Fixed
+
+- /config no longer freezes while enumerating installed voices; the list loads in the background and fills in when ready.
+  Opening the config modal now warms the voice cache on a background goroutine and shows a 'loading voices…' placeholder until enumeration completes, instead of blocking the UI on the system voice listing.
+- Background specialists no longer pop the interactive tool-budget card into the live TUI.
+  A delegated specialist that hits its tool-call budget now produces a headless checkpoint response instead of stealing the user's focus with a Continue prompt.
+
+## 0.9.279 — 2026-11-25
+
+**Attach files to emails sent with the resend tool.** The resend tool's send action accepts an attachments list of file paths, reads each file, and attaches it with an inferred MIME type so invoices and other documents can be emailed directly.
+
+### Added
+
+- resend send now takes an attachments array of file paths; each file is read and attached with its basename and an inferred content type.
+  Content types are inferred from the extension (html, txt, pdf, png, jpg, csv, json, zip, and more), falling back to application/octet-stream. Missing or empty files fail with a clear error before sending.
+
 ## 0.9.278 — 2026-11-24
 
 **Count every open TUI and tag CLI usage.** Each TUI launch now has its own session, so two windows on one machine are counted separately, and calls to the tjcoder.com gateway identify themselves as the CLI.
