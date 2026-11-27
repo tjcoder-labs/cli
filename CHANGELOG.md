@@ -4,6 +4,14 @@
 
 All notable changes to Coder CLI. The source of truth is [release-notes/releases.json](release-notes/releases.json).
 
+## 0.9.281 — 2026-11-27
+
+**Patch release.** Routine patch release.
+
+### Changed
+
+- Routine patch release with no user-facing changes.
+
 ## 0.9.280 — 2026-11-26
 
 **Async delegation so Ergo never blocks while specialists work.** Ergo's delegate tool now returns immediately with a delegation ID; the specialist runs in the background while Ergo keeps orchestrating, and a new collect tool merges the specialist's report, tasks, and memories back into the session.

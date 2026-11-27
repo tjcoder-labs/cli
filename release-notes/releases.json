@@ -3,6 +3,19 @@
   "schema_version": 1,
   "releases": [
     {
+      "version": "0.9.281",
+      "date": "2026-11-27",
+      "title": "Patch release",
+      "summary": "Routine patch release.",
+      "changes": {
+        "changed": [
+          {
+            "text": "Routine patch release with no user-facing changes."
+          }
+        ]
+      }
+    },
+    {
       "version": "0.9.280",
       "date": "2026-11-26",
       "title": "Async delegation so Ergo never blocks while specialists work",
