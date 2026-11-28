@@ -207,7 +207,8 @@ func (a *App) runMCPTunnel(ctx context.Context, tunnel *interactiveMCPTunnel, ru
 				}
 			} else {
 				a.appendActivity("MCP tunnel stopped; its link is revoked (or expires with the relay lease if unreachable).")
-				a.clearMCPTunnel()
+				// Keep saved credentials so a later /mcp tunnel reattaches;
+				// only explicit stop or a 401 clears them.
 			}
 			a.refreshContextBar()
 		})
@@ -279,27 +280,35 @@ func (r *interactiveMCPRegistry) Definitions(names []string) []client.ToolDefini
 }
 func (r *interactiveMCPRegistry) Execute(ctx context.Context, name string, args json.RawMessage, _ tools.ExecEnv) (tools.Result, error) {
 	type reservation struct {
-		env tools.ExecEnv
-		err error
+		env         tools.ExecEnv
+		err         error
+		interactive bool
 	}
+	interactive := isInteractiveMCPTool(name, args)
 	out := make(chan reservation, 1)
 	r.app.postUI(func() {
 		if ctx.Err() != nil || r.ctx.Err() != nil {
 			out <- reservation{err: context.Canceled}
 			return
 		}
-		if r.app.busy {
+		// Interactive tools (ask_user, sudo-bearing run_command, etc.) must
+		// not interleave their prompt/sudo card with an in-flight turn, so
+		// they reserve the same busy slot. Non-interactive tools run
+		// concurrently with whatever the session is doing.
+		if interactive && r.app.busy {
 			out <- reservation{err: fmt.Errorf("interactive session is busy; retry when its current turn finishes")}
 			return
 		}
-		r.app.busy = true
-		r.app.mcpExecuting = true
+		if interactive {
+			r.app.busy = true
+			r.app.mcpExecuting = true
+		}
 		r.app.appendActivity("MCP consumer is calling " + tview.Escape(name) + "; any sudo approval is yours to grant or deny.")
 		if t := r.app.mcpTunnel; t != nil {
 			t.inFlight = append(t.inFlight, name)
 			r.app.refreshMCPTunnelBar()
 		}
-		out <- reservation{env: r.app.runner.ExecEnv()}
+		out <- reservation{env: r.app.runner.ExecEnv(), interactive: interactive}
 	})
 	// Always observe the reservation result, even if cancellation races it; if it
 	// acquired the slot we must release it before allowing another agent turn.
@@ -311,7 +320,7 @@ func (r *interactiveMCPRegistry) Execute(ctx context.Context, name string, args 
 			select {
 			case v := <-out:
 				if v.err == nil {
-					r.release(name)
+					r.release(name, v.interactive)
 				}
 			case <-r.app.uiq.stopped:
 			}
@@ -321,7 +330,7 @@ func (r *interactiveMCPRegistry) Execute(ctx context.Context, name string, args 
 	if v.err != nil {
 		return tools.Result{}, v.err
 	}
-	defer r.release(name)
+	defer r.release(name, v.interactive)
 	if err := ctx.Err(); err != nil {
 		return tools.Result{}, err
 	}
@@ -334,7 +343,7 @@ func (r *interactiveMCPRegistry) Execute(ctx context.Context, name string, args 
 	}
 	return result, err
 }
-func (r *interactiveMCPRegistry) release(name string) {
+func (r *interactiveMCPRegistry) release(name string, interactive bool) {
 	r.app.postUI(func() {
 		if t := r.app.mcpTunnel; t != nil {
 			for i := len(t.inFlight) - 1; i >= 0; i-- {
@@ -345,14 +354,37 @@ func (r *interactiveMCPRegistry) release(name string) {
 			}
 			r.app.refreshMCPTunnelBar()
 		}
-		r.app.mcpExecuting = false
-		r.app.busy = false
-		if err := r.app.saveSession(); err != nil {
-			r.app.appendActivity("MCP session save failed: " + tview.Escape(err.Error()))
+		if interactive {
+			r.app.mcpExecuting = false
+			r.app.busy = false
+			if err := r.app.saveSession(); err != nil {
+				r.app.appendActivity("MCP session save failed: " + tview.Escape(err.Error()))
+			}
+			r.app.runIdleQueue()
+			r.app.refreshFooter()
 		}
-		r.app.runIdleQueue()
-		r.app.refreshFooter()
 	})
+}
+
+// isInteractiveMCPTool reports whether a tool may block on the user (ask_user)
+// or gate on sudo approval, in which case it must not run concurrently with an
+// in-flight turn. Read-only / non-prompting tools are safe to run in parallel.
+func isInteractiveMCPTool(name string, args json.RawMessage) bool {
+	switch name {
+	case "ask_user":
+		return true
+	case "run_command":
+		// Only sudo-bearing commands gate on the user. Inspect the command
+		// field the same way the shell tool does.
+		var req struct {
+			Command string `json:"command"`
+		}
+		if json.Unmarshal(args, &req) == nil && tools.IsSudoCommand(req.Command) {
+			return true
+		}
+		return false
+	}
+	return false
 }
 
 func isMCPHint(text string) bool {

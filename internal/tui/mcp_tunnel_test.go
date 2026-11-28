@@ -196,8 +196,13 @@ func TestInteractiveMCPTunnelBusyAndCancellation(t *testing.T) {
 	defer cancel()
 	registry := &interactiveMCPRegistry{app: a, ctx: ctx}
 	onLoop(t, a, func() { a.busy = true })
-	if _, err := registry.Execute(ctx, "run_command", json.RawMessage(`{"command":"printf should-not-run"}`), tools.ExecEnv{}); err == nil || !strings.Contains(err.Error(), "busy") {
-		t.Fatalf("busy err=%v", err)
+	// Non-sudo run_command runs concurrently even while busy.
+	if _, err := registry.Execute(ctx, "run_command", json.RawMessage(`{"command":"printf ok"}`), tools.ExecEnv{}); err != nil {
+		t.Fatalf("non-sudo run_command blocked while busy: %v", err)
+	}
+	// Sudo-bearing run_command is interactive and must be refused while busy.
+	if _, err := registry.Execute(ctx, "run_command", json.RawMessage(`{"command":"sudo printf no"}`), tools.ExecEnv{}); err == nil || !strings.Contains(err.Error(), "busy") {
+		t.Fatalf("sudo busy err=%v", err)
 	}
 	onLoop(t, a, func() { a.busy = false })
 	result := make(chan error, 1)
