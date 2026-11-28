@@ -8,7 +8,8 @@ import (
 )
 
 func TestErgoLoginPrompt(t *testing.T) {
-	if msg := ergoLoginPrompt(client.NewErgo("https://example.invalid", "", 0)); !strings.Contains(msg, "/login") {
+	msg := ergoLoginPrompt(client.NewErgo("https://example.invalid", "", 0))
+	if !strings.Contains(msg, "/login") || !strings.Contains(msg, "another provider") || strings.Contains(strings.ToLower(msg), "ergo") {
 		t.Fatalf("expected /login prompt for unauthenticated ergo, got %q", msg)
 	}
 	if msg := ergoLoginPrompt(client.NewErgo("https://example.invalid", "k", 0)); msg != "" {

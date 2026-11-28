@@ -240,7 +240,7 @@ var slashCommands = []slashCommand{
 	{"memories", "Toggle the memories panel"},
 	{"config", "Edit user config"},
 	{"environment", "Edit the injected environment template"},
-	{"login", "Sign in to the TJ Coder gateway"},
+	{"login", "Sign in, switch account, or pick a provider: /login [provider]"},
 	{"logout", "Sign out of the TJ Coder gateway"},
 	{"balance", "Wallet balance and top-up"},
 	{"usage", "Token usage (and cost) for this session"},
@@ -274,6 +274,17 @@ type App struct {
 	provider client.Provider
 	// loginCancel cancels an in-flight device-code /login (nil when idle).
 	loginCancel context.CancelFunc
+	// ergoKeyRejected is set when the gateway rejected the saved key (401/403
+	// other than account_inactive) and cleared on sign-in, sign-out, or a
+	// turn that succeeds. /login opens its "Sign in again" hub while it is set.
+	ergoKeyRejected bool
+	// pendingResend is the message waiting on a sign-in (set by the login
+	// hub when it opens with a stashed prompt). The sign-in success screen
+	// offers it as "Send my message"; nothing is ever sent automatically.
+	pendingResend *resendOffer
+	// loginHubOpen is true while a login hub card is on screen, so a second
+	// /login (or first message) does not stack another one.
+	loginHubOpen bool
 	// balanceCancel cancels the wallet pane's balance poll (nil when idle).
 	balanceCancel context.CancelFunc
 	// ergoBalanceCents is the last known wallet balance; valid only when
@@ -1104,9 +1115,13 @@ func (a *App) build() {
 	a.setActivePanel("activity")
 	a.appendActivity("Developed by TJ Coder / AI Labs")
 	a.appendActivity("Loaded provider " + a.provider.BaseURL())
+	// Signed out: a soft hint only. Opening the sign-in form on launch took
+	// the screen before the user had said anything; /login (or sending a
+	// first message) opens the same options when they are ready.
+	signedOut := false
 	if e, ok := a.provider.(*client.Ergo); ok && !e.Authenticated() {
-		a.appendActivity("Starting ergo sign-in…")
-		a.handleLoginCommand()
+		signedOut = true
+		a.appendActivity("Not signed in — type /login to sign in or pick another provider")
 	}
 	a.refreshErgoBalanceAsync()
 	a.appendActivity("Enabled tools: " + strings.Join(a.enabledToolList(), ", "))
@@ -1115,7 +1130,9 @@ func (a *App) build() {
 	// kick off the cognition-recap trigger so the Cognition pane warms
 	// up with a one-paragraph summary of the current session state.
 	a.firstRun = true
-	if len(a.history) == 0 {
+	// The recap is a model call: skip it while signed out (it would only
+	// fail with an auth error). It is not re-run after sign-in.
+	if len(a.history) == 0 && !signedOut {
 		a.appendActivity("[cognition] priming with a non-interactive recap...")
 		go a.runCognitionRecap()
 	}
@@ -2293,14 +2310,7 @@ func (a *App) handleProvidersCommand(parts []string) {
 				a.appendActivity(fmt.Sprintf("Provider %q not found", name))
 				return
 			}
-			reg := providers.Load()
-			reg.Active = name
-			if err := providers.Save(reg); err != nil {
-				a.appendActivity(fmt.Sprintf(a.palette.Theme.Err("Provider activate failed")+": %v", err))
-				return
-			}
-			// Rebuild the live client and reload models.
-			a.switchProvider(cfg)
+			a.useProvider(cfg)
 			return
 		}
 	}
@@ -2431,7 +2441,7 @@ func (a *App) handleSlashCommand(cmd string) {
 	case "ask", "btw":
 		a.handleSubsessionCommand(parts)
 	case "login":
-		a.handleLoginCommand()
+		a.handleLoginSlash(parts)
 	case "logout":
 		a.handleLogoutCommand()
 	case "balance":
@@ -2474,7 +2484,7 @@ func (a *App) showHelp() {
 		"  /use <name>           set the active workspace\n" +
 		"\n" +
 		"Gateway\n" +
-		"  /login                sign in               /logout     sign out\n" +
+		"  /login [provider]     sign in or switch     /logout     sign out\n" +
 		"  /balance              wallet and top-up     /providers  manage providers\n" +
 		"  /usage                session token usage and cost by model\n" +
 		"\n" +
@@ -3919,10 +3929,11 @@ func (a *App) submit() {
 	}
 
 	// Unauthenticated ergo: onboard into login instead of failing the turn.
+	// The typed message stays in the input and is offered back ("Try
+	// again" / "Send my message") once the user has signed in or switched.
 	if e, ok := a.provider.(*client.Ergo); ok && !e.Authenticated() {
 		a.mu.Unlock()
-		a.appendActivity("Sign in to continue — opening the login flow.")
-		a.handleLoginCommand()
+		a.openLoginHub(&resendOffer{Preview: previewPrompt(prompt), Run: func() { a.resubmit(prompt) }}, false)
 		return
 	}
 
@@ -4033,16 +4044,41 @@ func (a *App) offerRetry(prompt string, err error) {
 	if ans.Index != 0 {
 		return
 	}
-	a.postUI(func() {
-		a.busy = true
-		a.assistantState = "thinking"
-		a.assistantStamp = ""
-		a.startSpinner()
-		a.refreshFooter()
-		a.appendAssistantTurnLabel()
-		a.transcript.ScrollToEnd()
-		a.launchTurnWithContext(prompt, "", "")
-	})
+	a.postUI(func() { a.relaunchTurn(prompt) })
+}
+
+// relaunchTurn re-sends prompt as a new turn without re-adding the user
+// message (it is already in the transcript). UI goroutine.
+func (a *App) relaunchTurn(prompt string) {
+	if a.busy {
+		a.appendActivity("A turn is already running — wait for it to finish, then try again")
+		return
+	}
+	a.busy = true
+	a.assistantState = "thinking"
+	a.assistantStamp = ""
+	a.startSpinner()
+	a.refreshFooter()
+	a.appendAssistantTurnLabel()
+	a.transcript.ScrollToEnd()
+	a.launchTurnWithContext(prompt, "", "")
+}
+
+// resubmit sends prompt again through the input, as if typed: used after
+// the user signs in or switches provider following a first message. It
+// leaves the input alone when the user has typed something new meanwhile.
+func (a *App) resubmit(prompt string) {
+	if a.busy {
+		a.appendActivity("A turn is already running — wait for it to finish, then try again")
+		return
+	}
+	cur := strings.TrimSpace(a.input.GetText())
+	if cur != "" && cur != strings.TrimSpace(prompt) {
+		a.appendActivity("The input has a newer message — press Enter to send it")
+		return
+	}
+	a.input.SetText(prompt)
+	a.submit()
 }
 
 // launchTurn runs one agent turn as a background goroutine against a
@@ -4062,6 +4098,9 @@ func (a *App) launchTurn(prompt, agentNameOverride string) {
 // request (never to stored history). "" sends no block.
 func (a *App) launchTurnWithContext(prompt, agentNameOverride, turnContext string) {
 	a.lastTurnPrompt = prompt
+	// A turn is starting, so whatever message was waiting on a sign-in has
+	// been superseded.
+	a.pendingResend = nil
 	enabled := a.enabledToolList()
 	history := append([]client.Message(nil), a.history...)
 	agentCfg := a.currentAgent
@@ -4117,12 +4156,23 @@ func (a *App) launchTurnWithContext(prompt, agentNameOverride, turnContext strin
 					if note := a.ergoRunErrorNote(err); note != "" {
 						a.appendActivity(note)
 					}
-					// Red error card with a retry, instead of dumping the raw
-					// body (nginx HTML, etc.) into the transcript.
 					retryPrompt := a.lastTurnPrompt
-					go a.offerRetry(retryPrompt, err)
+					if client.IsErgoAuthError(err) && !client.IsAccountInactive(err) {
+						// The gateway refused the key: instead of a red error,
+						// invite the user to sign in again (or use another
+						// provider) and offer the message back afterwards.
+						// account_inactive stays a plain error: signing in
+						// again cannot fix a suspended account.
+						a.ergoKeyRejected = true
+						a.openLoginHub(&resendOffer{Preview: previewPrompt(retryPrompt), Run: func() { a.relaunchTurn(retryPrompt) }}, true)
+					} else {
+						// Red error card with a retry, instead of dumping the raw
+						// body (nginx HTML, etc.) into the transcript.
+						go a.offerRetry(retryPrompt, err)
+					}
 				}
 			} else {
+				a.ergoKeyRejected = false
 				a.assistantState = "replied"
 				a.assistantStamp = formatTimestamp(time.Now())
 				a.updateAssistantTurnLabel()
@@ -5290,7 +5340,7 @@ func (a *App) switchProvider(cfg providers.Config) {
 	a.appendActivity(fmt.Sprintf("Switched to provider %s (%s)", cfg.Name, cfg.BaseURL))
 	a.loadModelsAsync()
 	if e, ok := p.(*client.Ergo); ok && !e.Authenticated() {
-		a.appendActivity("Starting ergo sign-in…")
+		a.appendActivity("Not signed in to TJ Coder — opening sign-in")
 		a.handleLoginCommand()
 	}
 }
@@ -5538,7 +5588,9 @@ func (a *App) showModal(title string, primitive tview.Primitive) {
 
 	label := tview.NewTextView().SetDynamicColors(true)
 	label.SetBackgroundColor(bg)
-	label.SetText(fmt.Sprintf(" [%s]%s[-]", a.palette.HexPurple, strings.ToUpper(title)))
+	// No leading space: the label's own left padding (2) already lines the
+	// heading up with the list and form content below it.
+	label.SetText(fmt.Sprintf("[%s]%s[-]", a.palette.HexPurple, strings.ToUpper(title)))
 	label.SetBorderPadding(1, 0, 2, 2)
 
 	inner := tview.NewFlex().SetDirection(tview.FlexRow).
@@ -5648,6 +5700,9 @@ func formHasOpenDropDown(form *tview.Form) bool {
 // as the rest of the modal rather than tview's default black widgets.
 func (a *App) styleModalForm(form *tview.Form) {
 	form.SetBackgroundColor(a.palette.BgInput)
+	// Left padding 2 matches the modal heading and list items (tview's
+	// default is 1, which left form fields one column right of the title).
+	form.SetBorderPadding(1, 1, 2, 1)
 	form.SetFieldBackgroundColor(a.palette.BgSelect)
 	form.SetFieldTextColor(a.palette.TextMain)
 	form.SetLabelColor(a.palette.Lavender)

@@ -12,7 +12,7 @@ import (
 // Esc must close every modal form (same as its Cancel button) and hand
 // focus back to the chat input, so subsequent typing lands there.
 func TestModalForms_EscClosesAndRefocusesInput(t *testing.T) {
-	for _, cmd := range []string{"/trigger", "/reminder", "/task", "/memory", "/config", "/login"} {
+	for _, cmd := range []string{"/trigger", "/reminder", "/task", "/memory", "/config"} {
 		t.Run(cmd, func(t *testing.T) {
 			a, sim := startSimApp(t)
 			typeLine(sim, cmd)

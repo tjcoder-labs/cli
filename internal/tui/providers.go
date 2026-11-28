@@ -69,17 +69,10 @@ func (a *App) openProviderDetail(name string) {
 	list := tview.NewList().ShowSecondaryText(true)
 	a.styleModalList(list)
 	list.AddItem("Activate", "make this the default provider", 0, func() {
-		reg.Active = name
-		if err := providers.Save(reg); err != nil {
-			a.appendActivity(fmt.Sprintf(a.palette.Theme.Err("Provider activation failed")+": %v", err))
-			return
-		}
-		if err := session.SetProvider(name); err != nil {
-			a.appendActivity(fmt.Sprintf(a.palette.Theme.Err("Provider preference save failed")+": %v", err))
-		}
-		// Rebuild the live client and reload models for the new provider.
-		a.switchProvider(cfg)
+		// Registry + saved preference + live client, then close the manager.
+		// (Closed first: an unsigned tjcoder opens the sign-in form.)
 		a.closeModal()
+		a.useProvider(cfg)
 	})
 	list.AddItem("Edit", "change name / base URL / auth flow", 0, func() {
 		a.openProviderEditor(cfg)
@@ -312,7 +305,11 @@ func (a *App) beginProviderLogin(cfg providers.Config) {
 }
 
 // openAPIKeyLogin prompts for a Bearer API key and stores it in the registry.
-func (a *App) openAPIKeyLogin(cfg providers.Config) {
+func (a *App) openAPIKeyLogin(cfg providers.Config) { a.openAPIKeyLoginThen(cfg, nil) }
+
+// openAPIKeyLoginThen is openAPIKeyLogin that, once the key is saved, hands
+// the updated config to after (e.g. to activate the provider).
+func (a *App) openAPIKeyLoginThen(cfg providers.Config, after func(providers.Config)) {
 	form := a.newModalForm(nil)
 	var key string
 	form.AddInputField("API key", "", 60, nil, func(s string) { key = strings.TrimSpace(s) })
@@ -336,6 +333,9 @@ func (a *App) openAPIKeyLogin(cfg providers.Config) {
 		a.appendActivity(fmt.Sprintf("Stored API key for %s", cfg.Name))
 		a.closeModal()
 		a.checkProviderIntegration(cfg)
+		if after != nil {
+			after(cfg)
+		}
 	})
 	form.AddButton("Cancel", func() { a.closeModal() })
 	a.showModal(fmt.Sprintf("Login: %s", cfg.Name), form)

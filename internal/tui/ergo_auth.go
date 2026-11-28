@@ -24,12 +24,12 @@ import (
 const ergoAuthTimeout = 12 * time.Second
 
 // ergoLoginPrompt returns a prominent sign-in notice when the active provider
-// is ergo but no credentials are configured, and "" otherwise. ergo is the
-// default provider, so we tell the user to /login instead of silently
-// falling back to ollama.
+// is tjcoder/ergo but no credentials are configured, and "" otherwise.
+// tjcoder is the default provider, so we point the user at /login (which
+// also offers other providers) instead of silently falling back to ollama.
 func ergoLoginPrompt(p client.Provider) string {
 	if e, ok := p.(*client.Ergo); ok && !e.Authenticated() {
-		return theme.Current().Warn("ergo is your default provider but you are not signed in.") + " Run [::b]/login[-:-:-] to sign in (or start with --provider ollama to use a local model)."
+		return theme.Current().Warn("You're not signed in to TJ Coder.") + " Run [::b]/login[-:-:-] to sign in or pick another provider (or start with --provider ollama to use a local model)."
 	}
 	return ""
 }
@@ -70,28 +70,68 @@ func deviceClient() *auth.DeviceClient {
 	return &auth.DeviceClient{BaseURL: ergoBaseURL(), ClientName: "ergo-cli"}
 }
 
-// handleLoginCommand runs the device-code sign-in: ask for an email,
-// show the code + URL, and poll until the user approves in a browser. The
-// scoped ergo-cli key is stored in the OS keychain (0600 file fallback)
-// and never echoed to the transcript.
-func (a *App) handleLoginCommand() {
+// signInIntro is the copy above the email field.
+const signInIntro = "  Enter your email — we'll send a link, no password needed.\n" +
+	"  New here? Your account is created automatically, with $5 credit."
+
+// handleLoginCommand opens the email form that starts the device-code
+// sign-in: ask for an email, show the code + URL, and poll until the user
+// approves in a browser. The scoped ergo-cli key is stored in the OS
+// keychain (0600 file fallback) and never echoed to the transcript.
+// /login itself opens the hub (openLoginHub); this is the form it, the
+// provider list, and a switch to an unsigned tjcoder lead to.
+func (a *App) handleLoginCommand() { a.openSignInForm("") }
+
+// openSignInForm shows the email form, optionally prefilled (Try again).
+func (a *App) openSignInForm(prefill string) {
 	if a.loginCancel != nil {
 		a.appendActivity("A sign-in is already in progress — press Esc in the sign-in panel to cancel it")
 		return
 	}
+	intro := tview.NewTextView().SetDynamicColors(true)
+	intro.SetBackgroundColor(a.palette.BgInput)
+	intro.SetTextColor(a.palette.TextMain)
+	intro.SetText(signInIntro)
+	// A blank row under the heading when the pane has room for it; on a
+	// short pane every row goes to the text and the form.
+	if a.transcriptPanel != nil {
+		if _, _, _, ph := a.transcriptPanel.GetRect(); ph >= 18 {
+			intro.SetBorderPadding(1, 0, 0, 0)
+		}
+	}
+	status := tview.NewTextView().SetDynamicColors(true)
+	status.SetBackgroundColor(a.palette.BgInput)
+
 	form := a.newModalForm(nil)
-	var email string
-	form.AddInputField("Email", "", 44, nil, func(s string) { email = strings.TrimSpace(s) })
+	email := strings.TrimSpace(prefill)
+	form.AddInputField("Email", email, 0, nil, func(s string) { email = strings.TrimSpace(s) })
+	if f, ok := form.GetFormItem(0).(*tview.InputField); ok {
+		f.SetPlaceholder("you@example.com")
+		f.SetPlaceholderStyle(tcell.StyleDefault.Foreground(a.palette.TextDim).Background(a.palette.BgSelect))
+	}
 	form.AddButton("Send sign-in link", func() {
 		if !plausibleEmail(email) {
-			a.appendActivity(a.palette.Theme.Err("Enter a valid email address"))
+			status.SetText(fmt.Sprintf("  [%s::b]✗[-:-:-] Enter a valid email address, like you@example.com", a.palette.HexAlert))
 			return
 		}
 		a.beginDeviceLogin(email)
 	})
 	form.AddButton("Cancel", func() { a.closeModal() })
-	a.showModal("ergo Sign-in", form)
+	// The form keeps its own fixed height (field + buttons) and the intro
+	// takes whatever is left, so on a short pane it is the intro that is
+	// clipped, never the field or the buttons.
+	panel := tview.NewFlex().SetDirection(tview.FlexRow).
+		AddItem(intro, 0, 1, false).
+		AddItem(status, 1, 0, false).
+		AddItem(form, signInFormRows, 0, true)
+	panel.SetBackgroundColor(a.palette.BgInput)
+	a.showModal("Sign in", panel)
+	a.tv.SetFocus(form)
 }
+
+// signInFormRows is the height of the email form: padding, the field, a
+// gap, the buttons, padding.
+const signInFormRows = 5
 
 func (a *App) beginDeviceLogin(email string) {
 	ctx, cancel := context.WithCancel(context.Background())
@@ -104,7 +144,7 @@ func (a *App) beginDeviceLogin(email string) {
 	view := tview.NewTextView().SetDynamicColors(true)
 	view.SetBackgroundColor(a.palette.BgInput)
 	view.SetTextColor(a.palette.TextMain)
-	view.SetText(fmt.Sprintf("\n  [%s]Contacting ergo…[-]", a.palette.HexDim))
+	view.SetText(fmt.Sprintf("\n  [%s]Contacting TJ Coder AI Labs…[-]", a.palette.HexDim))
 	cancelLogin := func() {
 		finish()
 		a.appendActivity("Sign-in cancelled")
@@ -116,7 +156,14 @@ func (a *App) beginDeviceLogin(email string) {
 		AddItem(view, 0, 1, false).
 		AddItem(btns, 3, 0, true)
 	panel.SetBackgroundColor(a.palette.BgInput)
-	a.showModal("ergo Sign-in", panel)
+	a.showModal("Sign in", panel)
+
+	// Every failure screen offers the same two exits: start over with the
+	// same email, or go back to the sign-in options.
+	failureButtons := []resultButton{
+		{Label: "Try again", Fn: func() { a.openSignInForm(email) }},
+		{Label: "Back", Fn: func() { a.openLoginHub(nil, false) }},
+	}
 
 	dc := deviceClient()
 	go func() {
@@ -128,8 +175,8 @@ func (a *App) beginDeviceLogin(email string) {
 				}
 				finish()
 				f := friendlyLoginError(err, email)
-				a.appendActivity(fmt.Sprintf("[%s::b]✗ ergo sign-in failed[-::B]: %s", a.palette.HexAlert, f.Headline))
-				a.showLoginResult("Sign-in didn't complete", loginFailureView(a.palette, f), "Close", nil)
+				a.appendActivity(fmt.Sprintf("[%s::b]✗ sign-in failed[-::B]: %s", a.palette.HexAlert, f.Headline))
+				a.showLoginResult("Sign in", loginFailureView(a.palette, f), failureButtons...)
 			})
 		}
 		st, err := dc.Start(ctx, email)
@@ -146,7 +193,10 @@ func (a *App) beginDeviceLogin(email string) {
 		opened := openBrowser(uri) == nil
 		expires := time.Now().Add(time.Duration(st.ExpiresIn) * time.Second)
 		a.postUI(func() {
-			view.SetText(loginCodeView(a.palette, email, st, time.Until(expires), opened))
+			{
+				w, h := paneSize(view)
+				view.SetText(loginCodeViewW(a.palette, w, h, email, st, time.Until(expires), opened))
+			}
 			a.appendActivity("Sign-in code " + st.UserCode + " — check " + email + " for the approval link")
 		})
 		// live countdown
@@ -164,7 +214,8 @@ func (a *App) beginDeviceLogin(email string) {
 					}
 					a.postUI(func() {
 						if ctx.Err() == nil {
-							view.SetText(loginCodeView(a.palette, email, st, rem, opened))
+							w, h := paneSize(view)
+							view.SetText(loginCodeViewW(a.palette, w, h, email, st, rem, opened))
 						}
 					})
 				}
@@ -183,30 +234,43 @@ func (a *App) beginDeviceLogin(email string) {
 		a.postUI(func() {
 			finish()
 			if saveErr != nil {
-				a.appendActivity(fmt.Sprintf("[%s::b]✗ ergo sign-in failed[-::B]: could not store the key: %v", a.palette.HexAlert, saveErr))
+				a.appendActivity(fmt.Sprintf("[%s::b]✗ sign-in failed[-::B]: could not store the key: %v", a.palette.HexAlert, saveErr))
 				f := loginFailure{
 					Headline: "Signed in, but the key couldn't be saved.",
 					Detail:   saveErr.Error(),
-					Next:     "Set ERGO_API_KEY in your environment, or fix the permissions on your config directory and run /login again.",
+					Next:     "Set ERGO_API_KEY in your environment, or fix the permissions on your config directory, then choose Try again.",
 				}
-				a.showLoginResult("Sign-in didn't complete", loginFailureView(a.palette, f), "Close", nil)
+				a.showLoginResult("Sign in", loginFailureView(a.palette, f), failureButtons...)
 				return
 			}
 			// Non-secret profile for the per-turn metadata block.
 			_ = auth.SaveErgoIdentity(auth.Identity{Email: res.Email, Name: res.Name})
+			a.ergoKeyRejected = false
 			a.swapErgoProvider(res.APIKey)
 			a.setErgoBalanceCents(res.BalanceCents)
 			a.afterErgoLogin()
+			a.markAccountProviderActive()
 			email := res.Email
 			if email == "" {
 				email = "your account"
 			}
-			card := loginSuccessView(a.palette, email, res.WelcomeGranted, res.BalanceCents, a.ergoAvailable(), a.currentModel, tokenStoreLabel())
-			a.appendActivity(fmt.Sprintf("[%s]Signed in to ergo as %s[-]", a.palette.HexPurple, tview.Escape(email)))
-			a.showLoginResult("You're signed in", card, "Start chatting", func() {
-				// Leave the card in the conversation so it stays visible.
-				fmt.Fprintf(a.transcript, "\n%s\n", card)
-			})
+			w, h := paneSize(view)
+			card := loginSuccessViewW(a.palette, w, h, email, res.WelcomeGranted, res.BalanceCents, a.ergoAvailable(), a.currentModel, tokenStoreLabel())
+			a.appendActivity(fmt.Sprintf("[%s]Signed in to TJ Coder as %s[-]", a.palette.HexPurple, tview.Escape(email)))
+			// Leave the card in the conversation so it stays visible.
+			keepCard := func() { fmt.Fprintf(a.transcript, "\n%s\n", card) }
+			buttons := []resultButton{{Label: "Start chatting", Fn: keepCard}}
+			text := card
+			if offer := a.takeResend(); offer != nil {
+				// A message was waiting on this sign-in. Offer it; never
+				// send it without the user choosing to.
+				text += fmt.Sprintf("\n  [%s]Your message is waiting:[-] %s\n", a.palette.HexLavender, tview.Escape(offer.Preview))
+				buttons = []resultButton{
+					{Label: "Send my message", Fn: func() { keepCard(); offer.Run() }},
+					{Label: "Start chatting", Fn: keepCard},
+				}
+			}
+			a.showLoginResult("You're signed in", text, buttons...)
 		})
 	}()
 }
@@ -226,14 +290,22 @@ func tokenStoreLabel() string {
 // handleLogoutCommand revokes the key server-side, then removes the local
 // credential and detaches the client so the next chat surfaces a clean
 // auth error. The local credential is cleared even if revocation fails.
-func (a *App) handleLogoutCommand() {
+func (a *App) handleLogoutCommand() { a.signOutThen(nil) }
+
+// signOutThen is /logout with a continuation: after the credential has
+// been cleared (and only then) after runs on the UI goroutine. fullySignedOut
+// is false when ERGO_API_KEY still supplies a key, so the caller does not
+// pretend the account is gone. The key is resolved off the UI goroutine
+// because the keychain lookup can block.
+func (a *App) signOutThen(after func(fullySignedOut bool)) {
 	if a.loginCancel != nil {
 		a.loginCancel()
 		a.loginCancel = nil
 	}
-	key := auth.ResolveErgoToken()
-	store := auth.TokenStore()
+	a.pendingResend = nil
 	go func() {
+		key := auth.ResolveErgoToken()
+		store := auth.TokenStore()
 		var revokeErr error
 		if key != "" && store != "env" {
 			ctx, cancel := context.WithTimeout(context.Background(), ergoAuthTimeout)
@@ -243,9 +315,10 @@ func (a *App) handleLogoutCommand() {
 		clearErr := auth.ClearErgoToken()
 		a.postUI(func() {
 			if clearErr != nil {
-				a.appendActivity(fmt.Sprintf(a.palette.Theme.Err("ergo sign-out failed")+": %v", clearErr))
+				a.appendActivity(fmt.Sprintf(a.palette.Theme.Err("sign-out failed")+": %v", clearErr))
 				return
 			}
+			a.ergoKeyRejected = false
 			a.swapErgoProvider("")
 			a.clearErgoBalance()
 			switch {
@@ -254,7 +327,10 @@ func (a *App) handleLogoutCommand() {
 			case revokeErr != nil:
 				a.appendActivity(fmt.Sprintf("Signed out locally, but the key could not be revoked on the server (%v) — it stays valid until it expires", revokeErr))
 			default:
-				a.appendActivity("Signed out of ergo (key revoked)")
+				a.appendActivity("Signed out of TJ Coder (key revoked)")
+			}
+			if after != nil {
+				after(store != "env")
 			}
 		})
 	}()
@@ -412,8 +488,11 @@ func (a *App) ergoRunErrorNote(err error) string {
 	case errors.As(err, &ice):
 		a.setErgoBalanceCents(maxInt64(ice.BalanceCents, 0))
 		return fmt.Sprintf("Out of ergo credits. Top up: %s — then retry your message. (/balance to check)", ice.TopupLink())
+	case client.IsAccountInactive(err):
+		// The key is fine; the account is not. Signing in again cannot help.
+		return ""
 	case client.IsErgoAuthError(err):
-		return "Your ergo session is invalid or expired — run /login to sign in again."
+		return "Your TJ Coder session is no longer valid — use /login to sign in again."
 	}
 	return ""
 }

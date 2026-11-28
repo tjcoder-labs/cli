@@ -48,13 +48,13 @@ func TestFriendlyLoginError(t *testing.T) {
 		headline string
 		next     string
 	}{
-		{"expired", auth.ErrExpired, "expired", "/login"},
-		{"signup closed", fmt.Errorf("%w: invite only", auth.ErrSignupClosed), "closed for a@b.co", "allowlist"},
+		{"expired", auth.ErrExpired, "expired", "Try again"},
+		{"signup closed", fmt.Errorf("%w: invite only", auth.ErrSignupClosed), "closed for a@b.co", "different provider"},
 		{"rate limited", &auth.RateLimitedError{RetryAfter: 90 * time.Second}, "Too many", "1m30s"},
 		{"rate limited no hint", &auth.RateLimitedError{}, "Too many", "few minutes"},
-		{"denied", auth.ErrDenied, "declined", "run /login"},
-		{"network", errors.New("could not reach the ergo gateway: dial tcp: refused"), "Can't reach", "connection"},
-		{"other", errors.New("boom"), "didn't go through", "/login"},
+		{"denied", auth.ErrDenied, "declined", "Try again"},
+		{"network", errors.New("could not reach the ergo gateway: dial tcp: refused"), "Can't reach TJ Coder AI Labs", "connection"},
+		{"other", errors.New("boom"), "didn't go through", "Try again"},
 	}
 	for _, c := range cases {
 		f := friendlyLoginError(c.err, "a@b.co")
@@ -77,25 +77,31 @@ func TestFriendlyLoginError(t *testing.T) {
 func TestLoginSuccessView(t *testing.T) {
 	pal := darkPalette()
 	agents := client.ErgoFallbackModels()
-	v := loginSuccessView(pal, "me@x.co", true, 500, agents, "ergo/flash", "the OS keychain")
+	sel := agents[0]
+	v := loginSuccessView(pal, "me@x.co", true, 500, agents, sel, "the OS keychain")
 	p := plain(v)
 	for _, want := range []string{
 		"✓ You're signed in", "me@x.co", "$5.00 welcome credit added",
-		"● ergo/flash", "ergo/genius", "ergo/pro", "fast and economical",
-		"Type a message to start", "/model", "/balance", "/logout",
+		"● " + sel, "Your agents", "fast and economical",
+		"Type a message to start", "/model", "/balance", "/login account menu",
 	} {
 		if !strings.Contains(p, want) {
 			t.Errorf("success view missing %q:\n%s", want, p)
 		}
 	}
-	if strings.Contains(p, "● ergo/genius") || strings.Contains(p, "● ergo/pro") {
-		t.Errorf("only the selected agent is marked:\n%s", p)
+	for _, other := range agents[1:] {
+		if strings.Contains(p, "● "+other) {
+			t.Errorf("only the selected agent is marked, but %s is too:\n%s", other, p)
+		}
+		if !strings.Contains(p, other) {
+			t.Errorf("agent %s missing:\n%s", other, p)
+		}
 	}
 	if strings.Contains(p, "ergo_") {
 		t.Error("must not render key material")
 	}
 	// not a fresh grant -> show the balance
-	p = plain(loginSuccessView(pal, "me@x.co", false, 1234, agents, "ergo/pro", "file"))
+	p = plain(loginSuccessView(pal, "me@x.co", false, 1234, agents, agents[1], "file"))
 	if !strings.Contains(p, "Balance: $12.34") || strings.Contains(p, "welcome credit") {
 		t.Errorf("balance line: %s", p)
 	}

@@ -125,7 +125,7 @@ These models are experimental: behaviour, speed and pricing may change between r
 **Sign in**
 
 1. Run `coder` and type `/providers`.
-2. Select `tjcoder`, then **Login (device code)**. (`/login` is a shortcut for the same flow.)
+2. Select `tjcoder`, then **Login (device code)**. (`/login` opens the same sign-in, plus switch account, other providers, and a retry of the message you sent while signed out. `/login ollama` goes straight to a provider.)
 3. Enter your email, then approve the sign-in in your browser using the code and link shown in the TUI.
 4. If another provider is active, choose **Activate** on `tjcoder` (`/providers use tjcoder` does the same).
 
@@ -158,7 +158,7 @@ Type a message to chat, or use slash commands. Start typing `/` to see inline su
 | `/agentinfo` | View the active agent's prompt and tools |
 | `/model` | Switch the active model |
 | `/providers` | Manage providers: sign in, activate, add a gateway |
-| `/login` · `/logout` | Sign in to / out of the TJ Coder gateway |
+| `/login [provider]` · `/logout` | Sign in, switch account or provider (`/login ollama` goes straight there) / sign out |
 | `/balance` | TJ Coder wallet balance and top-up |
 | `/usage` | Session token usage by model (requests, prompt, completion, total, and cost where the gateway prices it) |
 | `/tools` | Toggle which tools are enabled |

@@ -45,9 +45,35 @@ func codeBoxes(pal Palette, code string) string {
 		indent + strings.Join(bot, "   ")
 }
 
-// loginCodeView renders the waiting screen: the code is the hero (Ergo
-// purple, boxed), with the URL and the email hint under it.
+// Below these pane sizes (Termux, split panes, short terminals) the sign-in
+// views switch to a compact layout: the boxed code (43 cells wide, 17 rows
+// of screen in all) would wrap, tear, or push the buttons off screen.
+const (
+	compactLoginWidth  = 50
+	compactLoginHeight = 20
+)
+
+// paneSize is the size of the area a modal text view was last drawn at,
+// or a comfortable 80x30 before the first draw.
+func paneSize(v *tview.TextView) (w, h int) {
+	if v != nil {
+		if _, _, w, h = v.GetInnerRect(); w > 0 && h > 0 {
+			return w, h
+		}
+	}
+	return 80, 30
+}
+
+// loginCodeView renders the waiting screen at a comfortable size.
 func loginCodeView(pal Palette, email string, st *auth.DeviceStart, remaining time.Duration, opened bool) string {
+	return loginCodeViewW(pal, 80, 30, email, st, remaining, opened)
+}
+
+// loginCodeViewW renders the waiting screen: the code is the hero (Ergo
+// purple, boxed), with the approval link and the countdown under it. In a
+// small pane the boxes and spacer rows give way to a tight layout that
+// keeps the email, the code, and the countdown on screen.
+func loginCodeViewW(pal Palette, width, height int, email string, st *auth.DeviceStart, remaining time.Duration, opened bool) string {
 	uri := st.VerificationURIComplete
 	if uri == "" {
 		uri = st.VerificationURI
@@ -61,17 +87,22 @@ func loginCodeView(pal Palette, email string, st *auth.DeviceStart, remaining ti
 	}
 	mins := int(remaining.Minutes())
 	secs := int(remaining.Seconds()) % 60
-	return fmt.Sprintf(
-		"\n  Your sign-in code:\n\n%s\n\n"+
-			"      [%s]Code  [-][%s::b]%s[-:-:-]\n\n"+
-			"  1. Open the sign-in link we emailed to [::b]%s[-:-:-]\n"+
-			"  2. Enter the code above to approve this device\n\n"+
-			"  Info page: %s%s\n\n"+
-			"  [%s]Waiting for approval…  (expires in %d:%02d — Esc to cancel)[-]\n",
-		codeBoxes(pal, st.UserCode),
-		pal.HexDim, pal.HexPurple, st.UserCode,
-		tview.Escape(email), tview.Escape(uri), openedNote,
-		pal.HexDim, mins, secs)
+	var b strings.Builder
+	if (width > 0 && width < compactLoginWidth) || (height > 0 && height < compactLoginHeight) {
+		fmt.Fprintf(&b, "  [::b]Check your email[-:-:-] — we sent a sign-in link to [::b]%s[-:-:-].\n", tview.Escape(email))
+		fmt.Fprintf(&b, "  Enter this code to approve: [%s::b]%s[-:-:-]\n", pal.HexPurple, st.UserCode)
+		fmt.Fprintf(&b, "  Or open: %s%s\n", tview.Escape(uri), openedNote)
+		fmt.Fprintf(&b, "  [%s]Waiting… expires in %d:%02d · Esc to cancel[-]\n", pal.HexDim, mins, secs)
+		return b.String()
+	}
+	fmt.Fprintf(&b, "\n  [::b]Check your email[-:-:-]\n\n")
+	fmt.Fprintf(&b, "  We sent a sign-in link to [::b]%s[-:-:-].\n", tview.Escape(email))
+	b.WriteString("  Open it and enter this code to approve this device:\n\n")
+	fmt.Fprintf(&b, "%s\n\n", codeBoxes(pal, st.UserCode))
+	fmt.Fprintf(&b, "      [%s]Code  [-][%s::b]%s[-:-:-]\n\n", pal.HexDim, pal.HexPurple, st.UserCode)
+	fmt.Fprintf(&b, "  Or open the approval page yourself:\n  %s%s\n\n", tview.Escape(uri), openedNote)
+	fmt.Fprintf(&b, "  [%s]Waiting for approval…  expires in %d:%02d · Esc to cancel[-]\n", pal.HexDim, mins, secs)
+	return b.String()
 }
 
 // loginFailure is a friendly, actionable sign-in error.
@@ -90,7 +121,7 @@ func friendlyLoginError(err error, email string) loginFailure {
 	case errors.Is(err, auth.ErrSignupClosed):
 		f := loginFailure{
 			Headline: fmt.Sprintf("Sign-ups are closed for %s.", email),
-			Next:     "Ask your admin to enable sign-ups or add you to the allowlist, or run /login with a different email.",
+			Next:     "Try the email you signed up with, or use a different provider.",
 		}
 		if i := strings.Index(msg, ": "); i >= 0 && strings.Contains(msg, auth.ErrSignupClosed.Error()) {
 			f.Detail = strings.TrimSpace(msg[i+2:])
@@ -103,29 +134,29 @@ func friendlyLoginError(err error, email string) loginFailure {
 		}
 		return loginFailure{
 			Headline: "Too many sign-in attempts.",
-			Next:     "Take a short break, then run /login again " + wait + ".",
+			Next:     "Take a short break, then choose Try again " + wait + ".",
 		}
 	case errors.Is(err, auth.ErrExpired):
 		return loginFailure{
 			Headline: "That sign-in code expired.",
-			Next:     "Run /login to get a fresh code (they last about 15 minutes).",
+			Next:     "Codes last about 15 minutes. Choose Try again to get a fresh one.",
 		}
 	case errors.Is(err, auth.ErrDenied):
 		return loginFailure{
-			Headline: "The sign-in request was declined in the browser.",
-			Next:     "If that wasn't you, nothing was signed in. To try again, run /login.",
+			Headline: "The sign-in request was declined in your browser.",
+			Next:     "If that wasn't you, nothing was signed in. To start over, choose Try again.",
 		}
 	case errors.As(err, &netErr), strings.Contains(msg, "could not reach"), strings.Contains(msg, "lost contact"):
 		return loginFailure{
-			Headline: "Can't reach ergo right now.",
+			Headline: "Can't reach TJ Coder AI Labs right now.",
 			Detail:   msg,
-			Next:     "Check your internet connection (and ERGO_BASE_URL if you set it), then run /login again.",
+			Next:     "Check your internet connection (and ERGO_BASE_URL if you set it), then choose Try again.",
 		}
 	}
 	return loginFailure{
 		Headline: "Sign-in didn't go through.",
 		Detail:   msg,
-		Next:     "Run /login to try again. If it keeps happening, check https://dashboard.tjcoder.com.",
+		Next:     "Choose Try again. If it keeps happening, check https://dashboard.tjcoder.com.",
 	}
 }
 
@@ -140,47 +171,86 @@ func loginFailureView(pal Palette, f loginFailure) string {
 	return b.String()
 }
 
-// loginSuccessView renders the post-login confirmation card.
+// loginSuccessView renders the post-login confirmation card at a
+// comfortable width.
 func loginSuccessView(pal Palette, email string, welcomeGranted bool, balanceCents int64, agents []string, selected, store string) string {
+	return loginSuccessViewW(pal, 80, 30, email, welcomeGranted, balanceCents, agents, selected, store)
+}
+
+// loginSuccessViewW renders the post-login confirmation card. Agent
+// names share one column so the descriptions line up; on narrow panes
+// the descriptions are dropped rather than wrapped out of alignment, and
+// on short panes the spacer rows and the key-storage line go too.
+func loginSuccessViewW(pal Palette, width, height int, email string, welcomeGranted bool, balanceCents int64, agents []string, selected, store string) string {
+	short := height > 0 && height < compactLoginHeight
+	gap := "\n"
+	if short {
+		gap = ""
+	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "\n  [%s::b]✓ You're signed in[-:-:-]  [%s]%s[-]\n", pal.HexPurple, pal.HexDim, tview.Escape(email))
+	fmt.Fprintf(&b, "%s  [%s::b]✓ You're signed in[-:-:-]  [%s]%s[-]\n", gap, pal.HexPurple, pal.HexDim, tview.Escape(email))
 	credit := fmt.Sprintf("Balance: %s", formatCents(balanceCents))
 	if welcomeGranted {
 		credit = "$5.00 welcome credit added"
 	}
 	fmt.Fprintf(&b, "  [%s]◆[-] %s\n", pal.HexPurple, credit)
-	fmt.Fprintf(&b, "  [%s]Key stored in %s[-]\n\n", pal.HexDim, tview.Escape(store))
+	if !short {
+		fmt.Fprintf(&b, "  [%s]Key stored in %s[-]\n", pal.HexDim, tview.Escape(store))
+	}
+	b.WriteString(gap)
+	if short {
+		// A short pane keeps the account, the credit, and the agent in use;
+		// the list and the footer are a /model and /login away.
+		fmt.Fprintf(&b, "  [%s]Agent:[-] [%s::b]%s[-:-:-] [%s]· /model to switch[-]\n", pal.HexLavender, pal.HexPurple, tview.Escape(selected), pal.HexDim)
+		return b.String()
+	}
 	fmt.Fprintf(&b, "  [%s::b]Your agents[-:-:-]\n", pal.HexLavender)
+	col := 0
+	for _, name := range agents {
+		if n := len([]rune(name)); n > col {
+			col = n
+		}
+	}
+	showDesc := width <= 0 || width >= 60
 	for _, name := range agents {
 		marker, style := "  ", fmt.Sprintf("[%s]", pal.HexDim)
 		if name == selected {
 			marker, style = "● ", fmt.Sprintf("[%s::b]", pal.HexPurple)
 		}
-		fmt.Fprintf(&b, "  %s%s%-12s[-:-:-]", style, marker, name)
-		if d := client.ErgoAgentDesc(name); d != "" {
-			fmt.Fprintf(&b, " [%s]%s[-]", pal.HexDim, d)
+		fmt.Fprintf(&b, "  %s%s%-*s[-:-:-]", style, marker, col, name)
+		if d := client.ErgoAgentDesc(name); d != "" && showDesc {
+			fmt.Fprintf(&b, "  [%s]%s[-]", pal.HexDim, d)
 		}
 		b.WriteString("\n")
 	}
-	fmt.Fprintf(&b, "\n  [%s]Type a message to start  ·  /model switch agent  ·  /balance  ·  /logout[-]\n", pal.HexDim)
+	fmt.Fprintf(&b, "\n  [%s]Type a message to start  ·  /model switch agent  ·  /balance  ·  /login account menu[-]\n", pal.HexDim)
 	return b.String()
 }
 
+// resultButton is one button on a sign-in result screen. Its Fn runs after
+// the modal has closed.
+type resultButton struct {
+	Label string
+	Fn    func()
+}
+
 // showLoginResult replaces the sign-in modal with a result card and one
-// button. onClose (optional) runs after the modal closes.
-func (a *App) showLoginResult(title, text, button string, onClose func()) {
+// or more buttons. Esc closes the modal without running any of them.
+func (a *App) showLoginResult(title, text string, buttons ...resultButton) {
 	view := tview.NewTextView().SetDynamicColors(true)
 	view.SetBackgroundColor(a.palette.BgInput)
 	view.SetTextColor(a.palette.TextMain)
 	view.SetText(text)
-	closeFn := func() {
-		a.closeModal()
-		if onClose != nil {
-			onClose()
-		}
+	btns := a.newModalForm(nil)
+	for _, bt := range buttons {
+		bt := bt
+		btns.AddButton(bt.Label, func() {
+			a.closeModal()
+			if bt.Fn != nil {
+				bt.Fn()
+			}
+		})
 	}
-	btns := a.newModalForm(closeFn)
-	btns.AddButton(button, closeFn)
 	panel := tview.NewFlex().SetDirection(tview.FlexRow).
 		AddItem(view, 0, 1, false).
 		AddItem(btns, 3, 0, true)

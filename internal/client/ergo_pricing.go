@@ -88,7 +88,7 @@ func (e *Ergo) fetchV1Models(ctx context.Context) ([]ergoModelsEntry, error) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == 401 || resp.StatusCode == 403 {
-		return nil, &ErgoAuthError{Message: strings.TrimSpace(decodeErgoError(resp.Body))}
+		return nil, newErgoAuthError(resp.StatusCode, resp.Body)
 	}
 	if resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("ergo list models: %s", resp.Status)

@@ -4,6 +4,30 @@
 
 All notable changes to Coder CLI. The source of truth is [release-notes/releases.json](release-notes/releases.json).
 
+## 0.9.285 — 2026-11-28
+
+**One sign-in menu for /login, a first message, and a rejected key.** /login is now a single sign-in menu: sign in, switch account, sign out, pick another provider, or open the wallet. The same menu appears when you send a first message while signed out and when the gateway rejects your key, instead of a red error. Coder no longer opens a sign-in form on launch.
+
+### Added
+
+- /login opens one sign-in menu that adapts to your account: Get started when signed out, an account menu when signed in, and Sign in again when the gateway has rejected your key. (`/login`, `/logout`, `/providers`)
+  Signed in, it offers Switch account (signs this device out first, then asks for the new email), Sign out (returns to Get started), and Open wallet. Every state also offers Use a different provider (Ollama, Ollama Cloud, or any provider you added) and Configure providers. If you sent a message while signed out, Try again resends it.
+- /login &lt;provider&gt; goes straight to a provider and the names autocomplete: tjcoder signs in with your email, ollama switches to local Ollama, and ollama-cloud asks for its API key first. (`/login`, `/providers`)
+  An unknown name lists the providers you have. /providers use now also saves the choice for the next launch, like Activate in the provider manager.
+- After you sign in with a message waiting, the success screen offers Send my message. Nothing is sent until you choose it. (`/login`)
+
+### Changed
+
+- Sending a first message while signed out, or a key the gateway rejects, now opens the sign-in menu instead of the sign-in form or a red error.
+  Your message stays in the input while you decide, and the rejected-key menu offers Try again to resend the turn. A suspended account (account_inactive) and out-of-credits (402) still show their own errors, because signing in again would not fix them.
+- The sign-in screens are reworded and titled Sign in. Failures now offer Try again and Back.
+  The email form explains the link and the $5 credit for new accounts, then shows Contacting TJ Coder AI Labs and a Check your email screen. The code and success screens switch to a compact layout on narrow or short terminals (such as Termux) so the email, the code, and the buttons stay on screen. The agent list on the success screen now lines up in one column.
+- Coder no longer opens the sign-in form when it starts signed out. It adds a hint to the activity panel and skips the startup cognition recap until you sign in. (`/login`)
+
+### Fixed
+
+- Modal headings such as SIGN IN now line up with the fields and lists under them instead of sitting one column to the left.
+
 ## 0.9.284 — 2026-11-28
 
 **Reveal the MCP tunnel link without function keys.** Devices without function keys, such as Termux, can now show, hide, and copy the MCP tunnel link with /mcp tunnel show, hide, and copy. A saved tunnel also survives a clean TUI exit so a later /mcp tunnel can reattach until you stop it or it expires.

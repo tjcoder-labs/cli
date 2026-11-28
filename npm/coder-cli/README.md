@@ -67,7 +67,8 @@ They are experimental: behaviour, speed and pricing may change between
 releases. Usage is billed to your TJ Coder wallet (`/balance`).
 
 **Sign in:** run `coder`, type `/providers`, select `tjcoder`, then
-**Login (device code)** (`/login` is a shortcut). Enter your email and
+**Login (device code)** (`/login` is a shortcut that also lets you switch
+account or provider). Enter your email and
 approve the sign-in in your browser with the code shown. If another
 provider is active, choose **Activate** (or `/providers use tjcoder`). The
 key is kept in your OS keychain and reused by headless runs; `/logout`

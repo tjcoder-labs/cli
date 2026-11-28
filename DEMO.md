@@ -313,7 +313,7 @@ Run through the command surface grouped by theme:
 
 **Gateway**
 ```
-/login       → sign in to the ergo gateway
+/login       → sign in, switch account, or pick a provider (/login <provider>)
 /logout      → sign out
 /balance     → wallet + top-up
 /providers   → manage providers (list/add/remove)

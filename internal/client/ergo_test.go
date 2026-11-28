@@ -183,3 +183,58 @@ func TestErgoChat402ParsesTopupAndBalance(t *testing.T) {
 		t.Fatalf("unsafe topup_url accepted: %q", bad.TopupLink())
 	}
 }
+
+// The gateway's 401/403 body carries a machine code; the TUI uses it to
+// tell "sign in again" apart from "this account is suspended".
+func TestErgoAuthErrorKeepsStatusAndCode(t *testing.T) {
+	cases := []struct {
+		name         string
+		status       int
+		body         string
+		wantCode     string
+		wantInactive bool
+	}{
+		{"invalid key", http.StatusUnauthorized, `{"error":{"code":"invalid_api_key","message":"Invalid API key"}}`, "invalid_api_key", false},
+		{"missing key", http.StatusUnauthorized, `{"error":{"code":"missing_api_key","message":"Missing API key"}}`, "missing_api_key", false},
+		{"suspended account", http.StatusForbidden, `{"error":{"code":"account_inactive","message":"Account is not active"}}`, "account_inactive", true},
+		{"no code", http.StatusForbidden, `{"error":{"message":"Invalid API key"}}`, "", false},
+		{"numeric code ignored", http.StatusForbidden, `{"error":{"code":403,"message":"nope"}}`, "", false},
+		{"plain text body", http.StatusUnauthorized, `unauthorized`, "", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(tc.status)
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			defer srv.Close()
+			e := NewErgo(srv.URL, "k", 0)
+			_, err := e.Chat(context.Background(), ChatRequest{Model: "m", Messages: []Message{{Role: "user", Content: "x"}}}, nil)
+			var ae *ErgoAuthError
+			if !errors.As(err, &ae) {
+				t.Fatalf("want *ErgoAuthError, got %T: %v", err, err)
+			}
+			if ae.Status != tc.status || ae.Code != tc.wantCode {
+				t.Fatalf("status/code = %d/%q, want %d/%q", ae.Status, ae.Code, tc.status, tc.wantCode)
+			}
+			if ae.Message == "" {
+				t.Fatal("message should be kept")
+			}
+			if IsAccountInactive(err) != tc.wantInactive {
+				t.Fatalf("IsAccountInactive = %v, want %v", IsAccountInactive(err), tc.wantInactive)
+			}
+		})
+	}
+}
+
+func TestErgoAuthErrorNoKeyHasMissingCode(t *testing.T) {
+	e := NewErgo("http://127.0.0.1:0", "", 0)
+	_, err := e.Chat(context.Background(), ChatRequest{Model: "m", Messages: []Message{{Role: "user", Content: "x"}}}, nil)
+	var ae *ErgoAuthError
+	if !errors.As(err, &ae) || ae.Code != "missing_api_key" || ae.AccountInactive() {
+		t.Fatalf("got %#v", err)
+	}
+	if IsAccountInactive(nil) || IsAccountInactive(errors.New("x")) {
+		t.Fatal("non-auth errors are never account_inactive")
+	}
+}

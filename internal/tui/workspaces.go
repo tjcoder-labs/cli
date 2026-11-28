@@ -420,6 +420,9 @@ func (a *App) workspaceArgHints(text string) (cmd, title string, items []wsArg, 
 	if title, items, ok := a.watchArgHints(text); ok {
 		return "watch", title, items, true
 	}
+	if title, items, ok := a.loginArgHints(text); ok {
+		return "login", title, items, true
+	}
 	if a.workspaces == nil || !strings.HasPrefix(text, "/") || strings.Contains(text, "\n") {
 		return "", "", nil, false
 	}

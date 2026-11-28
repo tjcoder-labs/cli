@@ -238,7 +238,7 @@ func (e *Ergo) ListAllModels(ctx context.Context) ([]ModelInfo, error) {
 		ctx = context.Background()
 	}
 	if e.apiKey == "" {
-		return nil, &ErgoAuthError{Message: "no ergo API key configured"}
+		return nil, &ErgoAuthError{Message: "no ergo API key configured", Code: "missing_api_key"}
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, e.baseURL+"/v1/providers", nil)
 	if err != nil {
@@ -252,7 +252,7 @@ func (e *Ergo) ListAllModels(ctx context.Context) ([]ModelInfo, error) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == 401 || resp.StatusCode == 403 {
-		return nil, &ErgoAuthError{Message: strings.TrimSpace(decodeErgoError(resp.Body))}
+		return nil, newErgoAuthError(resp.StatusCode, resp.Body)
 	}
 	// A gateway without /v1/providers returns 404: degrade to the tier list.
 	if resp.StatusCode == http.StatusNotFound {

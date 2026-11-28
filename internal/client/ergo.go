@@ -254,13 +254,55 @@ func (e *InsufficientCreditsError) Error() string {
 
 // ErgoAuthError is returned on 401/403: the API key is missing, invalid,
 // expired, or revoked. The user should run /login again.
-type ErgoAuthError struct{ Message string }
+//
+// Status and Code come from the gateway's response (Status 0 means the
+// error was raised client-side, e.g. no key is configured). They let the
+// TUI tell "sign in again" apart from "this account is suspended", which
+// signing in cannot fix.
+type ErgoAuthError struct {
+	Message string
+	Status  int
+	Code    string
+}
 
 func (e *ErgoAuthError) Error() string {
 	if e.Message == "" {
 		return "ergo API key invalid or revoked — run /login to re-authenticate"
 	}
 	return e.Message
+}
+
+// ErgoCodeAccountInactive is the gateway code for a valid key whose
+// tenant is suspended or inactive (403).
+const ErgoCodeAccountInactive = "account_inactive"
+
+// AccountInactive reports the suspended-account case: the key is fine,
+// the account is not, so signing in again would not help.
+func (e *ErgoAuthError) AccountInactive() bool {
+	return e != nil && e.Code == ErgoCodeAccountInactive
+}
+
+// IsAccountInactive reports whether err is an ergo 403 account_inactive.
+func IsAccountInactive(err error) bool {
+	var ae *ErgoAuthError
+	return errors.As(err, &ae) && ae.AccountInactive()
+}
+
+// newErgoAuthError builds the typed error from a 401/403 response body,
+// keeping the gateway's message and error code.
+func newErgoAuthError(status int, body io.Reader) *ErgoAuthError {
+	raw, _ := io.ReadAll(io.LimitReader(body, 8192))
+	out := &ErgoAuthError{Status: status}
+	var apiErr ergoAPIError
+	if err := json.Unmarshal(raw, &apiErr); err == nil && apiErr.Error.Message != "" {
+		out.Message = strings.TrimSpace(apiErr.Error.Message)
+		if c, ok := apiErr.Error.Code.(string); ok {
+			out.Code = strings.TrimSpace(c)
+		}
+		return out
+	}
+	out.Message = strings.TrimSpace(string(raw))
+	return out
 }
 
 // IsInsufficientCredits reports whether err is an ergo 402.
@@ -359,7 +401,7 @@ func (e *Ergo) Chat(ctx context.Context, request ChatRequest, onEvent func(Strea
 
 func (e *Ergo) chat(ctx context.Context, request ChatRequest, onEvent func(StreamEvent) error) (Message, error) {
 	if e.apiKey == "" {
-		return Message{}, &ErgoAuthError{Message: "no ergo API key configured — run /login to authenticate"}
+		return Message{}, &ErgoAuthError{Message: "no ergo API key configured — run /login to authenticate", Code: "missing_api_key"}
 	}
 	if e.ollama != nil {
 		return e.ollama.Chat(ctx, request, onEvent)
@@ -410,7 +452,7 @@ func (e *Ergo) chat(ctx context.Context, request ChatRequest, onEvent func(Strea
 
 	switch {
 	case resp.StatusCode == 401 || resp.StatusCode == 403:
-		return Message{}, &ErgoAuthError{Message: strings.TrimSpace(decodeErgoError(resp.Body))}
+		return Message{}, newErgoAuthError(resp.StatusCode, resp.Body)
 	case resp.StatusCode == 402:
 		return Message{}, decodeInsufficientCredits(resp.Body)
 	case resp.StatusCode >= 300:
@@ -535,7 +577,7 @@ func (e *Ergo) ListModels(ctx context.Context) ([]ModelInfo, error) {
 		ctx = context.Background()
 	}
 	if e.apiKey == "" {
-		return nil, &ErgoAuthError{Message: "no ergo API key configured"}
+		return nil, &ErgoAuthError{Message: "no ergo API key configured", Code: "missing_api_key"}
 	}
 	if e.ollama != nil {
 		return e.ollama.ListModels(ctx)
