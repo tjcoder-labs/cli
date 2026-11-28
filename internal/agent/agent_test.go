@@ -53,8 +53,9 @@ func TestSoftwareEngineerPromptPresentationGuidance(t *testing.T) {
 	for _, want := range []string{
 		"canvas_width_cols", "canvas_visible_lines", "wrap",
 		"YAML, JSON, TOML", "ui_control contextually", "re-evaluate every turn",
-		"invoke_cli_command", "there is no invoke_ui_command", `"config"`, `"model"`,
+		"invoke_cli_command", "there is no invoke_ui_command", `"config"`, `"model"`, `"usage"`, `"balance"`,
 		"Never invoke destructive",
+		"Watch vs run_command", `action "stop"`, "50 KB",
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Errorf("software-engineer prompt missing %q", want)

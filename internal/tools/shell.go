@@ -72,7 +72,7 @@ func (runCommandTool) Definition() client.ToolDefinition {
 		Type: "function",
 		Function: client.FunctionDefinition{
 			Name:        "run_command",
-			Description: "Run a shell command inside the workspace with timeout protection. Set background=true for long-running or parallel work that should continue after the current turn, then use background_job to read its status and output. For background work, set check_after_seconds to be notified of progress after that many seconds instead of running a blocking status check.",
+			Description: "Run a shell command inside the workspace with timeout protection and read its result. Set background=true for long-running or parallel work that should continue after the current turn, then use background_job to read its status and output. For background work, set check_after_seconds to be notified of progress after that many seconds instead of running a blocking status check. Output may be truncated at about 50 KB (marked ...[truncated]...). Do not use this for output the user should follow live (dev servers, tail -f, test watchers); use ui_control canvas watch mode (command + optional interval_seconds) for that, and stop the watch when done.",
 			Parameters: objectSchema([]string{"command"}, map[string]any{
 				"command":             stringProp("Shell command to execute."),
 				"cwd":                 stringProp("Optional working directory."),

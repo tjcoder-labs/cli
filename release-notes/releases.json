@@ -3,6 +3,26 @@
   "schema_version": 1,
   "releases": [
     {
+      "version": "0.9.283",
+      "date": "2026-11-27",
+      "title": "Clearer watch, usage, and canvas guidance for agents",
+      "summary": "Agents are steered to open live command output in the canvas watch, to invoke /usage and /balance for the user, and to stop offering VS Code at session start.",
+      "changes": {
+        "changed": [
+          {
+            "text": "The software-engineer prompt and the ui_control, invoke_cli_command, and run_command tools now distinguish canvas watch from run_command, and invoke_cli_command examples include usage and balance.",
+            "details": "Live output such as a dev server or tail -f should use ui_control canvas watch and be stopped when done. Session tokens and spend should be opened with invoke_cli_command. /compact may be suggested when context is low, but is not invoked unless the user asks."
+          },
+          {
+            "text": "The terminal-specialist agent can now use ui_control and invoke_cli_command, and no longer asks to co-develop in VS Code at session start."
+          },
+          {
+            "text": "The default environment template no longer asks the user to co-develop in VS Code or to use open_in_ide at session start; it points at the TUI canvas instead."
+          }
+        ]
+      }
+    },
+    {
       "version": "0.9.281",
       "date": "2026-11-27",
       "title": "Patch release",

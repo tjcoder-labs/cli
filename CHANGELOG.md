@@ -4,6 +4,17 @@
 
 All notable changes to Coder CLI. The source of truth is [release-notes/releases.json](release-notes/releases.json).
 
+## 0.9.283 — 2026-11-27
+
+**Clearer watch, usage, and canvas guidance for agents.** Agents are steered to open live command output in the canvas watch, to invoke /usage and /balance for the user, and to stop offering VS Code at session start.
+
+### Changed
+
+- The software-engineer prompt and the ui_control, invoke_cli_command, and run_command tools now distinguish canvas watch from run_command, and invoke_cli_command examples include usage and balance.
+  Live output such as a dev server or tail -f should use ui_control canvas watch and be stopped when done. Session tokens and spend should be opened with invoke_cli_command. /compact may be suggested when context is low, but is not invoked unless the user asks.
+- The terminal-specialist agent can now use ui_control and invoke_cli_command, and no longer asks to co-develop in VS Code at session start.
+- The default environment template no longer asks the user to co-develop in VS Code or to use open_in_ide at session start; it points at the TUI canvas instead.
+
 ## 0.9.281 — 2026-11-27
 
 **Patch release.** Routine patch release.

@@ -45,7 +45,7 @@ func (uiControlTool) Definition() client.ToolDefinition {
 				"Panels: 'canvas' (render a file, optionally a highlighted line range, while you discuss, edit, or draft code/config/docs), " +
 				"'tasks' (after task changes or while planning), 'memories' (after memory changes), 'articles', and 'activity' (default). " +
 				"Canvas watch mode: pass command (instead of path) to stream that shell command's live, colourised output in the canvas; interval_seconds > 0 re-runs it like watch -n; action 'stop' ends the watch. " +
-				"Use it so the user can follow a dev server, log tail, or test run; use run_command when you need the output yourself. sudo is not allowed in a watch. " +
+				"Use it so the user can follow a dev server, log tail, or test run; use run_command when you need the output yourself. Stop the watch when it is no longer needed or before showing a file on the canvas. sudo is not allowed in a watch. " +
 				"For canvas, size start_line/end_line to canvas_width_cols × canvas_visible_lines from tui_context, counting wrapped long lines, " +
 				"and prefer the relevant function/block/config section over the whole file. " +
 				"To open a feature, picker, or setting (model, agent, config), use invoke_cli_command instead.",

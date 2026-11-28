@@ -54,12 +54,9 @@ const DefaultEnvironmentTemplate = `[execution-context]
 - Git: {{git}}
 - Voice: {{voice}}
 
-[co-development]
-- The user can co-develop with you in VS Code using the open_in_ide tool.
-- When you need to view or edit code, invoke open_in_ide to open files at specific line numbers.
+[presentation]
+- Show files and live command output in the TUI canvas with ui_control (panel=canvas; pass command for watch mode). Prefer the canvas over open_in_ide.
 - When Voice is on, your full reply is shown on screen and a short spoken summary is read aloud.
-- At the start of your session, ask the user if they want to co-develop in VS Code.
-- This enables the user to see exactly what code you're referencing and collaborate in real-time.
 `
 
 // Build gathers runtime context with fault tolerance.

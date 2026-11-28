@@ -35,12 +35,13 @@ func (invokeCliCommandTool) Definition() client.ToolDefinition {
 		Type: "function",
 		Function: client.FunctionDefinition{
 			Name: "invoke_cli_command",
-			Description: `Run a TUI slash command for the user (without the leading slash) to open an in-TUI feature, option picker, or setting instead of telling them what to type. Use ui_control, not this, to switch presentation panes. Examples:
+			Description: `Run a TUI slash command for the user (without the leading slash) to open an in-TUI feature, option picker, or setting instead of telling them what to type. Use ui_control, not this, to switch presentation panes or to start/stop a canvas watch. Examples:
 - config: open settings
 - model / model <name>: open the model picker or switch model
 - agent / agent <name>: open the agent picker or switch agent
-- providers, mcp, tools, environment, dirs, balance, memories, reminders, tasks, help
-Do not run destructive or state-discarding commands (quit, clear, compact, logout, update) unless the user explicitly asks.`,
+- usage: show this session's tokens and cost; balance: show the wallet
+- providers, mcp, tools, environment, dirs, memories, reminders, tasks, help, telemetry
+Do not run destructive or state-discarding commands (quit, clear, compact, logout, update) unless the user explicitly asks. You may suggest /compact when context is low; do not invoke it unless they asked.`,
 			Parameters: objectSchema([]string{"command"}, map[string]any{
 				"command": stringProp("The slash command to invoke, without the leading slash. Examples: 'config', 'model', 'agent software-engineer', 'providers', 'tasks'"),
 			}),
