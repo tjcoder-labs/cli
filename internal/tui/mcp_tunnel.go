@@ -14,17 +14,22 @@ import (
 	"github.com/tjcoder-labs/cli/internal/tools"
 )
 
+// mcpTunnelStartFunc replaces the live relay runner in tests.
+// saved is non-nil when reattaching to a persisted publication.
+type mcpTunnelStartFunc func(ctx context.Context, saved *mcpserver.Publication, announce func(mcpserver.Publication)) error
+
 // All tunnel UI state is owned by the UI goroutine. Relay credentials and the
 // URL are never appended to activity/history (both are persisted).
 type interactiveMCPTunnel struct {
-	cancel   context.CancelFunc
-	done     chan struct{}
-	ready    bool
-	stopping bool
-	url      string
-	expires  string
-	revealed bool
-	notice   string
+	cancel    context.CancelFunc
+	leaveOpen context.CancelFunc // detaches without revoking, so a saved session can be reattached
+	done      chan struct{}
+	ready     bool
+	stopping  bool
+	url       string
+	expires   string
+	revealed  bool
+	notice    string
 	// Live status only; consumer ids are opaque server-assigned values and
 	// never include caller IP/UA. Nothing here is persisted.
 	reconnecting bool
@@ -72,34 +77,45 @@ func (a *App) handleMCPRelayEvent(tunnel *interactiveMCPTunnel, ev mcpserver.Rel
 	a.refreshMCPTunnelBar()
 }
 
+func mcpTunnelSubcommand(name string) bool {
+	switch name {
+	case "stop", "save", "show", "hide", "copy":
+		return true
+	}
+	return false
+}
+
+// savedTunnelReusable reports whether a persisted publication can still be
+// used to reattach. Missing, unparseable, or expired entries are not reusable.
+func savedTunnelReusable(saved *SavedMCPTunnel, now time.Time) (mcpserver.Publication, bool) {
+	if saved == nil || saved.SessionID == "" || saved.RelayToken == "" {
+		return mcpserver.Publication{}, false
+	}
+	exp, err := time.Parse(time.RFC3339, saved.ExpiresAt)
+	if err != nil || !now.Before(exp) {
+		return mcpserver.Publication{}, false
+	}
+	return mcpserver.Publication{ID: saved.SessionID, RelayToken: saved.RelayToken, URL: saved.URL, ExpiresAt: saved.ExpiresAt}, true
+}
+
 func (a *App) handleMCPTunnel(args []string) {
-	if len(args) > 1 || (len(args) == 1 && args[0] != "stop" && args[0] != "save") {
-		a.appendActivity("Usage: /mcp tunnel [stop|save]. Opens a secret capability URL; /login required. Sudo is gated by you in the TUI. /mcp tunnel save persists the RelayToken for later reattach.")
+	if len(args) > 1 || (len(args) == 1 && !mcpTunnelSubcommand(args[0])) {
+		a.appendActivity("Usage: /mcp tunnel [stop|save|show|hide|copy]. Opens a secret capability URL; /login required. Sudo is gated by you in the TUI. /mcp tunnel show, hide, and copy work without function keys (same as F7/F8). /mcp tunnel save persists the RelayToken for later reattach.")
 		return
 	}
-	if len(args) == 1 && args[0] == "save" {
-		if a.mcpTunnel == nil || !a.mcpTunnel.ready || a.mcpTunnel.publication.ID == "" {
-			a.appendActivity("No active MCP tunnel to save. Start one with /mcp tunnel first.")
-			return
+	if len(args) == 1 {
+		switch args[0] {
+		case "save":
+			a.handleMCPTunnelSave()
+		case "stop":
+			a.handleMCPTunnelStop()
+		case "show":
+			a.handleMCPTunnelReveal(true)
+		case "hide":
+			a.handleMCPTunnelReveal(false)
+		case "copy":
+			a.handleMCPTunnelCopyCmd()
 		}
-		if err := a.saveMCPTunnel(a.mcpTunnel.publication); err != nil {
-			a.appendActivity("Failed to save MCP tunnel: " + tview.Escape(err.Error()))
-			return
-		}
-		a.appendActivity("MCP tunnel saved. A later /mcp tunnel will try to reattach with the same RelayToken until you stop it or it expires.")
-		return
-	}
-	if len(args) == 1 && args[0] == "stop" {
-		if a.mcpTunnel == nil {
-			a.appendActivity("No MCP tunnel is running.")
-			return
-		}
-		a.mcpTunnel.stopping = true
-		a.mcpTunnel.cancel()
-		a.clearMCPTunnelBar()
-		a.clearMCPTunnel()
-		a.appendActivity("Stopping MCP tunnel and revoking its link. Saved credentials cleared.")
-		a.refreshContextBar()
 		return
 	}
 	if a.mcpTunnel != nil {
@@ -115,8 +131,12 @@ func (a *App) handleMCPTunnel(args []string) {
 		a.appendActivity("MCP tunnel unavailable: interactive tool registry is not initialized.")
 		return
 	}
-	ctx, cancel := context.WithCancel(context.Background())
-	tunnel := &interactiveMCPTunnel{cancel: cancel, done: make(chan struct{})}
+	ctx, cancel := context.WithCancelCause(context.Background())
+	tunnel := &interactiveMCPTunnel{
+		cancel:    func() { cancel(nil) },
+		leaveOpen: func() { cancel(mcpserver.ErrLeaveOpen) },
+		done:      make(chan struct{}),
+	}
 	a.mcpTunnel = tunnel
 	registry := &interactiveMCPRegistry{app: a, ctx: ctx}
 	server := &mcpserver.Server{Registry: registry, Version: a.appVersion}
@@ -124,25 +144,33 @@ func (a *App) handleMCPTunnel(args []string) {
 		a.postUI(func() { a.handleMCPRelayEvent(tunnel, ev) })
 	}}
 
-	// Prefer saved publication when present and not expired.
+	savedPub, haveSaved := savedTunnelReusable(a.config.MCPTunnel, time.Now())
 	var run func(context.Context, func(mcpserver.Publication)) error
-	if saved := a.config.MCPTunnel; saved != nil && saved.SessionID != "" && saved.RelayToken != "" {
-		if exp, err := time.Parse(time.RFC3339, saved.ExpiresAt); err == nil && time.Now().Before(exp) {
-			pub := mcpserver.Publication{ID: saved.SessionID, RelayToken: saved.RelayToken, URL: saved.URL, ExpiresAt: saved.ExpiresAt}
+	if a.mcpTunnelStart != nil {
+		var savedArg *mcpserver.Publication
+		if haveSaved {
+			p := savedPub
+			savedArg = &p
 			a.appendActivity("Attempting to reattach to saved MCP tunnel…")
-			run = func(ctx context.Context, announce func(mcpserver.Publication)) error {
-				err := relay.RunWithPublication(ctx, pub, func(p mcpserver.Publication) {
-					tunnel.publication = p
-					announce(p)
-				})
-				if errorsIsSessionGone(err) {
-					a.postUI(func() { a.clearMCPTunnel() })
-				}
-				return err
-			}
+		} else {
+			a.appendActivity("Opening MCP tunnel for this interactive workspace. Anyone holding its secret link can call tools; sudo uses your existing TUI approval gate, not unattended root.")
 		}
-	}
-	if run == nil {
+		run = func(ctx context.Context, announce func(mcpserver.Publication)) error {
+			return a.mcpTunnelStart(ctx, savedArg, announce)
+		}
+	} else if haveSaved {
+		a.appendActivity("Attempting to reattach to saved MCP tunnel…")
+		run = func(ctx context.Context, announce func(mcpserver.Publication)) error {
+			err := relay.RunWithPublication(ctx, savedPub, func(p mcpserver.Publication) {
+				tunnel.publication = p
+				announce(p)
+			})
+			if errorsIsSessionGone(err) {
+				a.postUI(func() { a.clearMCPTunnel() })
+			}
+			return err
+		}
+	} else {
 		a.appendActivity("Opening MCP tunnel for this interactive workspace. Anyone holding its secret link can call tools; sudo uses your existing TUI approval gate, not unattended root.")
 		run = func(ctx context.Context, announce func(mcpserver.Publication)) error {
 			return relay.Run(ctx, func(p mcpserver.Publication) {
@@ -152,6 +180,64 @@ func (a *App) handleMCPTunnel(args []string) {
 		}
 	}
 	a.runMCPTunnel(ctx, tunnel, run)
+}
+
+func (a *App) handleMCPTunnelSave() {
+	if a.mcpTunnel == nil || !a.mcpTunnel.ready || a.mcpTunnel.publication.ID == "" {
+		a.appendActivity("No active MCP tunnel to save. Start one with /mcp tunnel first.")
+		return
+	}
+	if err := a.saveMCPTunnel(a.mcpTunnel.publication); err != nil {
+		a.appendActivity("Failed to save MCP tunnel: " + tview.Escape(err.Error()))
+		return
+	}
+	a.appendActivity("MCP tunnel saved. A later /mcp tunnel will try to reattach with the same RelayToken until you stop it or it expires.")
+}
+
+func (a *App) handleMCPTunnelStop() {
+	if a.mcpTunnel == nil {
+		a.appendActivity("No MCP tunnel is running.")
+		return
+	}
+	a.mcpTunnel.stopping = true
+	a.mcpTunnel.cancel()
+	a.clearMCPTunnelBar()
+	a.clearMCPTunnel()
+	a.appendActivity("Stopping MCP tunnel and revoking its link. Saved credentials cleared.")
+	a.refreshContextBar()
+}
+
+func (a *App) handleMCPTunnelReveal(reveal bool) {
+	if !a.hasMCPTunnelBar() {
+		if reveal {
+			a.appendActivity("No MCP tunnel link to show. Start one with /mcp tunnel first.")
+		} else {
+			a.appendActivity("No MCP tunnel link to hide. Start one with /mcp tunnel first.")
+		}
+		return
+	}
+	if a.mcpTunnel.revealed == reveal {
+		if reveal {
+			a.appendActivity("MCP tunnel link is already visible in the bar above the input. /mcp tunnel hide masks it; /mcp tunnel copy copies it.")
+		} else {
+			a.appendActivity("MCP tunnel link is already hidden. /mcp tunnel show reveals it.")
+		}
+		return
+	}
+	a.setMCPTunnelReveal(reveal)
+	if reveal {
+		a.appendActivity("MCP tunnel link revealed in the bar above the input. /mcp tunnel hide masks it again; /mcp tunnel copy copies the revealed link (or select the URL).")
+	} else {
+		a.appendActivity("MCP tunnel link hidden. /mcp tunnel show reveals it again.")
+	}
+}
+
+func (a *App) handleMCPTunnelCopyCmd() {
+	if !a.hasMCPTunnelBar() {
+		a.appendActivity("No MCP tunnel link to copy. Start one with /mcp tunnel first.")
+		return
+	}
+	a.appendActivity("MCP tunnel: " + a.copyMCPTunnelLink() + ".")
 }
 
 func errorsIsSessionGone(err error) bool {
@@ -187,7 +273,7 @@ func (a *App) runMCPTunnel(ctx context.Context, tunnel *interactiveMCPTunnel, ru
 				}
 				tunnel.ready = true
 				tunnel.publication = p
-				a.appendActivity("MCP tunnel ready. Its masked link is pinned above the input; F7 shows/hides the token, F8 copies the revealed link. /mcp tunnel stop revokes it. /mcp tunnel save persists the token for later reattach.")
+				a.appendActivity("MCP tunnel ready. Its masked link is pinned above the input; F7 or /mcp tunnel show/hide the token, F8 or /mcp tunnel copy copies the revealed link. /mcp tunnel stop revokes it. /mcp tunnel save persists the token for later reattach.")
 				a.setMCPTunnelLink(p)
 				a.refreshContextBar()
 			})
@@ -221,15 +307,25 @@ func (a *App) shutdownMCPTunnel() {
 	if a.mcpTunnel == nil {
 		return
 	}
-	a.mcpTunnel.cancel()
-	// The event loop has exited, so scrub UI buffers without rebuilding it.
-	a.scrubMCPTunnelLink()
-	a.clearMCPTunnel()
+	// A saved tunnel should survive a clean TUI exit so a later /mcp tunnel
+	// can reattach. Detach without DELETE and keep the credentials. Unsaved
+	// tunnels (and expired saves) are still revoked and cleared.
+	if _, ok := savedTunnelReusable(a.config.MCPTunnel, time.Now()); ok && a.mcpTunnel.leaveOpen != nil {
+		a.mcpTunnel.leaveOpen()
+		a.scrubMCPTunnelLink()
+	} else {
+		a.mcpTunnel.cancel()
+		a.scrubMCPTunnelLink()
+		a.clearMCPTunnel()
+	}
 	// Bound exit if a third-party tool fails to honor cancellation. The relay
-	// stops heartbeats on cancellation; its lease still expires if DELETE fails.
-	select {
-	case <-a.mcpTunnel.done:
-	case <-time.After(5 * time.Second):
+	// stops heartbeats on cancellation; its lease still expires if DELETE fails
+	// or if a saved session is left open and nothing reattaches in time.
+	if a.mcpTunnel.done != nil {
+		select {
+		case <-a.mcpTunnel.done:
+		case <-time.After(5 * time.Second):
+		}
 	}
 }
 

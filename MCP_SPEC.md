@@ -70,10 +70,11 @@ An empty type is treated as `sse` for compatibility.
 ```
 
 The `mcp_tunnel` object is written only by `/mcp tunnel save` (or standalone
-`--save`). It is removed on `/mcp tunnel stop`, TUI exit, standalone exit, or
-when the relay returns 401. Ending the CLI therefore always kills the tunnel.
-The file mode remains 0600. The capability URL is a credential; treat the
-saved token the same way while the session is live.
+`--save`). It is removed on `/mcp tunnel stop` or when the relay returns 401.
+A clean TUI exit keeps a saved interactive tunnel so a later `/mcp tunnel` can
+reattach; unsaved tunnels and the standalone `coder mcp tunnel` process still
+clear it on exit. The file mode remains 0600. The capability URL is a
+credential; treat the saved token the same way while the session is live.
 
 The client API supports `AddServer(name, target, args...)` for URL/argv callers
 and `AddServerConfig(name, ServerConfig)` for persisted configuration, including
@@ -131,6 +132,9 @@ From an already-running interactive session:
 ```text
 /login
 /mcp tunnel
+/mcp tunnel show
+/mcp tunnel hide
+/mcp tunnel copy
 /mcp tunnel save
 /mcp tunnel stop
 ```
@@ -149,9 +153,10 @@ falls back to relay lease expiry; cancellation is not command rollback.
 to `.ergo-cli-go/config.json`. A subsequent `/mcp tunnel` will attempt to
 reattach with `RunWithPublication` instead of creating a new capability URL.
 On 401 or expiry the saved entry is cleared and a fresh session is created.
-Ending the CLI (clean exit or `/mcp tunnel stop`) always clears the saved
-credentials, so the tunnel cannot be resumed by another process after the user
-has terminated it.
+`/mcp tunnel stop` revokes the session and clears the saved credentials. A clean
+TUI exit of a *saved* tunnel detaches without DELETE and keeps the credentials,
+so a later `/mcp tunnel` can reattach until the lease expires. Unsaved tunnels
+are still revoked and cleared on exit.
 
 Since 0.9.263 the secret capability URL stays in a dedicated, themed bar pinned
 immediately above the chat input, **not** an overlay/modal. Its URL-only rows
@@ -162,13 +167,16 @@ padding and text insets, with top/bottom breathing room. A root-colored gutter
 separates the sibling surfaces. URL wrapping accounts for the padded content
 width; F8 still copies the full link independently of wrapping.
 The stable prefix is visible and the secret path token is masked by default.
-The bar also shows expiry and keyboard hints:
+The bar also shows expiry and keyboard or command hints:
 
-- **F7** toggles show/hide of the token without changing chat input or focus.
-- **F8**, after revealing the token, requests copying the exact full URL through
-  the terminal clipboard facility (tcell / OSC 52 where supported). No label,
-  wrapping newline, expiry, or chat text is included. Copying while masked is
-  refused with a hint to reveal first. Use Fn+F7/F8 on media-key keyboards.
+- **F7** or **`/mcp tunnel show`** / **`/mcp tunnel hide`** show or hide the
+  token without changing chat input or focus. The slash commands are for
+  devices without function keys (for example Termux). F7 still toggles.
+- **F8** or **`/mcp tunnel copy`**, after revealing the token, request copying
+  the exact full URL through the terminal clipboard facility (tcell / OSC 52
+  where supported). No label, wrapping newline, expiry, or chat text is
+  included. Copying while masked is refused with a hint to reveal first
+  (`/mcp tunnel show` or F7). Use Fn+F7/F8 on media-key keyboards.
 - If the terminal blocks clipboard requests, reveal the token and select the
   URL-only row(s) with normal terminal selection instead. No overlay can
   contaminate that selection; expand a narrow terminal to keep it on one row.
@@ -181,9 +189,11 @@ a drop starts and one when the same link is live again; the URL is never logged.
 
 The link is held only in tunnel-owned memory/the dedicated view, **not** activity
 history, conversation, input history, or saved configuration (unless the user
-explicitly runs `/mcp tunnel save`). Toggling and copying do not log it. Stop
-immediately hides/scrubs the bar and requests revocation; TUI exit also scrubs
-it and clears any saved token. The bar remains pinned through resize/fullscreen
+explicitly runs `/mcp tunnel save`). Toggling, showing, hiding and copying do
+not log it. Stop immediately hides/scrubs the bar, requests revocation, and
+clears any saved token. TUI exit also scrubs the bar; a saved session is left
+open for later reattach, and an unsaved session is revoked and cleared. The
+bar remains pinned through resize/fullscreen
 while the tunnel is live. Clipboard managers, recordings and screenshots may
 retain a revealed/copied URL, so treat it as a password. A second `/mcp tunnel`
 reports that one is already running; use `stop` before restarting.
@@ -331,9 +341,11 @@ credential. It never POSTs a new session or mints a new URL silently.
 Heartbeats continue throughout. The server keeps the session for a 10-minute
 reconnect grace after a drop; consumers receive 503 "host not connected" in the
 meantime, and calls that were in flight at the drop fail rather than replay.
-The relay DELETEs only on Ctrl-C/SIGTERM, `/mcp tunnel stop` or TUI exit. A 401
-(session revoked/expired, e.g. server restart) or reaching the one-hour hard
-maximum ends the tunnel with a clear message; start a new tunnel for a new link.
+The relay DELETEs on Ctrl-C/SIGTERM, `/mcp tunnel stop`, or TUI exit of an
+unsaved tunnel. A saved interactive tunnel is left open on TUI exit so it can
+be reattached. A 401 (session revoked/expired, e.g. server restart) or reaching
+the one-hour hard maximum ends the tunnel with a clear message; start a new
+tunnel for a new link.
 New calls authenticate against revocation/expiry before dispatch.
 
 **The entire URL is a credential.** Anyone who has the link can call the toolset

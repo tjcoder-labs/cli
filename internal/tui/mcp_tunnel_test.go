@@ -3,9 +3,11 @@ package tui
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -81,7 +83,7 @@ func TestMCPTunnelUsageAndStop(t *testing.T) {
 	a.handleMCPCommand([]string{"mcp", "tunnel", "unexpected"})
 	a.handleMCPCommand([]string{"mcp", "tunnel"})
 	a.handleMCPCommand([]string{"mcp", "tunnel", "stop"})
-	for _, want := range []string{"remove|tunnel", "/mcp tunnel [stop|save]", "Run /login first", "No MCP tunnel is running"} {
+	for _, want := range []string{"remove|tunnel", "/mcp tunnel [stop|save|show|hide|copy]", "Run /login first", "No MCP tunnel is running"} {
 		if !strings.Contains(a.capturedActivity(), want) {
 			t.Error(a.capturedActivity())
 		}
@@ -261,5 +263,168 @@ func TestMCPTunnelShutdownWithoutUI(t *testing.T) {
 	case <-tunnel.done:
 	default:
 		t.Fatal("shutdown did not wait for revocation")
+	}
+}
+
+func TestSavedTunnelReusable(t *testing.T) {
+	now := time.Date(2026, 11, 28, 16, 0, 0, 0, time.UTC)
+	if _, ok := savedTunnelReusable(nil, now); ok {
+		t.Fatal("nil saved")
+	}
+	if _, ok := savedTunnelReusable(&SavedMCPTunnel{SessionID: "s"}, now); ok {
+		t.Fatal("missing token")
+	}
+	if _, ok := savedTunnelReusable(&SavedMCPTunnel{SessionID: "s", RelayToken: "t", ExpiresAt: "not-a-date"}, now); ok {
+		t.Fatal("bad expiry")
+	}
+	expired := &SavedMCPTunnel{SessionID: "s", RelayToken: "t", ExpiresAt: now.Add(-time.Minute).Format(time.RFC3339)}
+	if _, ok := savedTunnelReusable(expired, now); ok {
+		t.Fatal("expired")
+	}
+	saved := &SavedMCPTunnel{SessionID: "s", RelayToken: "t", URL: testBarURL, ExpiresAt: now.Add(time.Hour).Format(time.RFC3339)}
+	got, ok := savedTunnelReusable(saved, now)
+	if !ok || got.ID != "s" || got.RelayToken != "t" || got.URL != testBarURL {
+		t.Fatal("valid save not reusable")
+	}
+}
+
+func TestMCPTunnelSavePersistsReattachAndSurvivesExit(t *testing.T) {
+	t.Setenv("ERGO_API_KEY", "test-key")
+	a, _ := startSimApp(t)
+	pub := mcpserver.Publication{
+		ID:         "sess-save-test",
+		RelayToken: "tok-save-test-relay",
+		URL:        testBarURL,
+		ExpiresAt:  time.Now().Add(time.Hour).UTC().Format(time.RFC3339),
+	}
+	var mu sync.Mutex
+	var kinds []string
+	var lastCause error
+	hook := func(ctx context.Context, saved *mcpserver.Publication, announce func(mcpserver.Publication)) error {
+		kind := "create"
+		out := pub
+		if saved != nil {
+			kind = "reattach"
+			out = *saved
+		}
+		mu.Lock()
+		kinds = append(kinds, kind)
+		mu.Unlock()
+		announce(out)
+		<-ctx.Done()
+		mu.Lock()
+		lastCause = context.Cause(ctx)
+		mu.Unlock()
+		return nil
+	}
+
+	onLoop(t, a, func() { a.handleMCPTunnel([]string{"save"}) })
+	onLoop(t, a, func() {
+		if !strings.Contains(a.activityLogText(), "No active MCP tunnel to save") {
+			t.Fatal("save without tunnel")
+		}
+		if a.config.MCPTunnel != nil {
+			t.Fatal("save without tunnel wrote credentials")
+		}
+	})
+
+	onLoop(t, a, func() {
+		a.mcpTunnelStart = hook
+		a.handleMCPTunnel(nil)
+	})
+	waitFor(t, a, "tunnel ready", func() bool { return a.mcpTunnel != nil && a.mcpTunnel.ready })
+
+	onLoop(t, a, func() { a.handleMCPTunnel([]string{"save"}) })
+	var root string
+	onLoop(t, a, func() {
+		if !strings.Contains(a.activityLogText(), "MCP tunnel saved") {
+			t.Fatal("save confirmation missing")
+		}
+		root = a.workspaceRoot
+		loaded := loadConfigFromDisk(root)
+		got, ok := savedTunnelReusable(loaded.MCPTunnel, time.Now())
+		if !ok || got.ID != pub.ID || got.RelayToken != pub.RelayToken || got.URL != pub.URL {
+			t.Fatal("config did not persist reusable credentials")
+		}
+		if strings.Contains(a.activityLogText(), pub.RelayToken) || strings.Contains(a.activityLogText(), testBarToken) {
+			t.Fatal("secret leaked into activity")
+		}
+	})
+
+	onLoop(t, a, func() {
+		if a.mcpTunnel == nil {
+			t.Fatal("tunnel missing")
+		}
+		a.mcpTunnel.cancel()
+	})
+	waitFor(t, a, "tunnel dropped", func() bool { return a.mcpTunnel == nil })
+	onLoop(t, a, func() {
+		loaded := loadConfigFromDisk(root)
+		if _, ok := savedTunnelReusable(loaded.MCPTunnel, time.Now()); !ok {
+			t.Fatal("disconnect cleared the save")
+		}
+		a.handleMCPTunnel(nil)
+	})
+	waitFor(t, a, "reattached", func() bool { return a.mcpTunnel != nil && a.mcpTunnel.ready })
+	onLoop(t, a, func() {
+		mu.Lock()
+		got := append([]string(nil), kinds...)
+		mu.Unlock()
+		if len(got) != 2 || got[0] != "create" || got[1] != "reattach" {
+			t.Fatalf("unexpected run kinds")
+		}
+		if !strings.Contains(a.activityLogText(), "Attempting to reattach") {
+			t.Fatal("reattach notice missing")
+		}
+		if a.mcpTunnel.publication.ID != pub.ID || a.mcpTunnel.publication.RelayToken != pub.RelayToken {
+			t.Fatal("reattach used different credentials")
+		}
+	})
+
+	a.shutdownMCPTunnel()
+	mu.Lock()
+	cause := lastCause
+	mu.Unlock()
+	if !errors.Is(cause, mcpserver.ErrLeaveOpen) {
+		t.Fatal("clean exit revoked a saved session")
+	}
+	loaded := loadConfigFromDisk(root)
+	if _, ok := savedTunnelReusable(loaded.MCPTunnel, time.Now()); !ok {
+		t.Fatal("clean exit cleared the save")
+	}
+	waitFor(t, a, "shutdown finished", func() bool { return a.mcpTunnel == nil })
+
+	onLoop(t, a, func() { a.handleMCPTunnel(nil) })
+	waitFor(t, a, "reattach after exit", func() bool { return a.mcpTunnel != nil && a.mcpTunnel.ready })
+	onLoop(t, a, func() {
+		mu.Lock()
+		got := append([]string(nil), kinds...)
+		mu.Unlock()
+		if len(got) != 3 || got[2] != "reattach" {
+			t.Fatal("did not reattach after exit")
+		}
+		a.handleMCPTunnel([]string{"stop"})
+	})
+	waitFor(t, a, "stopped", func() bool { return a.mcpTunnel == nil })
+	if _, ok := savedTunnelReusable(loadConfigFromDisk(root).MCPTunnel, time.Now()); ok {
+		t.Fatal("stop left credentials in place")
+	}
+}
+
+func TestMCPTunnelShowTips(t *testing.T) {
+	mcpNoLogin(t)
+	a := newTestApp(t)
+	if got := a.mcpTip("/mcp tunnel show"); !strings.Contains(got, "needs a running tunnel") {
+		t.Fatal(got)
+	}
+	a.mcpTunnel = &interactiveMCPTunnel{ready: true}
+	if got := a.mcpTip("/mcp tunnel show"); !strings.Contains(got, "reveal") || !strings.Contains(got, "F7") {
+		t.Fatal(got)
+	}
+	if got := a.mcpTip("/mcp tunnel copy"); !strings.Contains(got, "F8") {
+		t.Fatal(got)
+	}
+	if got := a.mcpTip("/mcp tunnel"); !strings.Contains(got, "without function keys") || !strings.Contains(got, "revokes") || !strings.Contains(got, "user-gated") {
+		t.Fatal(got)
 	}
 }

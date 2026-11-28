@@ -30,7 +30,7 @@ func TestMCPTunnelBarMaskedByDefaultAndNoModal(t *testing.T) {
 		if !strings.HasPrefix(a.mcpURLView.GetText(false), mcpCapabilityPrefix) || !strings.Contains(a.mcpURLView.GetText(false), "•••") {
 			t.Fatal(a.mcpURLView.GetText(false))
 		}
-		for _, key := range []string{"F7 show token", "F8 copy link"} {
+		for _, key := range []string{"F7 or /mcp tunnel show", "F8 or /mcp tunnel copy"} {
 			if !strings.Contains(a.mcpURLHint.GetText(false), key) {
 				t.Error(a.mcpURLHint.GetText(false))
 			}
@@ -59,7 +59,7 @@ func TestMCPTunnelBarRevealCopyHideDoesNotPersistSecret(t *testing.T) {
 		if got := a.mcpURLView.GetText(false); got != testBarURL {
 			t.Fatalf("revealed text=%q", got)
 		}
-		if !strings.Contains(a.mcpURLHint.GetText(false), "F7 hide token") {
+		if !strings.Contains(a.mcpURLHint.GetText(false), "F7 or /mcp tunnel hide") {
 			t.Fatal(a.mcpURLHint.GetText(false))
 		}
 		if a.globalKeys(tcell.NewEventKey(tcell.KeyF8, 0, tcell.ModNone)) != nil {
@@ -214,6 +214,72 @@ func TestMCPTunnelBarDoesNotStealFormFocus(t *testing.T) {
 		a.clearMCPTunnelBar()
 		if a.tv.GetFocus() != field {
 			t.Fatal("bar removal stole form focus")
+		}
+	})
+}
+
+func TestMCPTunnelShowHideCopyCommands(t *testing.T) {
+	a, sim := startSimApp(t)
+	onLoop(t, a, func() {
+		a.handleMCPTunnel([]string{"show"})
+		a.handleMCPTunnel([]string{"hide"})
+		a.handleMCPTunnel([]string{"copy"})
+		act := a.activityLogText()
+		for _, want := range []string{"No MCP tunnel link to show", "No MCP tunnel link to hide", "No MCP tunnel link to copy"} {
+			if !strings.Contains(act, want) {
+				t.Error(want)
+			}
+		}
+		if strings.Contains(act, testBarToken) {
+			t.Fatal("secret leaked into activity")
+		}
+
+		attachTestTunnelBar(a)
+		a.input.SetText("draft")
+		a.handleMCPTunnel([]string{"show"})
+		if !a.mcpTunnel.revealed || a.mcpURLView.GetText(false) != testBarURL {
+			t.Fatal("show did not reveal the link")
+		}
+		if !strings.Contains(a.activityLogText(), "revealed") || strings.Contains(a.activityLogText(), testBarToken) {
+			t.Fatal("show activity missing or leaked secret")
+		}
+		if !strings.Contains(a.mcpURLHint.GetText(false), "F7 or /mcp tunnel hide") {
+			t.Fatal(a.mcpURLHint.GetText(false))
+		}
+		a.handleMCPTunnel([]string{"show"})
+		if !strings.Contains(a.activityLogText(), "already visible") {
+			t.Fatal("repeat show")
+		}
+		a.handleMCPTunnel([]string{"copy"})
+		if got := string(sim.GetClipboardData()); got != testBarURL {
+			t.Fatal("copy did not request the full URL")
+		}
+		if !strings.Contains(a.mcpURLHint.GetText(false), "copy requested") {
+			t.Fatal("copy notice")
+		}
+		if strings.Contains(a.activityLogText(), testBarToken) || a.input.GetText() != "draft" {
+			t.Fatal("copy leaked into activity or input")
+		}
+		a.handleMCPTunnel([]string{"hide"})
+		if a.mcpTunnel.revealed || strings.Contains(a.mcpURLView.GetText(false), testBarToken) {
+			t.Fatal("hide did not mask")
+		}
+		a.handleMCPTunnel([]string{"hide"})
+		if !strings.Contains(a.activityLogText(), "already hidden") {
+			t.Fatal("repeat hide")
+		}
+		sim.SetClipboard([]byte("previous clipboard"))
+		a.handleMCPTunnel([]string{"copy"})
+		if string(sim.GetClipboardData()) != "previous clipboard" {
+			t.Fatal("copy while hidden overwrote clipboard")
+		}
+		if !strings.Contains(a.mcpURLHint.GetText(false), "/mcp tunnel show") {
+			t.Fatal("copy-while-hidden should mention /mcp tunnel show")
+		}
+		if slashModeFor([]string{"mcp", "tunnel", "show"}) != slashImmediate ||
+			slashModeFor([]string{"mcp", "tunnel", "hide"}) != slashImmediate ||
+			slashModeFor([]string{"mcp", "tunnel", "copy"}) != slashImmediate {
+			t.Fatal("show/hide/copy must work mid-turn")
 		}
 	})
 }

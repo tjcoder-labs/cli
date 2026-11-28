@@ -31,6 +31,10 @@ func (a *App) mcpTip(text string) string {
 	case "status":
 		return "/mcp status — show transport, connection state, tool counts and last errors."
 	case "tunnel":
+		subcmd := ""
+		if len(parts) > 2 {
+			subcmd = strings.ToLower(parts[2])
+		}
 		if a.mcpTunnel != nil {
 			if a.mcpTunnel.stopping {
 				return "MCP tunnel is stopping; revoking the secret link and cancelling tool calls."
@@ -38,22 +42,32 @@ func (a *App) mcpTip(text string) string {
 			if !a.mcpTunnel.ready {
 				return "MCP tunnel is connecting; /mcp tunnel stop cancels it. The link will be the credential."
 			}
-			return "/mcp tunnel save keeps this link for reattach · /mcp tunnel stop revokes it. F7 show/hide, F8 copy. Sudo stays user-gated."
+			switch subcmd {
+			case "show":
+				return "/mcp tunnel show — reveal the secret link in the bar (same as F7). /mcp tunnel hide masks it; /mcp tunnel copy copies it."
+			case "hide":
+				return "/mcp tunnel hide — mask the secret link in the bar (same as F7). /mcp tunnel show reveals it."
+			case "copy":
+				return "/mcp tunnel copy — copy the revealed link (same as F8). Reveal it first with /mcp tunnel show or F7."
+			case "stop":
+				return "/mcp tunnel stop — revoke the tunnel link and cancel its tool calls."
+			case "save":
+				return "/mcp tunnel save — persist the token so a later /mcp tunnel reattaches to the same link."
+			}
+			return "/mcp tunnel show, hide, and copy work without function keys (or F7/F8). /mcp tunnel save keeps this link for reattach · /mcp tunnel stop revokes it. Sudo stays user-gated."
 		}
-		if len(parts) > 2 && parts[2] == "stop" {
+		switch subcmd {
+		case "stop":
 			return "/mcp tunnel stop — no tunnel is running."
-		}
-		if len(parts) > 2 && parts[2] == "save" {
+		case "save":
 			return "/mcp tunnel save — needs a running tunnel; start one with /mcp tunnel."
+		case "show", "hide", "copy":
+			return "/mcp tunnel " + subcmd + " — needs a running tunnel; start one with /mcp tunnel."
 		}
 		if auth.ResolveErgoToken() == "" {
 			return "Run /login first, then /mcp tunnel to open a secret capability URL. Sudo requires your TUI approval."
 		}
-		return "/mcp tunnel opens a secret link · save reattaches later · stop revokes. F7 show/hide, F8 copy; sudo needs your TUI approval."
-	case "tunnel stop":
-		return "/mcp tunnel stop — revoke the tunnel link and cancel its tool calls."
-	case "tunnel save":
-		return "/mcp tunnel save — persist the token so a later /mcp tunnel reattaches to the same link."
+		return "/mcp tunnel opens a secret link · show/hide/copy work without function keys · save reattaches later · stop revokes. F7 or /mcp tunnel show, F8 or /mcp tunnel copy; sudo needs your TUI approval."
 	}
 	if len(names) > 0 {
 		return "/mcp list: tools · status: health · /mcp remove " + names[0] + ": disconnect · add: connect · tunnel: secret link."

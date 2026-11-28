@@ -205,3 +205,60 @@ func TestRelayStopsOnSessionGone(t *testing.T) {
 		t.Fatalf("err=%v creates=%d", err, creates)
 	}
 }
+
+func TestRelayLeaveOpenSkipsRevoke(t *testing.T) {
+	ctx, cancel := context.WithCancelCause(context.Background())
+	defer cancel(nil)
+	var mu sync.Mutex
+	deletes := 0
+	connected := make(chan struct{}, 1)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/cli/mcp/sessions", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"id":"sid","url":"https://api.tjcoder.com/mcp/hosts/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","expiresAt":"2999-01-01T00:00:00Z","relayToken":"relay"}`)
+	})
+	mux.HandleFunc("/cli/mcp/sessions/sid/connect", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, ": connected\n\n")
+		w.(http.Flusher).Flush()
+		select {
+		case connected <- struct{}{}:
+		default:
+		}
+		<-r.Context().Done()
+	})
+	mux.HandleFunc("/cli/mcp/sessions/sid/heartbeat", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) })
+	mux.HandleFunc("/cli/mcp/sessions/sid", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "DELETE" {
+			return
+		}
+		mu.Lock()
+		deletes++
+		mu.Unlock()
+		w.WriteHeader(204)
+	})
+	ts := httptest.NewTLSServer(mux)
+	defer ts.Close()
+	relay := &Relay{BaseURL: ts.URL, Key: "k", Server: &Server{Registry: &stub{}}, Client: ts.Client()}
+	done := make(chan error, 1)
+	go func() { done <- relay.Run(ctx, func(Publication) {}) }()
+	select {
+	case <-connected:
+	case <-time.After(5 * time.Second):
+		t.Fatal("never connected")
+	}
+	cancel(ErrLeaveOpen)
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("leave-open returned an error")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("leave-open did not return")
+	}
+	time.Sleep(100 * time.Millisecond)
+	mu.Lock()
+	defer mu.Unlock()
+	if deletes != 0 {
+		t.Fatalf("leave-open revoked the session (deletes=%d)", deletes)
+	}
+}

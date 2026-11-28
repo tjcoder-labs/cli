@@ -385,13 +385,18 @@ workspace through the same relay. A full-width bar above the chat input shows
 the URL with its secret token masked by default, plus expiry and key hints.
 It has its own input-style surface with matching background, accent beam and
 padding, separated from the chat input by a thin gutter.
-F7 shows/hides the token; after revealing it, F8 copies the exact full URL via
+F7 or `/mcp tunnel show` reveals the token, `/mcp tunnel hide` masks it again,
+and after revealing it, F8 or `/mcp tunnel copy` copies the exact full URL via
 the terminal clipboard (where supported), or select the URL-only row directly.
+The slash commands are for devices without function keys (for example Termux).
 Use Fn+F7/F8 on media-key keyboards. No modal overlays the chat and the link is
 never saved in history. The banner shows unique connections, the tool call in
 flight and `reconnecting…`; tunnels redial after dropouts and keep the same link
-(10-minute grace, one-hour maximum). `/mcp tunnel stop` or TUI exit removes the bar and revokes
-it. Interactive sudo remains gated by the owner's existing approval/password
-cards; consumers never receive passwords or approval choices. Treat the link
-as a password, not permission for unattended root. `/mcp` tips adapt to login,
-server names, subcommands and tunnel state. See [MCP_SPEC.md](MCP_SPEC.md).
+(10-minute grace, one-hour maximum). `/mcp tunnel save` persists the token so a
+later `/mcp tunnel` can reattach until you `/mcp tunnel stop` or the lease
+expires, including after a clean TUI exit. `/mcp tunnel stop` removes the bar
+and revokes the link. Interactive sudo remains gated by the owner's existing
+approval/password cards; consumers never receive passwords or approval choices.
+Treat the link as a password, not permission for unattended root. `/mcp` tips
+adapt to login, server names, subcommands and tunnel state. See
+[MCP_SPEC.md](MCP_SPEC.md).

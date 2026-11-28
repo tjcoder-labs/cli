@@ -28,14 +28,14 @@ func TestMCPArgumentPaletteMatchesAdd(t *testing.T) {
 		if got := strings.Join(wsLabels(a), "|"); got != "tunnel" {
 			t.Fatal(got)
 		}
-		// /mcp tunnel completes its own subcommands, including save (which
-		// persists the relay token for reattach) and stop.
+		// /mcp tunnel completes its own subcommands, including show/hide/copy
+		// (reachable without function keys), save (reattach), and stop.
 		a.updateInputHint("/mcp tunnel ")
-		if got := strings.Join(wsLabels(a), "|"); got != "tunnel|tunnel save|tunnel stop" {
+		if got := strings.Join(wsLabels(a), "|"); got != "tunnel|tunnel show|tunnel hide|tunnel copy|tunnel save|tunnel stop" {
 			t.Fatal(got)
 		}
 		a.updateInputHint("/mcp tunnel s")
-		if got := strings.Join(wsLabels(a), "|"); got != "tunnel save|tunnel stop" {
+		if got := strings.Join(wsLabels(a), "|"); got != "tunnel show|tunnel save|tunnel stop" {
 			t.Fatal(got)
 		}
 		// Shift+Tab cycles, Tab inserts the highlighted option — same keys as /add.

@@ -70,7 +70,8 @@ type AppConfig struct {
 	CaptureDir string `json:"captureDir,omitempty"`
 	// MCPTunnel holds an explicitly saved tunnel publication so a later
 	// /mcp tunnel can reattach using the same RelayToken. Cleared on
-	// stop, exit, or 401. Never written unless the user runs
+	// stop or 401. Kept across a clean TUI exit so the same link can
+	// be resumed until it expires. Never written unless the user runs
 	// /mcp tunnel save. File mode remains 0600.
 	MCPTunnel *SavedMCPTunnel `json:"mcp_tunnel,omitempty"`
 }

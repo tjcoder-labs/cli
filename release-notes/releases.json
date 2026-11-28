@@ -3,6 +3,27 @@
   "schema_version": 1,
   "releases": [
     {
+      "version": "0.9.284",
+      "date": "2026-11-28",
+      "title": "Reveal the MCP tunnel link without function keys",
+      "summary": "Devices without function keys, such as Termux, can now show, hide, and copy the MCP tunnel link with /mcp tunnel show, hide, and copy. A saved tunnel also survives a clean TUI exit so a later /mcp tunnel can reattach until you stop it or it expires.",
+      "changes": {
+        "added": [
+          {
+            "text": "/mcp tunnel show, hide, and copy reveal, mask, and copy the tunnel link the same way F7 and F8 do, so the link is reachable without function keys.",
+            "details": "The banner, /mcp help, tips, and autocomplete mention the new subcommands alongside F7 and F8. The URL is never written to activity or history. Copy still requires the token to be revealed first.",
+            "commands": ["/mcp"]
+          }
+        ],
+        "fixed": [
+          {
+            "text": "/mcp tunnel save now keeps the relay token across a clean TUI exit so a later /mcp tunnel can reattach to the same link until you stop it or it expires.",
+            "details": "Exit no longer revokes a saved session or clears its credentials. /mcp tunnel stop still revokes the link and clears the save. Unsaved tunnels are still revoked on exit."
+          }
+        ]
+      }
+    },
+    {
       "version": "0.9.283",
       "date": "2026-11-27",
       "title": "Clearer watch, usage, and canvas guidance for agents",

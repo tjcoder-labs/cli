@@ -71,6 +71,12 @@ var opaqueConsumer = regexp.MustCompile(`^[A-Za-z0-9-]{1,64}$`)
 // revoked or expired. The CLI never silently mints a replacement URL.
 var errSessionGone = errors.New("tunnel session ended (revoked or expired); start a new tunnel for a new link")
 
+// ErrLeaveOpen is a context cause meaning the local client is detaching but
+// the remote session should stay alive so a later RunWithPublication can
+// reattach (after /mcp tunnel save). Heartbeats stop; the lease still expires
+// if nothing reattaches in time.
+var ErrLeaveOpen = errors.New("leave tunnel session open")
+
 type statusError int
 
 func (e statusError) Error() string { return fmt.Sprintf("relay returned HTTP %d", int(e)) }
@@ -174,8 +180,8 @@ func (r *Relay) runSession(ctx context.Context, p Publication, announce func(Pub
 	path := "/cli/mcp/sessions/" + p.ID
 	gone := false
 	defer func() {
-		if gone {
-			return // nothing left to revoke
+		if gone || errors.Is(context.Cause(ctx), ErrLeaveOpen) {
+			return // nothing left to revoke, or the caller is leaving the session open
 		}
 		c, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()

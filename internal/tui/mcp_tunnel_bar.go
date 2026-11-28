@@ -56,9 +56,9 @@ func (a *App) refreshMCPTunnelBar() {
 	}
 	a.mcpURLView.SetTextColor(a.palette.Lavender).SetBackgroundColor(a.palette.BgInput)
 	a.mcpURLHint.SetTextColor(a.palette.TextDim).SetBackgroundColor(a.palette.BgInput)
-	action := "show token"
+	action := "show"
 	if a.mcpTunnel.revealed {
-		action = "hide token"
+		action = "hide"
 	}
 	detail := a.mcpTunnel.notice
 	if detail == "" {
@@ -66,7 +66,7 @@ func (a *App) refreshMCPTunnelBar() {
 			detail = "expires " + expiry.Local().Format("Jan 2 3:04 PM MST")
 		}
 	}
-	a.mcpURLHint.SetText(fmt.Sprintf("MCP TUNNEL · %s · F7 %s · F8 copy link · %s", a.mcpTunnelStatus(), action, detail))
+	a.mcpURLHint.SetText(fmt.Sprintf("MCP TUNNEL · %s · F7 or /mcp tunnel %s · F8 or /mcp tunnel copy · %s", a.mcpTunnelStatus(), action, detail))
 	a.mcpURLView.SetText(a.mcpDisplayedURL()).ScrollToBeginning()
 }
 
@@ -157,24 +157,55 @@ func (a *App) beforeDraw(screen tcell.Screen) bool {
 	return false
 }
 
+func (a *App) setMCPTunnelReveal(revealed bool) {
+	if !a.hasMCPTunnelBar() {
+		return
+	}
+	a.mcpTunnel.revealed = revealed
+	a.mcpTunnel.notice = ""
+	a.refreshMCPTunnelBar()
+}
+
+func (a *App) toggleMCPTunnelReveal() {
+	if !a.hasMCPTunnelBar() {
+		return
+	}
+	a.setMCPTunnelReveal(!a.mcpTunnel.revealed)
+}
+
+// copyMCPTunnelLink implements F8 and /mcp tunnel copy. It never writes the
+// URL into activity or history. The token must already be revealed.
+func (a *App) copyMCPTunnelLink() string {
+	if !a.hasMCPTunnelBar() {
+		return "no tunnel link to copy"
+	}
+	if !a.mcpTunnel.revealed {
+		a.mcpTunnel.notice = "F7 or /mcp tunnel show reveals the token before copying"
+		a.refreshMCPTunnelBar()
+		return a.mcpTunnel.notice
+	}
+	if a.terminalScreen == nil {
+		a.mcpTunnel.notice = "select the revealed URL to copy"
+		a.refreshMCPTunnelBar()
+		return a.mcpTunnel.notice
+	}
+	// tcell uses the terminal's clipboard facility (OSC 52 where supported).
+	// No shell, temporary file, clipboard read, or automatic copying on reveal.
+	a.terminalScreen.SetClipboard([]byte(a.mcpTunnel.url))
+	a.mcpTunnel.notice = "copy requested (terminal support required)"
+	a.refreshMCPTunnelBar()
+	return a.mcpTunnel.notice
+}
+
 func (a *App) handleMCPTunnelBarKey(event *tcell.EventKey) bool {
 	if !a.hasMCPTunnelBar() || (event.Key() != tcell.KeyF7 && event.Key() != tcell.KeyF8) {
 		return false
 	}
 	if event.Key() == tcell.KeyF7 {
-		a.mcpTunnel.revealed = !a.mcpTunnel.revealed
-		a.mcpTunnel.notice = ""
-	} else if !a.mcpTunnel.revealed {
-		a.mcpTunnel.notice = "F7 reveals the token before copying"
-	} else if a.terminalScreen == nil {
-		a.mcpTunnel.notice = "select the revealed URL to copy"
+		a.toggleMCPTunnelReveal()
 	} else {
-		// tcell uses the terminal's clipboard facility (OSC 52 where supported).
-		// No shell, temporary file, clipboard read, or automatic copying on reveal.
-		a.terminalScreen.SetClipboard([]byte(a.mcpTunnel.url))
-		a.mcpTunnel.notice = "copy requested (terminal support required)"
+		a.copyMCPTunnelLink()
 	}
-	a.refreshMCPTunnelBar()
 	return true
 }
 

@@ -62,15 +62,21 @@ func (a *App) mcpArgHints(text string) (string, []wsArg, bool) {
 func (a *App) mcpTunnelSubcommandArgs() []wsArg {
 	running := a.mcpTunnel != nil && !a.mcpTunnel.stopping
 	items := []wsArg{
-		{label: "tunnel", insert: "tunnel", desc: "open a secret link for this session; F7 reveal, F8 copy, sudo stays user-gated"},
+		{label: "tunnel", insert: "tunnel", desc: "open a secret link for this session; F7 or /mcp tunnel show, F8 or /mcp tunnel copy, sudo stays user-gated"},
 	}
 	if running {
 		items = append(items,
+			wsArg{label: "tunnel show", insert: "tunnel show", desc: "reveal the secret link in the bar (same as F7)"},
+			wsArg{label: "tunnel hide", insert: "tunnel hide", desc: "mask the secret link in the bar (same as F7)"},
+			wsArg{label: "tunnel copy", insert: "tunnel copy", desc: "copy the revealed link (same as F8); reveal it first"},
 			wsArg{label: "tunnel save", insert: "tunnel save", desc: "persist the token so a later /mcp tunnel reattaches to the same link"},
 			wsArg{label: "tunnel stop", insert: "tunnel stop", desc: a.mcpTunnelStopDesc()},
 		)
 	} else {
 		items = append(items,
+			wsArg{label: "tunnel show", insert: "tunnel show", desc: "reveal the secret link (needs a running tunnel)"},
+			wsArg{label: "tunnel hide", insert: "tunnel hide", desc: "mask the secret link (needs a running tunnel)"},
+			wsArg{label: "tunnel copy", insert: "tunnel copy", desc: "copy the revealed link (needs a running tunnel)"},
 			wsArg{label: "tunnel save", insert: "tunnel save", desc: "persist the token so a later /mcp tunnel reattaches (needs a running tunnel)"},
 			wsArg{label: "tunnel stop", insert: "tunnel stop", desc: "revoke the tunnel link (none running)"},
 		)
@@ -79,9 +85,9 @@ func (a *App) mcpTunnelSubcommandArgs() []wsArg {
 }
 
 func (a *App) mcpSubcommandArgs() []wsArg {
-	tunnel := wsArg{label: "tunnel", insert: "tunnel", desc: "open a secret link for this session; F7 reveals, F8 copies"}
+	tunnel := wsArg{label: "tunnel", insert: "tunnel", desc: "open a secret link for this session; F7 or /mcp tunnel show, F8 or /mcp tunnel copy"}
 	if a.mcpTunnel != nil {
-		tunnel.desc = "a tunnel is running; Tab-complete tunnel stop/save for more"
+		tunnel.desc = "a tunnel is running; Tab-complete tunnel show/hide/copy/save/stop for more"
 	}
 	return []wsArg{
 		{label: "list", insert: "list", desc: "configured servers, their tools and descriptions"},

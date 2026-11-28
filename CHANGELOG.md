@@ -4,6 +4,20 @@
 
 All notable changes to Coder CLI. The source of truth is [release-notes/releases.json](release-notes/releases.json).
 
+## 0.9.284 — 2026-11-28
+
+**Reveal the MCP tunnel link without function keys.** Devices without function keys, such as Termux, can now show, hide, and copy the MCP tunnel link with /mcp tunnel show, hide, and copy. A saved tunnel also survives a clean TUI exit so a later /mcp tunnel can reattach until you stop it or it expires.
+
+### Added
+
+- /mcp tunnel show, hide, and copy reveal, mask, and copy the tunnel link the same way F7 and F8 do, so the link is reachable without function keys. (`/mcp`)
+  The banner, /mcp help, tips, and autocomplete mention the new subcommands alongside F7 and F8. The URL is never written to activity or history. Copy still requires the token to be revealed first.
+
+### Fixed
+
+- /mcp tunnel save now keeps the relay token across a clean TUI exit so a later /mcp tunnel can reattach to the same link until you stop it or it expires.
+  Exit no longer revokes a saved session or clears its credentials. /mcp tunnel stop still revokes the link and clears the save. Unsaved tunnels are still revoked on exit.
+
 ## 0.9.283 — 2026-11-27
 
 **Clearer watch, usage, and canvas guidance for agents.** Agents are steered to open live command output in the canvas watch, to invoke /usage and /balance for the user, and to stop offering VS Code at session start.

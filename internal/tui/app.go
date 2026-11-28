@@ -283,10 +283,10 @@ type App struct {
 	// usage is the session's cumulative token usage (persisted as
 	// session.State.Usage); guarded by usageMu because saveSession can
 	// run off the UI goroutine.
-	usageMu sync.Mutex
-	usage   *session.UsageStats
-	registry         *tools.Registry
-	runner           *tooling.Runner
+	usageMu  sync.Mutex
+	usage    *session.UsageStats
+	registry *tools.Registry
+	runner   *tooling.Runner
 	// steeringCh carries mid-turn user steering messages from the
 	// TUI's submit() handler to Runner.Steering. It is buffered so
 	// a quick double-Enter doesn't drop; submit() does a non-blocking
@@ -298,6 +298,8 @@ type App struct {
 	lastTurnPrompt string
 	mcpClient      *mcp.Client
 	mcpTunnel      *interactiveMCPTunnel
+	// mcpTunnelStart, when set, replaces the live relay (tests only).
+	mcpTunnelStart mcpTunnelStartFunc
 	// watch is the canvas's watch mode: a command's live, colourised
 	// output rendered in the canvas (see watch.go).
 	watch watchPane
@@ -465,10 +467,10 @@ type App struct {
 	activePanel string
 	// canvasPath/canvasStart/canvasEnd hold the file and optional
 	// 1-based line range currently rendered in the "canvas" panel.
-	canvasPath  string
+	canvasPath string
 	// canvasMode is what the canvas renders: canvasModeFile (a.canvasPath)
 	// or canvasModeWatch (the live /watch output, see watch.go).
-	canvasMode string
+	canvasMode  string
 	canvasStart int
 	canvasEnd   int
 	// canvasWidth is the inner width the canvas was last wrapped to;
@@ -2479,8 +2481,12 @@ func (a *App) showHelp() {
 		"Session\n" +
 		"  /config               edit config           /environment  edit the env template\n" +
 		"  /mcp                  Servers + tunnel      /telemetry    on, off, or status\n" +
-		"  /mcp tunnel           pinned secret link; F7 show/hide token, F8 copy\n" +
+		"  /mcp tunnel           pinned secret link; F7 or /mcp tunnel show/hide, F8 or /mcp tunnel copy\n" +
 		"                        sudo is gated by your TUI approval\n" +
+		"  /mcp tunnel show      reveal the token (for devices without function keys)\n" +
+		"  /mcp tunnel hide      mask the token again\n" +
+		"  /mcp tunnel copy      copy the revealed link (reveal first)\n" +
+		"  /mcp tunnel save      persist the token so a later /mcp tunnel reattaches\n" +
 		"  /mcp tunnel stop      revoke the link and cancel its tool calls\n" +
 		"  /update               check for an update   /about        about screen\n" +
 		"  /activity             activity panel\n" +
@@ -5794,7 +5800,7 @@ func (a *App) handleMCPCommand(parts []string) {
 					state = "stopping; revocation requested"
 				}
 			}
-			a.appendActivity("MCP tunnel: " + state + ". /mcp tunnel [stop]")
+			a.appendActivity("MCP tunnel: " + state + ". /mcp tunnel [stop|save|show|hide|copy]")
 		}
 		statuses := a.mcpClient.Statuses()
 		for name, sc := range a.config.MCPServers {
